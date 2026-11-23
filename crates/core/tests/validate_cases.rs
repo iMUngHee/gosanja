@@ -562,3 +562,17 @@ fn errors_on_the_field_holding_an_unknown_value_belong_to_that_value() {
     assert_eq!(codes(&malformed.diagnostics), [("gaps.jsonl", "schema")]);
     assert_eq!(malformed.skipped, 1);
 }
+
+/// Every closed enumeration counts, not only those a table happens to check by hand.
+#[test]
+fn an_unknown_value_in_any_closed_field_is_skipped() {
+    let read = read(
+        &newer(&[(
+            "gaps.jsonl",
+            r#"{"gap":"failed-layer","layer":"syntax","detail":"future","src":"adapter:x/syntax"}"#,
+        )]),
+        0,
+    );
+    assert_eq!(codes(&read.diagnostics), []);
+    assert_eq!((read.gaps.len(), read.skipped), (0, 2));
+}

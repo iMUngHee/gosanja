@@ -10,8 +10,7 @@ use std::fmt;
 use gosanja_schema::compat::{self, Acceptance, Refusal, RowVerdict, Version};
 use gosanja_schema::position::{Range, Site};
 use gosanja_schema::snapshot::{
-    EntityRow, ExternalRow, FORMAT, FileRow, GapKind, GapRow, Layer, Manifest, Mechanism,
-    OutlineKind, OutlineNode, RefRole, Rel, RelationRow, Resolution, Role, SCHEMA_VERSION,
+    EntityRow, ExternalRow, FORMAT, FileRow, GapRow, Manifest, RelationRow, SCHEMA_VERSION,
     SyntaxRow,
 };
 use serde::de::DeserializeOwned;
@@ -133,7 +132,6 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
         false,
         files.files.as_deref(),
         acceptance,
-        |_: &FileRow| false,
     );
     out.entities = out.table(
         "entities.jsonl",
@@ -141,7 +139,6 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
         true,
         files.entities.as_deref(),
         acceptance,
-        |r: &EntityRow| r.role == Some(Role::Unknown),
     );
     out.externals = out.table(
         "externals.jsonl",
@@ -149,7 +146,6 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
         true,
         files.externals.as_deref(),
         acceptance,
-        |_: &ExternalRow| false,
     );
     out.relations = out.table(
         "relations.jsonl",
@@ -157,12 +153,6 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
         false,
         files.relations.as_deref(),
         acceptance,
-        |r: &RelationRow| {
-            r.rel == Rel::Unknown
-                || r.roles.iter().flatten().any(|x| *x == RefRole::Unknown)
-                || r.mechanism == Some(Mechanism::Unrecognised)
-                || r.resolution == Some(Resolution::Unknown)
-        },
     );
     out.syntax = out.table(
         "syntax.jsonl",
@@ -170,7 +160,6 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
         false,
         files.syntax.as_deref(),
         acceptance,
-        |r: &SyntaxRow| r.outline.as_deref().is_some_and(has_unknown_node),
     );
     out.gaps = out.table(
         "gaps.jsonl",
@@ -178,16 +167,9 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
         false,
         files.gaps.as_deref(),
         acceptance,
-        |r: &GapRow| r.gap == GapKind::Unrecognised || r.layer == Some(Layer::Unknown),
     );
     out.skip_dependents();
     Ok(out)
-}
-
-fn has_unknown_node(nodes: &[OutlineNode]) -> bool {
-    nodes
-        .iter()
-        .any(|n| n.k == OutlineKind::Unknown || n.children.as_deref().is_some_and(has_unknown_node))
 }
 
 impl ReadSnapshot {
@@ -215,7 +197,6 @@ impl ReadSnapshot {
         names_rows: bool,
         bytes: Option<&[u8]>,
         acceptance: Acceptance,
-        unknown_value: impl Fn(&T) -> bool,
     ) -> Vec<(usize, T)> {
         let Some(bytes) = bytes else {
             if !self.diagnostics.iter().any(|d| d.file == name) {
@@ -242,17 +223,13 @@ impl ReadSnapshot {
                 .as_ref()
                 .map_err(ToString::to_string)
                 .and_then(|v| T::deserialize(v).map_err(|e| e.to_string()));
-            let unknown = parsed.as_ref().is_ok_and(&unknown_value);
-            // A row whose only schema failure is its unknown value is skipped under a newer
-            // minor; any other failure makes it malformed (spec/README.md, rule 5).
-            let schema_error = match &value {
-                Err(_) => None,
-                Ok(v) => match schemas::fit(schema, v) {
-                    Fit::Valid => None,
-                    Fit::UnknownValueOnly if unknown => None,
-                    Fit::UnknownValueOnly => first_error(schema, v),
-                    Fit::Invalid(error) => Some(error),
-                },
+            // The schema alone decides whether a row fails only because of values from a newer
+            // minor (spec/README.md, rule 5); every closed field counts.
+            let fit = value.as_ref().ok().map(|v| schemas::fit(schema, v));
+            let unknown = fit == Some(Fit::UnknownValueOnly);
+            let schema_error = match fit {
+                Some(Fit::Invalid(error)) => Some(error),
+                _ => None,
             };
             let well_formed = parsed.is_ok() && schema_error.is_none();
             match compat::classify_row(acceptance, well_formed, unknown) {
