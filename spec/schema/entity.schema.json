@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "entity.schema.json",
+  "type": "object",
+  "properties": {
+    "key": {"$ref": "entity.schema.json#/$defs/key"},
+    "symbol": {"type": "string"},
+    "kind": {"type": "string", "pattern": "^[^A-Z:]+:[^A-Z:]+$"},
+    "role": {"enum": ["container", "type", "callable", "value", "member"]},
+    "name": {"type": "string"},
+    "parent": {"$ref": "entity.schema.json#/$defs/key"},
+    "virtual": {"const": true},
+    "group": {"const": true},
+    "member_of": {"$ref": "entity.schema.json#/$defs/key"},
+    "def": {
+      "type": "object",
+      "properties": {
+        "file": {"$ref": "file.schema.json#/$defs/path"},
+        "name": {"$ref": "file.schema.json#/$defs/range"},
+        "body": {"$ref": "file.schema.json#/$defs/range"},
+        "body_src": {"$ref": "entity.schema.json#/$defs/provenance"}
+      },
+      "required": ["file", "name"],
+      "dependentRequired": {"body": ["body_src"], "body_src": ["body"]}
+    },
+    "src": {"$ref": "entity.schema.json#/$defs/provenance"}
+  },
+  "required": ["key", "name", "src"],
+  "allOf": [
+    {
+      "if": {"required": ["group"]},
+      "then": {
+        "properties": {"def": false, "member_of": false, "virtual": false}
+      },
+      "else": {"required": ["role"]}
+    },
+    {
+      "if": {"required": ["virtual"]},
+      "then": {
+        "properties": {"def": false, "member_of": false}
+      }
+    },
+    {"if": {"required": ["member_of"]}, "then": {"required": ["def"]}}
+  ],
+  "$defs": {
+    "key": {
+      "type": "string",
+      "pattern": "^(?:[^%:@~]|%(?:25|3A|40|7E))+:(?:[^%:@~]|%(?:25|3A|40|7E))+:(?:[^%@~]|%(?:25|40|7E))+(?:@(?:[^%:@~]|%(?:25|3A|40|7E))+){0,2}(?:~[1-9][0-9]*)?$"
+    },
+    "provenance": {
+      "type": "string",
+      "pattern": "^(?:scip:.+|adapter:[a-z0-9-]+/(?:syntax|calls)|core:(?:containment|identity|reference-in-body|publication))$"
+    }
+  }
+}

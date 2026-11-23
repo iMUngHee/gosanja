@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "adapter-manifest.schema.json",
+  "type": "object",
+  "properties": {
+    "contract": {"$ref": "adapter-manifest.schema.json#/$defs/version"},
+    "name": {"$ref": "adapter-manifest.schema.json#/$defs/name"},
+    "version": {"type": "string"},
+    "languages": {"type": "array", "items": {"type": "string", "pattern": "^[^A-Z]+$"}},
+    "position_encoding": {"enum": ["utf-8", "utf-16", "utf-32"]},
+    "layers": {
+      "type": "array",
+      "items": {"$ref": "adapter-manifest.schema.json#/$defs/layer"},
+      "contains": {"const": "base"}
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"tool": {"type": "string"}, "version": {"type": "string"}},
+        "required": ["tool"]
+      }
+    }
+  },
+  "required": ["contract", "name", "version", "languages", "position_encoding", "layers"],
+  "$defs": {
+    "name": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "layer": {"enum": ["base", "syntax", "calls"]},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"}
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gap.schema.json",
+  "type": "object",
+  "properties": {
+    "gap": {
+      "enum": [
+        "symbol-collision",
+        "undecodable-document",
+        "document-outside-root",
+        "source-unavailable",
+        "position-out-of-range",
+        "unattributed-references",
+        "overlapping-bodies",
+        "missing-layer",
+        "failed-layer",
+        "unanchored",
+        "open-call",
+        "opaque-region",
+        "unknown-build-context",
+        "unknown-value"
+      ]
+    },
+    "file": {"$ref": "file.schema.json#/$defs/path"},
+    "range": {"$ref": "file.schema.json#/$defs/range"},
+    "count": {"type": "integer", "minimum": 0},
+    "keys": {"type": "array", "items": {"$ref": "entity.schema.json#/$defs/key"}},
+    "layer": {"$ref": "adapter-manifest.schema.json#/$defs/layer"},
+    "anchor": {"$ref": "syntax-fact.schema.json#/$defs/anchor"},
+    "code": {"$ref": "adapter-result.schema.json#/$defs/code"},
+    "detail": {"enum": ["reported-failed", "no-status", "file-missing", "row-invalid"]},
+    "src": {"$ref": "entity.schema.json#/$defs/provenance"}
+  },
+  "required": ["gap", "src"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"gap": {"const": "symbol-collision"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["keys"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "undecodable-document"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["file"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "source-unavailable"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["file"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "position-out-of-range"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["file", "count"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "unattributed-references"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["file", "count"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "overlapping-bodies"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["file", "keys"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "missing-layer"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["layer"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "failed-layer"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["layer", "detail"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "unanchored"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["layer", "anchor"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "open-call"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["file", "range"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "opaque-region"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["file", "range", "keys"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "unknown-build-context"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["layer", "count"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "unknown-value"}},
+        "required": ["gap"]
+      },
+      "then": {"required": ["layer", "count"]}
+    },
+    {
+      "if": {
+        "properties": {"gap": {"const": "document-outside-root"}}
+      },
+      "then": {"oneOf": [{"required": ["file"]}, {"required": ["count"]}]}
+    }
+  ]
+}

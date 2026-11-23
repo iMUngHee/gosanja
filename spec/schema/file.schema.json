@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "file.schema.json",
+  "type": "object",
+  "properties": {
+    "path": {"$ref": "file.schema.json#/$defs/path"},
+    "language": {"type": "string", "pattern": "^[^A-Z]+$"},
+    "bytes": {"type": "integer", "minimum": 0},
+    "lines": {"type": "integer", "minimum": 0},
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+  },
+  "required": ["path", "bytes", "lines", "sha256"],
+  "$defs": {
+    "path": {
+      "type": "string",
+      "pattern": "^(?![A-Za-z]:/)(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$"
+    },
+    "range": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "integer", "minimum": 0},
+        {"type": "integer", "minimum": 0},
+        {"type": "integer", "minimum": 0},
+        {"type": "integer", "minimum": 0}
+      ],
+      "minItems": 4,
+      "items": false
+    }
+  }
+}

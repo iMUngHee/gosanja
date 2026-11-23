@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "external.schema.json",
+  "type": "object",
+  "properties": {
+    "key": {"$ref": "entity.schema.json#/$defs/key"},
+    "symbol": {"type": "string"},
+    "package": {
+      "type": "object",
+      "properties": {
+        "manager": {"type": "string"},
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      },
+      "required": ["manager", "name", "version"]
+    },
+    "src": {"$ref": "entity.schema.json#/$defs/provenance"}
+  },
+  "required": ["key", "symbol", "package", "src"]
+}

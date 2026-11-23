@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "snapshot-manifest.schema.json",
+  "type": "object",
+  "properties": {
+    "format": {"const": "gosanja-snapshot"},
+    "schema": {"$ref": "adapter-manifest.schema.json#/$defs/version"},
+    "tool": {"$ref": "adapter-result.schema.json#/$defs/tool"},
+    "project": {
+      "type": "object",
+      "properties": {"name": {"type": "string"}},
+      "required": ["name"]
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {"anyOf": [{"$ref": "file.schema.json#/$defs/path"}, {"const": "."}]},
+          "adapter": {
+            "type": "object",
+            "properties": {
+              "name": {"$ref": "adapter-manifest.schema.json#/$defs/name"},
+              "version": {"type": "string"},
+              "contract": {"$ref": "adapter-manifest.schema.json#/$defs/version"}
+            },
+            "required": ["name", "version", "contract"]
+          },
+          "indexers": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/tool"}},
+          "layers": {
+            "type": "object",
+            "properties": {
+              "base": {"enum": ["present", "absent", "failed"]},
+              "syntax": {"enum": ["present", "absent", "failed"]},
+              "calls": {"enum": ["present", "absent", "failed"]}
+            },
+            "required": ["base", "syntax", "calls"]
+          },
+          "builds": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/build"}}
+        },
+        "required": ["path", "indexers", "layers", "builds"]
+      }
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "files": {"type": "integer", "minimum": 0},
+        "entities": {"type": "integer", "minimum": 0},
+        "externals": {"type": "integer", "minimum": 0},
+        "relations": {"type": "integer", "minimum": 0},
+        "syntax": {"type": "integer", "minimum": 0},
+        "gaps": {"type": "integer", "minimum": 0},
+        "dropped_local_references": {"type": "integer", "minimum": 0}
+      },
+      "required": [
+        "files",
+        "entities",
+        "externals",
+        "relations",
+        "syntax",
+        "gaps",
+        "dropped_local_references"
+      ]
+    }
+  },
+  "required": ["format", "schema", "tool", "project", "scopes", "counts"]
+}

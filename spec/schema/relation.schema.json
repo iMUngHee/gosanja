@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relation.schema.json",
+  "type": "object",
+  "properties": {
+    "from": {"$ref": "entity.schema.json#/$defs/key"},
+    "to": {"$ref": "entity.schema.json#/$defs/key"},
+    "rel": {"enum": ["ref", "call", "implements"]},
+    "roles": {
+      "type": "array",
+      "items": {"enum": ["import", "write", "read", "generated", "test", "forward-definition"]},
+      "uniqueItems": true
+    },
+    "mechanism": {"$ref": "relation.schema.json#/$defs/mechanism"},
+    "resolution": {"$ref": "relation.schema.json#/$defs/resolution"},
+    "sites": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {"$ref": "file.schema.json#/$defs/path"},
+          {"type": "integer", "minimum": 0},
+          {"type": "integer", "minimum": 0},
+          {"type": "integer", "minimum": 0},
+          {"type": "integer", "minimum": 0}
+        ],
+        "minItems": 5,
+        "items": false
+      },
+      "uniqueItems": true
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {"$ref": "file.schema.json#/$defs/path"},
+          "line": {"type": "integer", "minimum": 0},
+          "col": {"type": "integer", "minimum": 0},
+          "end": {
+            "type": "array",
+            "prefixItems": [{"type": "integer", "minimum": 0}, {"type": "integer", "minimum": 0}],
+            "minItems": 2,
+            "items": false
+          },
+          "build": {"type": "string"}
+        },
+        "required": [],
+        "dependentRequired": {"file": ["line"], "line": ["file"], "col": ["file"], "end": ["file"]}
+      },
+      "minItems": 1
+    },
+    "src": {"$ref": "entity.schema.json#/$defs/provenance"}
+  },
+  "required": ["from", "to", "rel", "src"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"rel": {"const": "call"}},
+        "required": ["rel"]
+      },
+      "then": {
+        "required": ["mechanism", "resolution", "evidence"],
+        "properties": {"sites": false, "roles": false}
+      },
+      "else": {
+        "required": ["sites"],
+        "properties": {"mechanism": false, "resolution": false, "evidence": false}
+      }
+    },
+    {
+      "if": {
+        "properties": {"rel": {"const": "ref"}},
+        "required": ["rel"]
+      },
+      "then": {"required": ["roles"]},
+      "else": {
+        "properties": {"roles": false}
+      }
+    },
+    {
+      "if": {
+        "properties": {"src": {"pattern": "^adapter:.+/calls$"}}
+      },
+      "then": {
+        "properties": {
+          "evidence": {"items": {"required": ["build"]}},
+          "resolution": {"not": {"const": "declared"}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"src": {"pattern": "^adapter:.+/syntax$"}}
+      },
+      "then": {
+        "properties": {"resolution": {"const": "declared"}}
+      }
+    }
+  ],
+  "$defs": {
+    "mechanism": {
+      "enum": [
+        "unknown",
+        "static",
+        "dynamic",
+        "function-value",
+        "closure",
+        "drop",
+        "spawn",
+        "await",
+        "generated"
+      ]
+    },
+    "resolution": {
+      "enum": [
+        "declared",
+        "name-only",
+        "hierarchy",
+        "coercion-filtered",
+        "mono-instantiated",
+        "direct"
+      ]
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "syntax.schema.json",
+  "type": "object",
+  "properties": {
+    "key": {"$ref": "entity.schema.json#/$defs/key"},
+    "visibility": {"type": "string"},
+    "qualifiers": {"type": "array", "items": {"type": "string"}},
+    "attributes": {"type": "array", "items": {"type": "string"}},
+    "outline": {"type": "array", "items": {"$ref": "syntax.schema.json#/$defs/node"}},
+    "src": {"$ref": "entity.schema.json#/$defs/provenance"}
+  },
+  "required": ["key", "src"],
+  "$defs": {
+    "node": {
+      "type": "object",
+      "properties": {
+        "k": {
+          "enum": ["branch", "arm", "loop", "exit", "await", "spawn", "closure", "call", "opaque"]
+        },
+        "detail": {"type": "string"},
+        "range": {"$ref": "file.schema.json#/$defs/range"},
+        "callee": {"$ref": "file.schema.json#/$defs/range"},
+        "children": {"type": "array", "items": {"$ref": "syntax.schema.json#/$defs/node"}}
+      },
+      "required": ["k", "range"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {"k": {"const": "call"}},
+            "required": ["k"]
+          },
+          "then": {"required": ["callee"]},
+          "else": {
+            "properties": {"callee": false}
+          }
+        }
+      ]
+    }
+  }
+}
