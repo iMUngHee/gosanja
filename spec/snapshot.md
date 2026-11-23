@@ -341,7 +341,7 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `undecodable-document` | a document's position encoding is unspecified | `file` |
 | `document-outside-root` | a document's path is absolute or resolves outside the root; the file is never opened | `file` when the index gave a valid relative path that escapes through a link; otherwise one row for all such documents with `count` |
 | `source-unavailable` | a document's file is missing or unreadable | `file` |
-| `position-out-of-range` | positions fall outside their line or inside a multi-byte character; the occurrences are dropped | `file`, `count` |
+| `position-out-of-range` | positions fall outside their line or inside a multi-byte character; the occurrences, or the side-car rows that hold them, are dropped | `file`, `count`, and `layer` for a side-car |
 | `unattributed-references` | references in a file lie in no body | `file`, `count` |
 | `overlapping-bodies` | two bodies overlap without nesting; neither owns references | `file`, `keys` |
 | `missing-layer` | the adapter does not offer an optional layer | `layer` |
@@ -356,8 +356,8 @@ The `src` of a gap names what the gap is about:
 
 | `src` | Gaps |
 | --- | --- |
-| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `unknown-build-context`, `unknown-value` |
-| `scip:<tool>` | `undecodable-document`, `document-outside-root`, `source-unavailable`, `position-out-of-range` |
+| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `unknown-build-context`, `unknown-value`, and `position-out-of-range` for a side-car row |
+| `scip:<tool>` | `undecodable-document`, `document-outside-root`, `source-unavailable`, and `position-out-of-range` for an occurrence |
 | `core:identity` | `symbol-collision` |
 | `core:reference-in-body` | `unattributed-references`, `overlapping-bodies` |
 

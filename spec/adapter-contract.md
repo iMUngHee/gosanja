@@ -151,6 +151,15 @@ No match, or several, makes the row unusable: it becomes an `unanchored` gap and
 attached. The engine never matches by nearness. An adapter that has columns should give them;
 `name` alone exists for evidence that carries lines only, such as compiler debug information.
 
+## Positions that cannot be converted
+
+A column is converted from the adapter's unit to UTF-8 bytes against the text of its line. A
+row of `syntax.jsonl` or `calls.jsonl` that holds a `body`, an outline range, a `callee` or a
+`site` whose position lies outside its line or inside a character is dropped as a whole and
+counted in a `position-out-of-range` gap for its file; the rest of the layer is kept, as with
+an occurrence of the base layer. An anchor whose column cannot be converted matches nothing and
+is `unanchored`.
+
 ## syntax.jsonl
 
 One row per definition the adapter describes.
