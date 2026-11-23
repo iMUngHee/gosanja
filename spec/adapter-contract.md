@@ -245,10 +245,10 @@ depend on the order of the rows.
    whose file cannot be read inside the root, is dropped and counted in
    `position-out-of-range`.
 6. **Extent**, `syntax.jsonl` only. Every node of a remaining row's outline must lie within
-   the body of the row's definition: the row's own `body` when it gives one, otherwise the body
-   the base layer gives. A row with a node outside it would attach facts to the wrong
-   definition, so the layer is discarded (`row-invalid`). A definition with no body from either
-   source is not checked.
+   the body of the row's definition as the snapshot records it: the body the base layer gives,
+   and the row's own `body` only when the base layer gives none. A row with a node outside it
+   would attach facts to the wrong definition, so the layer is discarded (`row-invalid`). A
+   definition with no body from either source is not checked.
 
 A discarded layer contributes nothing but its one `failed-layer` gap: no rows, no bodies, no
 file rows, and none of the gaps that an earlier phase recorded for it.

@@ -284,7 +284,9 @@ coordinates, and each site appears once.
 `from` implements or overrides `to`, as the index's relationships state it. `from` is the
 definition in the document whose symbol information states the relationship, and `sites` holds
 the name range of that definition only. When the symbol is a collision group, `from` is the
-member defined in that document; a member whose document says nothing gets no row.
+member defined in that document; a member whose document says nothing gets no row. When that
+document defines the symbol more than once, the statement cannot be tied to one member: `from`
+is the group, and `sites` holds the name ranges of its members in that document.
 
 ## syntax.jsonl
 
