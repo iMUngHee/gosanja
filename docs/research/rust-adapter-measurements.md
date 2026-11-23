@@ -1,8 +1,8 @@
 # Rust adapter measurements
 
-Local observations on 2026-11-24, Linux x86_64. The trials used rustc 1.99.1 (58cf8f9c3), Cargo 1.99.1 (5f94df478), rustup 1.29.1 and rust-analyzer 0.3.3049-standalone. Span probes used proc-macro2 1.0.107 with span-locations and syn 2.0.119 with full. The sibling-dependency snapshot used Gosanja 0.2.0. These measurements concern the index producer and its inputs. The final two sections reserve space for measurements of the adapter itself.
+Local observations on 2026-11-24, Linux x86_64. The synthetic probes used rustc 1.99.1 (58cf8f9c3), Cargo 1.99.1 (5f94df478), rustup 1.29.1 and rust-analyzer 0.3.3049-standalone. Span probes used proc-macro2 1.0.107 with span-locations and syn 2.0.119 with full. The sibling-dependency snapshot used Gosanja 0.2.0. The final two sections measure reference recall on a fixture and anchor misses on public crates.
 
-All inputs were synthetic. In command examples ROOT is the workspace, OUT is an existing directory outside it, and TARGET and BUILD are pre-created directories under OUT. Cargo ran offline with cached dependencies. One workspace had a binary and library package, a procedural-macro member, a build script, unicode-ident 1.0.27 from the registry and a sibling path dependency. The configuration probes used a locked library named counter with no project build code, optionally depending on itoa 1.0.18.
+For the synthetic probes, in command examples ROOT is the workspace, OUT is an existing directory outside it, and TARGET and BUILD are pre-created directories under OUT. Cargo ran offline with cached dependencies. One workspace had a binary and library package, a procedural-macro member, a build script, unicode-ident 1.0.27 from the registry and a sibling path dependency. The configuration probes used a locked library named counter with no project build code, optionally depending on itoa 1.0.18.
 
 ## Lockfile creation and preflight (F1, F3)
 
@@ -262,6 +262,68 @@ The index misses none of the 34. The snapshot misses eight, all at sites whose o
 
 These eight rows name parameters, a type parameter and local variables. The plan for the corpus lists the kinds it covers (calls, method calls, trait methods through generics and `dyn`, re-exports and `use` paths, struct literals and patterns, types in signatures and fields, associated items, tokens inside `macro_rules!` and `format!`-family invocations) and does not name these; the hand-made list includes them because its author counted a local binding as a definition. Over the 26 rows that name an item with a key, both measures find 26 of 26. The test pins the total, both counts and both lists of missing rows as literals. A corpus this small says nothing about recall on real crates.
 
-## Anchor miss rate (step 7, pending)
+## Anchor miss rate on two public crates
 
-For each of two public crates, record its tag, tool versions and commands, syntax-layer state, skipped files, rows sent and unanchored rows divided by rows sent. Classify each unanchored row as inactive cfg, a base definition anchored elsewhere, or other. Record position-out-of-range and opaque-region counts separately.
+On 2026-11-24 the installed Rust adapter sent 224 syntax rows for byteorder and 694 for memchr. The engine matched 223 and 648 respectively. Every unmatched anchor was on an inactive conditional declaration or inside an inactive module. The denominator counts only rows sent for documents in the base index. It excludes source files absent from that index and items produced only by macro expansion.
+
+| Local measurement | byteorder 1.5.0 | memchr 2.7.6 |
+|---|---:|---:|
+| Files in snapshot | 3 | 35 |
+| Syntax rows sent / joined | 224 / 223 | 694 / 648 |
+| Syntax layer | present | present |
+| Unanchored / sent | 1/224 (0.45%) | 46/694 (6.63%) |
+| Inactive cfg / base position elsewhere / other | 1 / 0 / 0 | 46 / 0 / 0 |
+| Skipped entries (all codes) | 0 | 0 |
+| Syntax position-out-of-range gaps | 0 | 0 |
+| Opaque-region gaps | 322 | 223 |
+| Open-call gaps | 0 | 90 |
+| Index wall time (one run, concurrent trials) | 1.647 s | 2.147 s |
+| Snapshot size (sum of regular-file bytes) | 630,253 | 2,394,961 |
+
+The most frequent opaque invocations in byteorder were `qc_byte_order!` (62), `bench_num!` (58), `qc_bytes_ext!` (58), `too_small!` (54) and `assert_eq!` (17). In memchr they were `debug_assert!` (57), `assert!` (37), `assert_suffix_min!` (23), `assert_suffix_max!` (23) and `debug_assert_eq!` (18). Each count uses the invocation at the reported gap's start. For example, byteorder's `benches/bench.rs:125` invokes a macro whose template defines benchmark functions at lines 17, 27 and 37.
+
+**Classification.** Line numbers below are one-based. Each unmatched anchor was inspected at its source position, including its enclosing module's attributes. An inactive declaration takes precedence when the base defines a same-named, mutually exclusive alternative. “Base position elsewhere” counts an active item whose own definition is located elsewhere.
+
+- **byteorder.** The sole miss is `src/lib.rs:1902`, the big-endian `NativeEndian` alias. Line 1901 gates it on big-endian targets. The host is little-endian.
+- **memchr.** Two anchors in `src/cow.rs` require `not(feature = "alloc")`; default `std` enables `alloc`. Six in `src/memmem/searcher.rs` require AArch64 or Wasm SIMD. Thirty-three in `src/vector.rs` are the modules gated at lines 292 and 454 and their contained items. Five in `src/tests/memchr/prop.rs` require `not(miri)`. The index selects the alternative macro definition at line 4 behind `cfg(miri)`; the five misses are at lines 11, 257, 291, 299 and 312. This describes rust-analyzer's indexed configuration.
+- Five representative memchr anchors are `src/cow.rs:25` (`struct Imp`, alloc disabled), `src/cow.rs:104` (`as_slice`, alloc disabled), `src/memmem/searcher.rs:404` (`searcher_kind_simd128`, Wasm SIMD), `src/memmem/searcher.rs:425` (`searcher_kind_neon`, AArch64) and `src/vector.rs:305` (`splat` inside the AArch64 module). The other two cause classes have zero examples in both trials.
+
+**Inputs and reproduction.** The engine and adapter were Gosanja 0.2.0 built from `99aa7a3` outside the shared target. The adapter ran the real rust-analyzer 0.3.3049-standalone. The clones used rustc 1.100.0 (0ef1bc386) and Cargo 1.100.0 (3acc79c0c) on x86_64 Linux. Source tags:
+
+- https://github.com/BurntSushi/byteorder/tree/1.5.0 — `ec068eefa042d494475db125c4b034bd8e9e34dd`
+- https://github.com/BurntSushi/memchr/tree/2.7.6 — `9ba486e4ba7e865c0510305c5dacba73988d9f31`
+
+Both clones needed a generated Cargo.lock. Cargo updated the registry index during preparation. For byteorder it downloaded getrandom 0.1.16, rand_chacha 0.2.2, quickcheck 0.9.2, rand_hc 0.2.0, wasi 0.9.0+wasi-snapshot-preview1, rand_core 0.5.1 and rand 0.7.3. For memchr it downloaded quickcheck 1.1.0 and rand 0.10.4. All index runs used offline mode. The generated lockfile SHA-256 digests were `9ff31e9c38e091c79bc21eae3dc0be3aecba656ffec260a73873a630ce4270ee` and `9c4365b17d6655df8fe2dddec58d1c24fbad9003e6a5ee486bcc5bfd815c70c8`, respectively. Generating locks against a later registry may select different versions.
+
+Equivalent Linux commands, with the two built binaries in `BIN` and a fresh absolute directory under `/var/tmp` in `D`:
+
+```sh
+git clone --depth 1 --branch 1.5.0 https://github.com/BurntSushi/byteorder "$D/byteorder"
+git clone --depth 1 --branch 2.7.6 https://github.com/BurntSushi/memchr "$D/memchr"
+mkdir "$D/adapters"
+cp "$BIN/gosanja-adapter-rust" "$D/adapters/"
+export GOSANJA_ADAPTER_PATH="$D/adapters"
+listing() {
+  (cd "$root" && { find . -printf '%y %m %p %l\n'; find . -type f -exec sha256sum {} +; }) | LC_ALL=C sort
+}
+for name in byteorder memchr; do
+  root="$D/$name"
+  out="$D/logs/$name"
+  mkdir -p "$out/raw"
+  (cd "$root" && cargo generate-lockfile && cargo metadata --locked --format-version 1 > "$out/metadata")
+  (
+    export CARGO_NET_OFFLINE=true
+    listing > "$out/before"
+    "$BIN/gosanja" adapter list
+    time "$BIN/gosanja" index --root "$root" --out "$out/snapshot"
+    "$BIN/gosanja" validate "$out/snapshot" --root "$root"
+    listing > "$out/after"
+    cmp "$out/before" "$out/after"
+    "$D/adapters/gosanja-adapter-rust" index --root "$root" --out "$out/raw"
+    wc -l "$out/raw/syntax.jsonl"
+    jq -r '.gap' "$out/snapshot/gaps.jsonl" | sort | uniq -c
+  )
+done
+```
+
+Both snapshots validated. Before and after listings were byte-identical in each clone, including the generated lockfile and Git metadata. Their SHA-256 digests were `e5a745a4ea0ba7eb4536bc56f00eb430a1eebbf424f0e2d426ecf7dd0b9abddd` (byteorder, 91 listing lines) and `e1c29cc381dc228c0f9b92f56e1dc4b5e2e183d10a4ff9b07efd8cb533c35225` (memchr, 450). Cargo metadata listed zero custom-build targets for either root package. The listings measure net changes inside each clone. They do not track transient writes or dependency build outputs outside it.
