@@ -87,19 +87,24 @@ pub fn apply_syntax(
         .iter()
         .map(|fact| index.resolve(&fact.anchor, column))
         .collect();
-    let mut seen = BTreeSet::new();
-    if !facts.iter().all(valid_ranges) || !resolved.iter().flatten().all(|i| seen.insert(*i)) {
-        let mut gap = GapRow::new(GapKind::FailedLayer, src);
+    let discard = |gaps: &mut Vec<GapRow>| {
+        let mut gap = GapRow::new(GapKind::FailedLayer, &src);
         gap.detail = Some(FailedDetail::RowInvalid);
         gap.layer = Some(Layer::Syntax);
         gaps.push(gap);
-        return Vec::new();
+        Vec::new()
+    };
+    let mut seen = BTreeSet::new();
+    if !facts.iter().all(valid_ranges) || !resolved.iter().flatten().all(|i| seen.insert(*i)) {
+        return discard(gaps);
     }
+    let mut bodies = Vec::new();
+    let mut unmatched = Vec::new();
     let mut rows = Vec::new();
     let mut bad = BTreeMap::new();
     for (fact, resolved) in facts.iter().zip(resolved) {
         let Some(i) = resolved else {
-            gaps.push(unanchored(&fact.anchor, Layer::Syntax, &src));
+            unmatched.push(unanchored(&fact.anchor, Layer::Syntax, &src));
             continue;
         };
         let file = &fact.anchor.file;
@@ -113,12 +118,21 @@ pub fn apply_syntax(
             *bad.entry(file.clone()).or_default() += 1;
             continue;
         }
-        let entity = &mut entities[i];
-        if let (Some(def), Some(body)) = (&mut entity.def, body)
-            && def.body.is_none()
+        let entity = &entities[i];
+        let base_body = entity.def.as_ref().and_then(|def| def.body);
+        // Child ranges already lie within their parents, so checking roots covers the tree.
+        if let Some(extent) = body.or(base_body)
+            && outline
+                .iter()
+                .flatten()
+                .any(|node| !extent.contains(node.range))
         {
-            def.body = Some(body);
-            def.body_src = Some(src.clone());
+            return discard(gaps);
+        }
+        if let Some(body) = body
+            && base_body.is_none()
+        {
+            bodies.push((i, body));
         }
         rows.push(SyntaxRow {
             key: entity.key.clone(),
@@ -129,6 +143,13 @@ pub fn apply_syntax(
             src: src.clone(),
         });
     }
+    for (i, body) in bodies {
+        if let Some(def) = &mut entities[i].def {
+            def.body = Some(body);
+            def.body_src = Some(src.clone());
+        }
+    }
+    gaps.extend(unmatched);
     gaps.extend(position_gaps(bad, Layer::Syntax, &src));
     rows
 }

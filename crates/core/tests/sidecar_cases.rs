@@ -518,3 +518,110 @@ fn discarding_duplicate_syntax_rows_removes_only_that_layers_skipped_count() {
     assert_eq!(got.relations.len(), 1);
     assert_eq!(got.relations[0].rel, Rel::Call);
 }
+
+#[test]
+fn outline_extent_uses_the_definition_body_after_position_conversion() {
+    use gosanja_schema::snapshot::{FailedDetail, LayerState};
+    let root = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/go-basic"
+    ));
+    let temp = tempfile::tempdir().unwrap();
+    let build = |rows: Vec<Value>| {
+        let mut output = fixture(root, temp.path(), "good");
+        output.index = fs::File::open(root.join("index.scip")).unwrap();
+        output.syntax = rows
+            .into_iter()
+            .map(|v| serde_json::from_value(v).unwrap())
+            .collect();
+        sidecar::build(output, &FsSource::new(root).unwrap(), "go-basic").unwrap()
+    };
+    let main = json!({"anchor":{"file":"main.go","line":6,"name":"main"},"body":[6,0,8,1],"outline":[{"k":"opaque","range":[2,0,2,3]}]});
+    let greet = json!({"anchor":{"file":"main.go","line":2,"name":"greet"},"body":[2,0,4,1]});
+    let missing = json!({"anchor":{"file":"main.go","line":0,"name":"missing"}});
+    let mut inside = main.clone();
+    inside["outline"][0]["range"] = json!([7, 1, 7, 2]);
+    let valid = build(vec![inside]);
+    assert_eq!(valid.scope.layers.syntax, LayerState::Present);
+    assert_eq!(valid.syntax.len(), 1);
+    assert!(
+        valid
+            .gaps
+            .iter()
+            .any(|g| g.gap == GapKind::OpaqueRegion && g.range == Some(Range::new(7, 1, 7, 2)))
+    );
+
+    let first = build(vec![missing.clone(), greet.clone(), main.clone()]);
+    let last = build(vec![main, greet, missing]);
+    assert_eq!(first.scope.layers.syntax, LayerState::Failed);
+    assert_eq!(serialise(&first), serialise(&last));
+    assert_eq!(first.syntax.len(), 0);
+    let base = build(vec![]);
+    assert_eq!(first.entities, base.entities);
+    assert_eq!(first.relations, base.relations);
+    let gaps: Vec<_> = first
+        .gaps
+        .iter()
+        .filter(|g| g.src == "adapter:fake/syntax")
+        .collect();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(
+        (gaps[0].gap, gaps[0].detail),
+        (GapKind::FailedLayer, Some(FailedDetail::RowInvalid))
+    );
+}
+
+#[test]
+fn outline_extent_prefers_the_row_body_then_the_base_body_in_utf8_bytes() {
+    let mut snapshot = run(&[], &[]);
+    let row = json!({"anchor":owner(),"outline":[{"k":"opaque","range":[1,2,1,5]}]});
+    let lines = gosanja_core::graph::LineIndex::new(SOURCE.as_bytes());
+    let column = |_: &str, line, col| lines.byte_column(line, col, PositionEncoding::Utf16);
+    let attach = |entities: &mut [gosanja_schema::snapshot::EntityRow], row: Value| {
+        let mut gaps = Vec::new();
+        let rows = sidecar::apply_syntax(
+            entities,
+            &[serde_json::from_value(row).unwrap()],
+            "fake",
+            &column,
+            &mut gaps,
+        );
+        (rows, gaps)
+    };
+    // With no extent from either producer, the converted node is kept.
+    let (rows, gaps) = attach(&mut snapshot.entities, row.clone());
+    assert_eq!(gaps.len(), 0);
+    assert_eq!(
+        rows[0].outline.as_ref().unwrap()[0].range,
+        Range::new(1, 4, 1, 7)
+    );
+    let def = snapshot
+        .entities
+        .iter_mut()
+        .find(|e| e.name == "owner")
+        .unwrap()
+        .def
+        .as_mut()
+        .unwrap();
+    def.body = Some(Range::new(0, 0, 1, 6));
+    let (rows, gaps) = attach(&mut snapshot.entities, row.clone());
+    assert_eq!(rows.len(), 0);
+    assert_eq!(gaps[0].gap, GapKind::FailedLayer);
+    let mut own = row;
+    own["body"] = json!([0, 0, 1, 5]);
+    let (rows, gaps) = attach(&mut snapshot.entities, own);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(gaps.len(), 0);
+    assert_eq!(
+        snapshot
+            .entities
+            .iter()
+            .find(|e| e.name == "owner")
+            .unwrap()
+            .def
+            .as_ref()
+            .unwrap()
+            .body,
+        Some(Range::new(0, 0, 1, 6))
+    );
+}

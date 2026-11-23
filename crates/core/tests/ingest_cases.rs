@@ -815,3 +815,78 @@ fn rows_left_dangling_by_the_writer_are_kept_for_the_validator() {
     assert_eq!(kept, ["m:p:nowhere/"]);
     assert_eq!(read.skipped, 4);
 }
+
+#[test]
+fn a_skipped_syntax_row_does_not_remove_its_entity_or_relations() {
+    let mut files = newer_minor_snapshot();
+    files.syntax = Some(
+        b"{\"key\":\"m:p:a/\",\"outline\":[{\"k\":\"future\",\"range\":[0,0,0,0]}],\"src\":\"adapter:x/syntax\"}\n"
+            .to_vec(),
+    );
+    let mut relations = files.relations.take().expect("relations");
+    relations.extend_from_slice(
+        b"{\"from\":\"m:p:a/\",\"to\":\"m:p:a/\",\"rel\":\"ref\",\"roles\":[],\"sites\":[],\"src\":\"core:reference-in-body\"}\n",
+    );
+    files.relations = Some(relations);
+    let read = validate::read(&files, Version::new(1, 0)).expect("same major");
+    let entities: Vec<_> = read.entities.iter().map(|(_, e)| e.name.as_str()).collect();
+    assert_eq!(entities, ["a"]);
+    let kept: Vec<_> = read
+        .relations
+        .iter()
+        .map(|(_, r)| (r.from.as_str(), r.to.as_str()))
+        .collect();
+    assert_eq!(kept, [("m:p:a/", "m:p:a/")]);
+    assert_eq!(read.syntax.len(), 0);
+    assert_eq!(read.skipped, 5);
+}
+
+#[test]
+fn an_unknown_value_with_another_schema_error_is_malformed() {
+    let mut files = newer_minor_snapshot();
+    let mut entities = files.entities.take().expect("entities");
+    entities.extend_from_slice(
+        b"{\"key\":\"m:p:b/\",\"role\":\"future\",\"name\":\"b\",\"virtual\":true,\"src\":\"not a provenance\"}\n",
+    );
+    files.entities = Some(entities);
+    let read = validate::read(&files, Version::new(1, 0)).expect("same major");
+    assert_eq!(
+        read.skipped, 4,
+        "only the rows whose sole fault is the unknown value"
+    );
+    let codes: Vec<_> = read
+        .diagnostics
+        .iter()
+        .map(|d| (d.file, d.line, d.code))
+        .collect();
+    assert_eq!(codes, [("entities.jsonl", Some(4), "schema")]);
+}
+
+#[test]
+fn implements_sites_come_from_the_document_that_states_it() {
+    let sources = MemSource::with(&[("a.rs", &blank()), ("b.rs", &blank())]);
+    let silent = doc("a.rs", vec![occ("s m p 1 T#m().", DEF, &[2, 4, 5], &[])]);
+    let mut stating = doc(
+        "b.rs",
+        vec![
+            occ("s m p 1 T#m().", DEF, &[3, 4, 5], &[]),
+            occ("s m p 1 I#m().", DEF, &[6, 4, 5], &[]),
+        ],
+    );
+    stating.symbols = vec![support::implementing("s m p 1 T#m().", &["s m p 1 I#m()."])];
+    let snapshot = both_orders(&[silent, stating], &sources);
+    let rows: Vec<_> = snapshot
+        .relations
+        .iter()
+        .filter(|r| r.rel == Rel::Implements)
+        .map(|r| (r.from.as_str(), r.to.as_str(), r.sites.clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [(
+            "m:p:T#m().~2",
+            "m:p:I#m().",
+            Some(vec![site("b.rs", 3, 4, 3, 5)])
+        )]
+    );
+}

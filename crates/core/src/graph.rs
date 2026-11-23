@@ -148,6 +148,8 @@ struct Occ {
 struct Implementation {
     from: String,
     to: String,
+    /// The document whose symbol information states it.
+    file: String,
     src: String,
 }
 
@@ -245,6 +247,7 @@ impl Input {
                     self.implementations.push(Implementation {
                         from: info.symbol.clone(),
                         to: relationship.symbol.clone(),
+                        file: path.to_owned(),
                         src: self.src.clone(),
                     });
                 }
@@ -710,8 +713,8 @@ impl<'a> Graph<'a> {
         }
     }
 
-    /// `implements` rows from the index's relationships, for definitions only; `sites` holds
-    /// the name ranges of `from`.
+    /// `implements` rows from the index's relationships, for definitions only. `from` is the
+    /// definition in the document that states the relationship and `sites` its name range.
     fn implements(&self, out: &mut Snapshot) {
         let mut rows: BTreeMap<(String, String, String), BTreeSet<Site>> = BTreeMap::new();
         for imp in self.implementations {
@@ -720,15 +723,22 @@ impl<'a> Graph<'a> {
             else {
                 continue;
             };
-            let sites = rows
-                .entry((
-                    self.keys[imp.from.as_str()].clone(),
-                    to.clone(),
-                    imp.src.clone(),
-                ))
-                .or_default();
-            for (file, name) in observations.keys() {
-                sites.insert(Site::new(file.clone(), *name));
+            // `from` is the definition in the stating document; in a collision group, the
+            // member defined there, numbered as `entities` numbers members.
+            let key = &self.keys[imp.from.as_str()];
+            let grouped = observations.len() > 1;
+            for (n, (file, name)) in observations.keys().enumerate() {
+                if *file != imp.file {
+                    continue;
+                }
+                let from = if grouped {
+                    format!("{key}~{}", n + 1)
+                } else {
+                    key.clone()
+                };
+                rows.entry((from, to.clone(), imp.src.clone()))
+                    .or_default()
+                    .insert(Site::new(file.clone(), *name));
             }
         }
         for ((from, to, src), sites) in rows {

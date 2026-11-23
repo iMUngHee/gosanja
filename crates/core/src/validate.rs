@@ -70,10 +70,44 @@ pub struct ReadSnapshot {
 
 /// The first way `value` fails `schema`, if it does.
 fn first_error(schema: Schema, value: &serde_json::Value) -> Option<String> {
+    first_error_where(schema, value, |_| true)
+}
+
+/// The first way `value` fails `schema` other than an enumeration that does not hold the
+/// value, which is how an unknown value from a newer minor fails (spec/README.md, rule 5).
+fn first_error_besides_enum(schema: Schema, value: &serde_json::Value) -> Option<String> {
+    first_error_where(schema, value, |kind| {
+        !matches!(kind, jsonschema::error::ValidationErrorKind::Enum { .. })
+    })
+}
+
+fn first_error_where(
+    schema: Schema,
+    value: &serde_json::Value,
+    counts: impl Fn(&jsonschema::error::ValidationErrorKind) -> bool,
+) -> Option<String> {
     validator(schema)
         .iter_errors(value)
-        .next()
+        .find(|e| counts(e.kind()))
         .map(|e| format!("{e} at {}", e.instance_path()))
+}
+
+/// Refuses a snapshot whose schema version this crate may not read, from its manifest alone.
+/// A manifest without a readable version passes here and is diagnosed by [`validate`].
+///
+/// # Errors
+///
+/// Returns the [`Refusal`] when the manifest states another schema version.
+pub fn check_version(files: &SnapshotFiles) -> Result<(), Refusal> {
+    let writer = files
+        .manifest
+        .as_deref()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .and_then(|value| value["schema"].as_str()?.parse::<Version>().ok());
+    match writer {
+        Some(writer) => compat::accept(SCHEMA_VERSION, writer).map(|_| ()),
+        None => Ok(()),
+    }
 }
 
 /// Reads a snapshot as a reader implementing schema version `reader`.
@@ -112,6 +146,7 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
     out.files = out.table(
         "files.jsonl",
         Schema::File,
+        false,
         files.files.as_deref(),
         acceptance,
         |_: &FileRow| false,
@@ -119,6 +154,7 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
     out.entities = out.table(
         "entities.jsonl",
         Schema::Entity,
+        true,
         files.entities.as_deref(),
         acceptance,
         |r: &EntityRow| r.role == Some(Role::Unknown),
@@ -126,6 +162,7 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
     out.externals = out.table(
         "externals.jsonl",
         Schema::External,
+        true,
         files.externals.as_deref(),
         acceptance,
         |_: &ExternalRow| false,
@@ -133,6 +170,7 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
     out.relations = out.table(
         "relations.jsonl",
         Schema::Relation,
+        false,
         files.relations.as_deref(),
         acceptance,
         |r: &RelationRow| {
@@ -145,6 +183,7 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
     out.syntax = out.table(
         "syntax.jsonl",
         Schema::Syntax,
+        false,
         files.syntax.as_deref(),
         acceptance,
         |r: &SyntaxRow| r.outline.as_deref().is_some_and(has_unknown_node),
@@ -152,6 +191,7 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
     out.gaps = out.table(
         "gaps.jsonl",
         Schema::Gap,
+        false,
         files.gaps.as_deref(),
         acceptance,
         |r: &GapRow| r.gap == GapKind::Unrecognised || r.layer == Some(Layer::Unknown),
@@ -182,10 +222,13 @@ impl ReadSnapshot {
         });
     }
 
+    /// Reads one table. `names_rows` says whether a row's `key` is the key of that row, as in
+    /// `entities.jsonl` and `externals.jsonl`, rather than a reference to another row.
     fn table<T: DeserializeOwned>(
         &mut self,
         name: &'static str,
         schema: Schema,
+        names_rows: bool,
         bytes: Option<&[u8]>,
         acceptance: Acceptance,
         unknown_value: impl Fn(&T) -> bool,
@@ -216,18 +259,22 @@ impl ReadSnapshot {
                 .map_err(ToString::to_string)
                 .and_then(|v| T::deserialize(v).map_err(|e| e.to_string()));
             let unknown = parsed.as_ref().is_ok_and(&unknown_value);
-            // A row skipped for an unknown value under a newer minor is not held to this
-            // version's schema (spec/README.md, rule 5).
+            // A row whose only schema failure is its unknown value is skipped under a newer
+            // minor; any other failure makes it malformed (spec/README.md, rule 5).
             let schema_error = match (&value, unknown) {
                 (Ok(v), false) => first_error(schema, v),
-                _ => None,
+                (Ok(v), true) => first_error_besides_enum(schema, v),
+                (Err(_), _) => None,
             };
             let well_formed = parsed.is_ok() && schema_error.is_none();
             match compat::classify_row(acceptance, well_formed, unknown) {
                 RowVerdict::Keep => rows.extend(parsed.ok().map(|row| (i + 1, row))),
                 RowVerdict::Skip => {
                     self.skipped += 1;
-                    if let Ok(serde_json::Value::Object(row)) = &value
+                    // Only entity and external keys are targets others depend on; a syntax
+                    // row's `key` names the entity it describes, which stays.
+                    if names_rows
+                        && let Ok(serde_json::Value::Object(row)) = &value
                         && let Some(serde_json::Value::String(key)) = row.get("key")
                     {
                         self.skipped_keys.insert(key.clone());

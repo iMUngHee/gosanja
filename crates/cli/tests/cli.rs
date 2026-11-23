@@ -241,3 +241,12 @@ fn rows_are_checked_against_the_normative_schemas() {
     assert_eq!(code(&output), 1, "{}", stderr(&output));
     assert!(stderr(&output).contains("schema"), "{}", stderr(&output));
 }
+
+#[test]
+fn the_version_is_refused_before_the_root_is_resolved() {
+    let dir = corrupted("root-order", "manifest.json", |t| {
+        t.replace(r#""schema":"0.1""#, r#""schema":"0.2""#)
+    });
+    let output = gosanja(&[&"validate", &dir, &"--root", &scratch("no-such-root")]);
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+}
