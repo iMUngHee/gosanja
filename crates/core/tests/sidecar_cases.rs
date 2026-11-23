@@ -544,6 +544,57 @@ fn outline_extent_uses_the_definition_body_after_position_conversion() {
     );
 }
 
+/// A syntax layer read under a newer minor brings an `unknown-value` gap for the rows it
+/// skipped; discarding the layer at the extent phase takes that gap away with the layer, and
+/// leaves the calls layer's own.
+#[test]
+fn discarding_at_the_extent_phase_removes_only_that_layers_unknown_value_count() {
+    use gosanja_schema::snapshot::{FailedDetail, GapRow, LayerState};
+    let root = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/go-basic"
+    ));
+    let temp = tempfile::tempdir().unwrap();
+    let build = |range: Value| {
+        let mut output = fixture(root, temp.path(), "good");
+        output.index = fs::File::open(root.join("index.scip")).unwrap();
+        output.syntax = vec![
+            serde_json::from_value(json!({"anchor":{"file":"main.go","line":6,"name":"main"},"outline":[{"k":"opaque","range":range}]}))
+                .unwrap(),
+        ];
+        for (layer, src) in [
+            (Layer::Syntax, "adapter:fake/syntax"),
+            (Layer::Calls, "adapter:fake/calls"),
+        ] {
+            let mut gap = GapRow::new(GapKind::UnknownValue, src);
+            gap.count = Some(1);
+            gap.layer = Some(layer);
+            output.gaps.push(gap);
+        }
+        sidecar::build(output, &FsSource::new(root).unwrap(), "go-basic").unwrap()
+    };
+    let unknown = |snapshot: &gosanja_core::graph::Snapshot| -> Vec<_> {
+        snapshot
+            .gaps
+            .iter()
+            .filter(|g| g.gap == GapKind::UnknownValue)
+            .map(|g| g.layer)
+            .collect()
+    };
+    // Kept, the layer keeps its count next to the calls layer's.
+    let kept = build(json!([7, 1, 7, 2]));
+    assert_eq!(kept.scope.layers.syntax, LayerState::Present);
+    assert_eq!(unknown(&kept), [Some(Layer::Syntax), Some(Layer::Calls)]);
+    // An opaque node in `greet`, outside `main`, discards the layer and its count.
+    let discarded = build(json!([2, 0, 2, 3]));
+    assert_eq!(discarded.scope.layers.syntax, LayerState::Failed);
+    assert_eq!(discarded.syntax, []);
+    assert!(discarded.gaps.iter().any(|g| g.gap == GapKind::FailedLayer
+        && g.layer == Some(Layer::Syntax)
+        && g.detail == Some(FailedDetail::RowInvalid)));
+    assert_eq!(unknown(&discarded), [Some(Layer::Calls)]);
+}
+
 #[test]
 fn wider_adapter_body_cannot_attach_greets_opaque_region_to_main() {
     use gosanja_schema::snapshot::{FailedDetail, LayerState};

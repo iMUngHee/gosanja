@@ -578,10 +578,14 @@ fn names_and_paths_given_to_adapter() {
         assert_eq!(listing(&root), project);
         assert_eq!(listing(&out), snapshot);
     };
+    // Every tier of the search order is named: GOSANJA_ADAPTER_PATH, the executable's
+    // directory and PATH.
     world
         .index_with("python".as_ref(), &root, &out)
         .expect(2)
-        .says(&searched);
+        .says(&searched)
+        .says(&world.bin.to_string_lossy())
+        .says(&world.tools.to_string_lossy());
     unchanged();
     world
         .index_with("Rust".as_ref(), &root, &out)
@@ -726,7 +730,20 @@ fn explicit_sources_start_no_other_adapter() {
         run.expect(0);
         assert_eq!(run.record("watcher"), Vec::<String>::new());
     }
-    world.snapshot(&root, &out);
+    let scip = world.run(&[
+        "index".as_ref(),
+        "--scip".as_ref(),
+        repository()
+            .join("fixtures/rust-basic/index.scip")
+            .as_os_str(),
+        "--root".as_ref(),
+        root.as_os_str(),
+        "--out".as_ref(),
+        out.as_os_str(),
+    ]);
+    scip.expect(0);
+    assert_eq!(scip.record("watcher"), Vec::<String>::new());
+    assert_eq!(scip.record("go"), Vec::<String>::new());
 }
 
 #[test]
@@ -992,15 +1009,18 @@ fn unusable_adapters_are_reported_and_never_chosen() {
     list.expect(0);
     for (name, _, code) in &unusable {
         let path = world.adapters().join(format!("gosanja-adapter-{name}"));
-        run.says(name).says(&path.to_string_lossy());
         let line = format!("{name} path={} unusable: ", path.display());
-        assert!(
-            list.stdout()
-                .lines()
-                .any(|l| l.starts_with(&line) && l.len() > line.len()),
-            "{line} in\n{}",
-            list.stdout()
-        );
+        let stdout = list.stdout();
+        let reason = stdout
+            .lines()
+            .find_map(|l| l.strip_prefix(&line))
+            .filter(|r| !r.is_empty())
+            .unwrap_or_else(|| panic!("{line} with a reason in\n{stdout}"));
+        // Automatic choice reports the same reason on standard error.
+        run.says(&format!(
+            "the adapter {name} at {} is unusable: {reason}",
+            path.display()
+        ));
         let out = world.base().join(format!("out-{name}"));
         world.index_with(name.as_ref(), &root, &out).expect(*code);
         assert!(!out.exists());
@@ -1010,8 +1030,18 @@ fn unusable_adapters_are_reported_and_never_chosen() {
     described.expect(0);
     let manifest: serde_json::Value =
         serde_json::from_str(&described.stdout()).expect("a manifest");
-    assert_eq!(manifest["name"], "rust");
-    assert_eq!(manifest["markers"], serde_json::json!(["Cargo.toml"]));
+    assert_eq!(
+        manifest,
+        serde_json::json!({
+            "contract": "0.2",
+            "name": "rust",
+            "version": "1",
+            "languages": ["rust"],
+            "position_encoding": "utf-8",
+            "layers": ["base", "syntax", "calls"],
+            "markers": ["Cargo.toml"]
+        })
+    );
 }
 
 // Listing.
