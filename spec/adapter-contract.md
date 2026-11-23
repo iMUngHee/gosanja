@@ -186,6 +186,9 @@ meanings given in [snapshot.md](snapshot.md#syntaxjsonl). Three rules bind the a
 - What the adapter cannot read, it marks with an `opaque` node covering the region. Leaving the
   region out would claim that it holds nothing.
 - Nodes are nested by containment and listed in source order.
+- An outline covers the body of its own definition. It does not descend into a nested
+  definition that the base layer knows as a definition of its own, because references there
+  belong to that definition; a nested closure, which has no definition, is part of the outline.
 
 ## calls.jsonl
 
