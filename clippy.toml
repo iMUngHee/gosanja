@@ -1,0 +1,4 @@
+# clippy::multiple_crate_versions is on through the `cargo` lint group. The pinned `scip` crate
+# brings `protobuf`, whose build tooling uses syn 2, while serde's derive uses syn 3; neither can
+# be moved from here.
+allowed-duplicate-crates = ["syn"]

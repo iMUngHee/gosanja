@@ -77,13 +77,14 @@
     "build": {
       "type": "object",
       "properties": {
-        "id": {"type": "string"},
-        "toolchain": {"type": "string"},
-        "target": {"type": "string"},
-        "profile": {"type": "string"},
-        "features": {"type": "array", "items": {"type": "string"}}
+        "id": {"$ref": "adapter-result.schema.json#/$defs/portable", "minLength": 1},
+        "toolchain": {"$ref": "adapter-result.schema.json#/$defs/portable"},
+        "target": {"$ref": "adapter-result.schema.json#/$defs/portable"},
+        "profile": {"$ref": "adapter-result.schema.json#/$defs/portable"},
+        "features": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/portable"}}
       },
       "required": ["id"]
-    }
+    },
+    "portable": {"type": "string", "pattern": "^[^/\\\\]*$"}
   }
 }

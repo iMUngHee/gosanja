@@ -2,8 +2,6 @@
 //!
 //! Field order in each struct is the order in which the engine writes the fields.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::position::{Range, Site};
@@ -114,9 +112,6 @@ pub struct BuildContext {
     /// Enabled features, tags or flags, sorted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub features: Option<Vec<String>>,
-    /// Further fields the adapter chose, written in name order.
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Row counts recorded in the manifest.

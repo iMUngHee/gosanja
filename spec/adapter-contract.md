@@ -24,6 +24,9 @@ metadata; the engine ignores it and copies no absolute path into a snapshot. An 
 several `Index` messages written one after another, which is what scip-go and scip-typescript
 produce; the engine reads them as one.
 
+When an occurrence carries both forms of a range, the engine uses `typed_range` and ignores the
+deprecated `range`; the same holds for `typed_enclosing_range` and `enclosing_range`.
+
 ## Commands
 
 ### describe
@@ -100,8 +103,10 @@ A build context:
 | `profile` | string, optional | for example `debug` |
 | `features` | array of strings, optional | enabled features, tags or flags, sorted |
 
-Further fields are allowed and are copied into the snapshot manifest. A build context states
-what the evidence is true for: a call observed with one feature set may not exist with another.
+A build context states what the evidence is true for: a call observed with one feature set may
+not exist with another. Only the fields above are copied into the snapshot manifest; any other
+field is ignored. Their values may not contain `/` or `\`, so that no path can enter a
+snapshot through them; a `result.json` that breaks this fails its schema.
 
 ## Exit status and outcomes
 
@@ -165,8 +170,8 @@ meanings given in [snapshot.md](snapshot.md#syntaxjsonl). Three rules bind the a
 
 - A `call` node gives `callee`, the range of the callee's name token alone: `foo` in
   `foo(bar)`, `m` in `x.m()`. The engine creates a call only when a reference of the base layer
-  sits exactly on that range, and it labels the call `declared`. The syntax layer says nothing
-  about dispatch.
+  sits exactly on that range, and it labels the call `resolution: declared`,
+  `mechanism: unknown`. The syntax layer says nothing about dispatch.
 - What the adapter cannot read, it marks with an `opaque` node covering the region. Leaving the
   region out would claim that it holds nothing.
 - Nodes are nested by containment and listed in source order.

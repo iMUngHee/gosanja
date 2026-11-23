@@ -133,7 +133,6 @@ fn build(id: &str) -> BuildContext {
         target: Some("x86_64-unknown-linux-gnu".into()),
         profile: Some("debug".into()),
         features: Some(vec!["default".into()]),
-        extra: BTreeMap::from([("lto".to_owned(), json!(false))]),
     }
 }
 
@@ -245,6 +244,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
         group: true,
         role: None,
         key: "cargo:demo:a/f().".into(),
+        symbol: Some("rust-analyzer cargo demo 0.1.0 a/f().".into()),
         src: "core:identity".into(),
         ..container.clone()
     };
@@ -531,17 +531,32 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
         &json!({"anchor": {"file": "src/a.rs", "line": 3}}),
     );
     // A call carries mechanism, resolution and evidence, and no sites.
-    let call = json!({"from": "a", "to": "b", "rel": "call", "resolution": "direct", "evidence": [{"build": "b"}], "src": "adapter:x/calls"});
+    let call = json!({"from": "cargo:d:a().", "to": "cargo:d:b().", "rel": "call", "resolution": "direct", "evidence": [{"build": "b"}], "src": "adapter:x/calls"});
     schemas.assert_invalid("relation", &call);
-    let reference_with_evidence = json!({"from": "a", "to": "b", "rel": "ref", "roles": [], "sites": [["a.rs", 0, 0, 0, 1]], "evidence": [{}], "src": "core:reference-in-body"});
+    let reference_with_evidence = json!({"from": "cargo:d:a().", "to": "cargo:d:b().", "rel": "ref", "roles": [], "sites": [["a.rs", 0, 0, 0, 1]], "evidence": [{}], "src": "core:reference-in-body"});
     schemas.assert_invalid("relation", &reference_with_evidence);
     // The syntax layer may only say `declared`; the calls layer may never say it.
-    let syntax_direct = json!({"from": "a", "to": "b", "rel": "call", "mechanism": "unknown", "resolution": "direct", "evidence": [{}], "src": "adapter:x/syntax"});
+    let syntax_direct = json!({"from": "cargo:d:a().", "to": "cargo:d:b().", "rel": "call", "mechanism": "unknown", "resolution": "direct", "evidence": [{}], "src": "adapter:x/syntax"});
     schemas.assert_invalid("relation", &syntax_direct);
     schemas.assert_invalid(
         "call-evidence",
         &json!({"caller": {"file": "a.rs", "line": 1, "col": 0}, "callee": {"file": "a.rs", "line": 5, "col": 0}, "mechanism": "static", "resolution": "declared", "build": "b"}),
     );
+    // The syntax layer claims neither a target nor a dispatch.
+    let syntax_dynamic = json!({"from": "cargo:d:a().", "to": "cargo:d:b().", "rel": "call", "mechanism": "dynamic", "resolution": "declared", "evidence": [{}], "src": "adapter:x/syntax"});
+    schemas.assert_invalid("relation", &syntax_dynamic);
+    // A row is a definition, a member, a group or a virtual container, and nothing in between.
+    schemas.assert_invalid(
+        "entity",
+        &json!({"key": "cargo:d:c.", "name": "c", "role": "value", "src": "scip:x"}),
+    );
+    schemas.assert_invalid(
+        "entity",
+        &json!({"key": "cargo:d:f().", "name": "f", "group": true, "src": "core:identity"}),
+    );
+    // No path can enter a snapshot through a build context.
+    schemas.assert_invalid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "toolchain": "/home/dev/rustc"}]}));
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "cwd": "ignored, not copied"}]}));
     // Closed enumerations are closed.
     schemas.assert_invalid(
         "gap",
@@ -549,7 +564,7 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
     );
     schemas.assert_invalid(
         "entity",
-        &json!({"key": "k", "role": "widget", "name": "n", "src": "scip:x"}),
+        &json!({"key": "cargo:d:k.", "role": "widget", "name": "n", "virtual": true, "src": "core:containment"}),
     );
     // Paths are relative and normalised; ranges have four coordinates.
     schemas.assert_invalid(

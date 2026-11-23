@@ -108,7 +108,7 @@ manager, package and version as what it contains and is qualified by the same ru
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `format` | `"gosanja-snapshot"` | marks the directory as a snapshot; the engine replaces an existing directory only when this is present |
+| `format` | `"gosanja-snapshot"` | marks the directory as a snapshot; see Publication |
 | `schema` | version | snapshot schema version, `0.1` |
 | `tool` | `{name, version}` | the engine that wrote the snapshot |
 | `project` | `{name}` | a display name; it carries no identity |
@@ -125,8 +125,8 @@ A scope entry:
 | `layers` | `{base, syntax, calls}` | each `present`, `absent` or `failed` |
 | `builds` | array | build contexts reported by the adapter, sorted by `id` |
 
-A build context is `{id, toolchain?, target?, profile?, features?}` and may carry further
-fields the adapter chose. `id` is unique within the scope and is what call evidence refers to.
+A build context is `{id, toolchain?, target?, profile?, features?}` and nothing else. `id` is
+unique within the scope and is what call evidence refers to. No value contains `/` or `\`.
 
 ## files.jsonl
 
@@ -166,6 +166,15 @@ Sorted by `key`.
 | `name` | range | the range the index gives for the definition; usually the name token, though some indexers give more (rust-analyzer gives the whole file for a module) |
 | `body` | range, optional | the whole definition, used to decide which entity a reference belongs to |
 | `body_src` | provenance, optional | where `body` came from; present whenever `body` is |
+
+A row is exactly one of four variants:
+
+| Variant | Marked by | Has | Has not |
+| --- | --- | --- | --- |
+| definition | none of the marks below | `symbol`, `role`, `def` | |
+| member of a collision group | `member_of` | `symbol`, `role`, `def` | |
+| collision group | `group: true` | `symbol` | `def`, `member_of`, `virtual` |
+| virtual container | `virtual: true` | `role` | `def`, `member_of`, `group` |
 
 `role` follows the last descriptor of the symbol:
 
@@ -213,8 +222,12 @@ Only forward relations are stored. Sorted by (`from`, `rel`, `to`, `mechanism`, 
 ### ref
 
 A `ref` row says that the body of `from` contains a reference to `to`. Which body a reference
-belongs to is decided by containment: the innermost `def.body` that contains the reference. A
-reference that no body contains produces no row (see `unattributed-references`).
+belongs to is decided by containment: the innermost `def.body` that contains the reference,
+that is, the containing body that every other containing body strictly contains. Two bodies of
+different entities that overlap without one strictly containing the other, identical extents
+included, are both left out of this decision and reported once as `overlapping-bodies`; a
+reference inside them then belongs to the innermost remaining body. A reference that no
+remaining body contains produces no row (see `unattributed-references`).
 
 There is one `ref` row per (`from`, `to`, `roles`). A reference is not a call: taking the
 address of a function is a `ref` and nothing more.
@@ -254,6 +267,11 @@ An evidence entry:
 | `build` | string, optional | `id` of a build context of the scope; present on every calls-layer entry |
 
 Evidence may have no location: compiler-generated calls such as drop glue have none.
+
+Entries are sorted by (`file`, `line`, `col`, `end`, `build`). Numbers compare as numbers,
+strings by their bytes, and an absent field comes before any value. Two observations that are
+equal in every field are both kept. `sites` are sorted the same way, by file and then the four
+coordinates, and each site appears once.
 
 ### implements
 
@@ -339,3 +357,17 @@ single gap: location (`document-outside-root`), availability (`source-unavailabl
 
 `detail` for `failed-layer` is one of `reported-failed`, `no-status`, `file-missing`,
 `row-invalid`.
+
+## Publication
+
+These rules bind a program that writes a snapshot to a path.
+
+- The output path is refused when, after resolving links, it is the indexed root, lies inside
+  it or contains it.
+- An output path that does not exist, or is an empty directory, is used.
+- An existing non-empty directory is replaced only when it is a snapshot: its `manifest.json`
+  parses and has `format` equal to `gosanja-snapshot`. Any other non-empty directory is refused
+  and left unchanged, whatever files it holds.
+- A snapshot is written elsewhere first and moved into place whole. When a run fails at any
+  point, including during that move, what was at the output path before is there afterwards,
+  byte for byte.

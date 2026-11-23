@@ -94,7 +94,7 @@
         "properties": {"src": {"pattern": "^adapter:.+/syntax$"}}
       },
       "then": {
-        "properties": {"resolution": {"const": "declared"}}
+        "properties": {"resolution": {"const": "declared"}, "mechanism": {"const": "unknown"}}
       }
     }
   ],

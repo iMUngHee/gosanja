@@ -30,9 +30,14 @@
     {
       "if": {"required": ["group"]},
       "then": {
+        "required": ["symbol"],
         "properties": {"def": false, "member_of": false, "virtual": false}
       },
       "else": {"required": ["role"]}
+    },
+    {
+      "if": {"anyOf": [{"required": ["group"]}, {"required": ["virtual"]}]},
+      "else": {"required": ["symbol", "def"]}
     },
     {
       "if": {"required": ["virtual"]},
