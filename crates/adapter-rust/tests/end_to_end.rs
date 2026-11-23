@@ -1,0 +1,569 @@
+//! The engine finds the adapter and runs it, and the syntax facts of `fixtures/rust-flow`
+//! reach the snapshot through the join. Every expected value is derived by hand from the
+//! source; every process runs in an environment the test builds, so nothing installed on
+//! the host decides a result.
+#![cfg(unix)]
+
+#[expect(dead_code, reason = "these runs use part of the shared harness")]
+mod support;
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
+use std::process::Output;
+
+use protobuf::Message;
+use scip::types::{Document, Index, Occurrence, PositionEncoding, SymbolRole};
+use serde_json::{Value, json};
+use support::{Case, engine, listing};
+
+const APP: &str = "app/src/main.rs";
+const KIT: &str = "kit/src/lib.rs";
+
+fn fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust-flow")
+}
+
+fn table(snapshot: &Path, name: &str) -> Vec<Value> {
+    fs::read_to_string(snapshot.join(name))
+        .unwrap_or_else(|e| panic!("{name}: {e}"))
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("JSON"))
+        .collect()
+}
+
+#[track_caller]
+fn ok(output: &Output) {
+    assert!(
+        output.status.success(),
+        "exit {:?}\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A case whose project is a copy of the fixture named `rust-flow`, as the golden was made,
+/// with the adapter installed where the engine looks for it.
+fn rust_flow() -> (Case, PathBuf) {
+    let case = Case::new();
+    let root = case.temp.path().join("rust-flow");
+    fs::rename(&case.root, &root).expect("rename the copy");
+    symlink(
+        support::adapter_binary(),
+        case.bin.join("gosanja-adapter-rust"),
+    )
+    .expect("install the adapter");
+    (case, root)
+}
+
+/// `gosanja index --root <root> --out <out>`, the adapter chosen by its marker.
+fn index(case: &Case, root: &Path, out: &Path) -> Output {
+    case.command(engine())
+        .arg("index")
+        .arg("--root")
+        .arg(root)
+        .arg("--out")
+        .arg(out)
+        .output()
+        .expect("gosanja runs")
+}
+
+/// Every file of a snapshot directory, by name.
+fn snapshot_bytes(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<_> = fs::read_dir(dir)
+        .expect("a snapshot")
+        .map(|e| {
+            let e = e.expect("an entry");
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                fs::read(e.path()).expect("readable"),
+            )
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// Every item the adapter describes in the fixture except the inactive one: file, name,
+/// entity kind and the position of its name token (all columns here are ASCII).
+const ITEMS: [(&str, &str, &str, u32, u32); 34] = [
+    (APP, "crate", "rust:module", 0, 0),
+    (APP, "marker", "rust:macro", 5, 13),
+    (APP, "Shell", "rust:struct", 8, 7),
+    (APP, "INNER_VALUE", "rust:constant", 13, 6),
+    (APP, "outer", "rust:function", 14, 3),
+    (APP, "flow", "rust:function", 16, 9),
+    (APP, "nested", "rust:function", 17, 7),
+    (APP, "item", "rust:macro", 18, 17),
+    (APP, "main", "rust:function", 41, 3),
+    (KIT, "crate", "rust:module", 0, 0),
+    (KIT, "slot", "rust:macro", 2, 13),
+    (KIT, "Op", "rust:struct", 5, 11),
+    (KIT, "Flag", "rust:enum", 6, 9),
+    (KIT, "Bits", "rust:union", 7, 10),
+    (KIT, "Count", "rust:type-alias", 8, 9),
+    (KIT, "LIMIT", "rust:constant", 9, 10),
+    (KIT, "TOTAL", "rust:static-variable", 10, 15),
+    (KIT, "Adjust", "rust:trait", 12, 10),
+    (KIT, "Output", "rust:associated-type", 13, 9),
+    (KIT, "START", "rust:constant", 14, 10),
+    (KIT, "required", "rust:trait-method", 15, 7),
+    (KIT, "apply", "rust:method", 20, 11),
+    (KIT, "Output", "rust:associated-type", 24, 9),
+    (KIT, "START", "rust:constant", 25, 10),
+    (KIT, "required", "rust:method", 26, 7),
+    (KIT, "step", "rust:function", 33, 7),
+    (KIT, "make", "rust:function", 34, 7),
+    (KIT, "r#type", "rust:function", 35, 20),
+    (KIT, "foreign_abi", "rust:function", 36, 18),
+    (KIT, "a", "rust:module", 38, 8),
+    (KIT, "restricted", "rust:function", 39, 24),
+    (KIT, "shared", "rust:function", 40, 18),
+    (KIT, "one", "rust:macro", 48, 13),
+    (KIT, "int", "rust:macro", 50, 13),
+];
+
+/// The join on a snapshot of the fixture.
+fn assert_joined(snapshot: &Path) {
+    let entities = table(snapshot, "entities.jsonl");
+    let syntax: BTreeSet<String> = table(snapshot, "syntax.jsonl")
+        .iter()
+        .map(|r| r["key"].as_str().expect("a key").to_owned())
+        .collect();
+    let mut keys = BTreeSet::new();
+    for (file, name, kind, line, col) in ITEMS {
+        let entity = entities
+            .iter()
+            .find(|e| {
+                e["def"]["file"] == file
+                    && e["def"]["name"][0] == line
+                    && e["def"]["name"][1] == col
+            })
+            .unwrap_or_else(|| panic!("no entity at {file}:{line}:{col}"));
+        assert_eq!(
+            (entity["name"].as_str(), entity["kind"].as_str()),
+            (Some(name), Some(kind)),
+            "{file}:{line}:{col}"
+        );
+        let key = entity["key"].as_str().expect("a key");
+        assert!(syntax.contains(key), "no syntax row for {key}");
+        assert!(keys.insert(key.to_owned()), "{key} twice");
+    }
+
+    let gaps = table(snapshot, "gaps.jsonl");
+    let unanchored: Vec<_> = gaps.iter().filter(|g| g["gap"] == "unanchored").collect();
+    assert_eq!(unanchored.len(), 1, "{unanchored:?}");
+    assert_eq!(
+        unanchored[0]["anchor"],
+        json!({"file": KIT, "line": 46, "col": 3})
+    );
+    for kind in ["position-out-of-range", "skipped-file", "failed-layer"] {
+        assert!(
+            !gaps
+                .iter()
+                .any(|g| g["gap"] == kind && g["src"] == "adapter:rust/syntax"),
+            "a {kind} gap for the syntax layer"
+        );
+    }
+
+    assert_calls(&table(snapshot, "relations.jsonl"));
+    assert_syntax_gaps(&gaps);
+    // No row of the syntax layer joins anything but the listed items.
+    assert_eq!(syntax, keys);
+}
+
+/// Every call relation of the fixture and the references the calls keep.
+fn assert_calls(relations: &[Value]) {
+    let calls: Vec<_> = relations.iter().filter(|r| r["rel"] == "call").collect();
+    assert!(
+        calls
+            .iter()
+            .all(|c| c["resolution"] == "declared" && c["mechanism"] == "unknown")
+    );
+    let has_ref = |from: &str, to: &str| {
+        relations
+            .iter()
+            .any(|r| r["rel"] == "ref" && r["from"] == from && r["to"] == to)
+    };
+    let flow = "cargo:flow-app:flow().";
+    // Every call the syntax layer gives the fixture, with the byte column of its callee token:
+    // by path across the member crates after `/*é*/` (byte 29), by method syntax, `outer`
+    // twice (in the closure and in `outer(INNER_VALUE)`, which calls no constant), `make` in
+    // `make()(x)`, the constructor `Some`, and `outer` in the nested function.
+    let found: BTreeSet<(String, String, String)> = calls
+        .iter()
+        .map(|c| {
+            let text = |v: &Value| v.as_str().expect("a key").to_owned();
+            (text(&c["from"]), text(&c["to"]), c["evidence"].to_string())
+        })
+        .collect();
+    let evidence = |sites: &[(u32, u32, u32)]| {
+        json!(
+            sites
+                .iter()
+                .map(|(line, col, end)| json!({"file": APP, "line": line, "col": col, "end": [line, end]}))
+                .collect::<Vec<_>>()
+        )
+        .to_string()
+    };
+    let call = |from: &str, to: &str, sites: &[(u32, u32, u32)]| {
+        (from.to_owned(), to.to_owned(), evidence(sites))
+    };
+    assert_eq!(
+        found,
+        BTreeSet::from([
+            call(flow, "cargo:core:option/Option#Some#", &[(38, 4, 8)]),
+            call(flow, "cargo:flow-app:outer().", &[(28, 16, 21), (33, 4, 9)]),
+            call(flow, "cargo:flow-kit:impl#[Op]apply().", &[(32, 7, 12)]),
+            call(flow, "cargo:flow-kit:make().", &[(34, 4, 8)]),
+            call(flow, "cargo:flow-kit:step().", &[(31, 29, 33)]),
+            call(
+                "cargo:flow-app:nested().",
+                "cargo:flow-app:outer().",
+                &[(17, 18, 23)]
+            ),
+        ])
+    );
+    // Each call keeps its reference; the constant passed to `outer` is a reference only.
+    for to in [
+        "cargo:flow-kit:step().",
+        "cargo:flow-kit:impl#[Op]apply().",
+        "cargo:flow-app:outer().",
+        "cargo:flow-kit:make().",
+        "cargo:flow-app:INNER_VALUE.",
+    ] {
+        assert!(has_ref(flow, to), "{to}");
+    }
+}
+
+/// Every gap of the syntax layer but the unanchored one.
+fn assert_syntax_gaps(gaps: &[Value]) {
+    let flow = "cargo:flow-app:flow().";
+    // Every gap of the syntax layer: the open calls (the outer call of `make()(x)`, `(op.f)(x)`,
+    // the local closure `f`, `(self.f)(x)` in `apply`) and the opaque regions.
+    let syntax_gaps: BTreeSet<String> = gaps
+        .iter()
+        .filter(|g| g["src"] == "adapter:rust/syntax" && g["gap"] != "unanchored")
+        .map(Value::to_string)
+        .collect();
+    let gap = |kind: &str, file: &str, range: [u32; 4], key: Option<&str>| {
+        let mut g = json!({"gap": kind, "file": file, "range": range});
+        if let Some(key) = key {
+            g["keys"] = json!([key]);
+        }
+        g["src"] = json!("adapter:rust/syntax");
+        g.to_string()
+    };
+    let app_module = Some("cargo:flow-app:crate/");
+    let kit_module = Some("cargo:flow-kit:crate/");
+    assert_eq!(
+        syntax_gaps,
+        BTreeSet::from([
+            gap("open-call", APP, [34, 4, 34, 13], None),
+            gap("open-call", APP, [35, 4, 35, 13], None),
+            gap("open-call", APP, [38, 9, 38, 10], None),
+            gap("open-call", KIT, [20, 41, 20, 52], None),
+            gap("opaque-region", APP, [6, 0, 6, 10], app_module), // top-level invocation
+            gap("opaque-region", APP, [10, 4, 10, 14], app_module), // inside the impl block
+            gap("opaque-region", APP, [19, 4, 19, 12], Some(flow)), // item! in the function
+            gap("opaque-region", APP, [36, 12, 36, 25], Some(flow)), // stringify!
+            gap("opaque-region", APP, [37, 4, 37, 17], Some(flow)), // assert!
+            gap("opaque-region", APP, [37, 26, 37, 42], Some(flow)), // type position
+            gap("opaque-region", APP, [37, 55, 37, 71], Some(flow)), // pattern position
+            gap("opaque-region", KIT, [3, 0, 3, 8], kit_module),
+            gap(
+                "opaque-region",
+                KIT,
+                [16, 4, 16, 12],
+                Some("cargo:flow-kit:Adjust#")
+            ),
+        ])
+    );
+}
+
+// The engine chooses the adapter by its marker and gives the checked-in snapshot.
+#[test]
+fn the_engine_finds_and_runs_the_adapter_and_gives_the_golden_snapshot() {
+    let (case, root) = rust_flow();
+    let out = case.temp.path().join("snapshot");
+    ok(&index(&case, &root, &out));
+    ok(&case
+        .command(engine())
+        .arg("validate")
+        .arg(&out)
+        .arg("--root")
+        .arg(&root)
+        .output()
+        .expect("gosanja runs"));
+    assert_eq!(
+        snapshot_bytes(&out),
+        snapshot_bytes(&fixture().join("expected"))
+    );
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(out.join("manifest.json")).expect("a manifest"))
+            .expect("JSON");
+    let scope = &manifest["scopes"][0];
+    assert_eq!(scope["adapter"]["name"], "rust");
+    assert_eq!(scope["adapter"]["contract"], "0.2");
+    assert_eq!(
+        scope["layers"],
+        json!({"base": "present", "syntax": "present", "calls": "absent"})
+    );
+    let list = case
+        .command(engine())
+        .args(["adapter", "list"])
+        .output()
+        .expect("gosanja runs");
+    ok(&list);
+    let text = String::from_utf8_lossy(&list.stdout);
+    let bin = case.bin.display();
+    assert!(text.starts_with("rust "), "{text}");
+    assert!(
+        text.contains(&format!(
+            "  requires rust-analyzer: found {bin}/rust-analyzer\n"
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("  requires cargo: found {bin}/cargo\n")),
+        "{text}"
+    );
+}
+
+// Every described item joins its entity, and the calls and gaps the syntax layer implies are there.
+#[test]
+fn the_syntax_facts_reach_the_snapshot() {
+    let (case, root) = rust_flow();
+    let out = case.temp.path().join("snapshot");
+    ok(&index(&case, &root, &out));
+    assert_joined(&out);
+}
+
+// Runs are deterministic, the adapter's output and the snapshot alike.
+#[test]
+fn two_runs_give_the_same_bytes() {
+    let (case, root) = rust_flow();
+    let mut adapter_outputs = Vec::new();
+    for name in ["a", "b"] {
+        let out = case.temp.path().join(name);
+        fs::create_dir(&out).expect("mkdir");
+        ok(&case
+            .adapter()
+            .arg("index")
+            .arg("--root")
+            .arg(&root)
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .expect("the adapter runs"));
+        adapter_outputs
+            .push(["result.json", "syntax.jsonl"].map(|f| fs::read(out.join(f)).expect(f)));
+    }
+    assert_eq!(adapter_outputs[0], adapter_outputs[1]);
+    let snapshots: Vec<_> = ["snap-a", "snap-b"]
+        .iter()
+        .map(|name| {
+            let out = case.temp.path().join(name);
+            ok(&index(&case, &root, &out));
+            snapshot_bytes(&out)
+        })
+        .collect();
+    assert_eq!(snapshots[0], snapshots[1]);
+}
+
+// The adapter's own extent check, through the engine.
+
+fn definition(symbol: &str, name: [i32; 3], enclosing: [i32; 3]) -> Occurrence {
+    Occurrence {
+        symbol: symbol.to_owned(),
+        symbol_roles: SymbolRole::Definition as i32,
+        range: name.to_vec(),
+        enclosing_range: enclosing.to_vec(),
+        ..Default::default()
+    }
+}
+
+/// The fixture with `app/src/probe.rs` holding `source`, its index extended by a document for
+/// it, indexed through the engine; returns the snapshot directory.
+fn probe(source: &str, occurrences: Vec<Occurrence>) -> (Case, PathBuf) {
+    let (case, root) = rust_flow();
+    fs::write(root.join("app/src/probe.rs"), source).expect("write");
+    let mut index = Index::parse_from_bytes(&fs::read(root.join("index.scip")).expect("an index"))
+        .expect("SCIP");
+    index.documents.push(Document {
+        relative_path: "app/src/probe.rs".into(),
+        language: "rust".into(),
+        position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
+        occurrences,
+        ..Default::default()
+    });
+    fs::write(
+        root.join("index.scip"),
+        index.write_to_bytes().expect("encodable"),
+    )
+    .expect("write");
+    let before = listing(&root);
+    let out = case.temp.path().join("snapshot");
+    ok(&index_run(&case, &root, &out));
+    assert_eq!(listing(&root), before);
+    (case, out)
+}
+
+fn index_run(case: &Case, root: &Path, out: &Path) -> Output {
+    index(case, root, out)
+}
+
+fn syntax_state(snapshot: &Path) -> Value {
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(snapshot.join("manifest.json")).expect("a manifest"))
+            .expect("JSON");
+    manifest["scopes"][0]["layers"]["syntax"].clone()
+}
+
+#[test]
+fn a_local_definition_at_an_anchor_does_not_let_an_outline_past_the_extent() {
+    // `f()` lies at 0:12-15; the index gives `wide` the extent 0:0-10, and a local symbol a
+    // wider one at the same name range, which the engine does not make an entity of.
+    let symbol = "rust-analyzer cargo flow-app 0.1.0 probe/wide().";
+    let (_case, out) = probe(
+        "fn wide() { f(); }\n",
+        vec![
+            definition(symbol, [0, 3, 7], [0, 0, 10]),
+            definition("local 99", [0, 3, 7], [0, 0, 18]),
+        ],
+    );
+    assert_eq!(syntax_state(&out), "present");
+    // The engine joined the row, without its outline.
+    let row = table(&out, "syntax.jsonl")
+        .into_iter()
+        .find(|r| r["key"] == "cargo:flow-app:probe/wide().")
+        .expect("the row of `wide`");
+    assert_eq!(row.get("outline"), None);
+    let gaps = table(&out, "gaps.jsonl");
+    assert!(gaps.iter().any(|g| g["gap"] == "skipped-file"
+        && g["file"] == "app/src/probe.rs"
+        && g["code"] == "outline-outside-definition"));
+    assert!(!gaps.iter().any(|g| g["gap"] == "failed-layer"));
+    // Another function keeps its outline.
+    let flow = table(&out, "syntax.jsonl")
+        .into_iter()
+        .find(|r| r["key"] == "cargo:flow-app:flow().")
+        .expect("the row of `flow`");
+    assert!(flow["outline"].is_array());
+}
+
+// Files the syntax layer cannot read, through the engine.
+#[test]
+fn files_the_layer_cannot_read_become_skipped_file_gaps() {
+    let (case, root) = rust_flow();
+    let files: [(&str, &[u8]); 3] = [
+        ("app/src/broken.rs", b"fn broken( {\n"),
+        ("app/src/latin.rs", b"fn caf\xe9() {}\n"),
+        ("app/src/bom.rs", "\u{feff}fn bom() {}\n".as_bytes()),
+    ];
+    let mut index = Index::parse_from_bytes(&fs::read(root.join("index.scip")).expect("an index"))
+        .expect("SCIP");
+    for (path, bytes) in files {
+        fs::write(root.join(path), bytes).expect("write");
+        index.documents.push(Document {
+            relative_path: path.into(),
+            language: "rust".into(),
+            position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
+            ..Default::default()
+        });
+    }
+    fs::write(
+        root.join("index.scip"),
+        index.write_to_bytes().expect("encodable"),
+    )
+    .expect("write");
+    let out = case.temp.path().join("snapshot");
+    ok(&index_run(&case, &root, &out));
+    assert_eq!(syntax_state(&out), "present");
+    let skipped: Vec<_> = table(&out, "gaps.jsonl")
+        .into_iter()
+        .filter(|g| g["gap"] == "skipped-file")
+        .map(|g| {
+            (
+                g["file"].as_str().map(str::to_owned),
+                g["code"].as_str().map(str::to_owned),
+                g["layer"].clone(),
+            )
+        })
+        .collect();
+    let gap = |f: &str, c: &str| (Some(f.to_owned()), Some(c.to_owned()), json!("syntax"));
+    assert_eq!(
+        skipped,
+        [
+            gap("app/src/bom.rs", "byte-order-mark"),
+            gap("app/src/broken.rs", "parse-failed"),
+            gap("app/src/latin.rs", "unreadable"),
+        ]
+    );
+}
+
+#[test]
+fn a_closure_s_types_reach_the_snapshot_as_opaque_regions() {
+    let symbol = "rust-analyzer cargo flow-app 0.1.0 probe/f().";
+    let source = "fn f() { let c = |v: ty!()| -> ty!() { id(v) }; }\n";
+    let (_case, out) = probe(source, vec![definition(symbol, [0, 3, 4], [0, 0, 49])]);
+    assert_eq!(syntax_state(&out), "present");
+    let opaque: BTreeSet<_> = table(&out, "gaps.jsonl")
+        .into_iter()
+        .filter(|g| g["gap"] == "opaque-region" && g["file"] == "app/src/probe.rs")
+        .map(|g| (g["range"].to_string(), g["keys"].to_string()))
+        .collect();
+    let key = json!(["cargo:flow-app:probe/f()."]).to_string();
+    assert_eq!(
+        opaque,
+        BTreeSet::from([
+            (json!([0, 21, 0, 26]).to_string(), key.clone()),
+            (json!([0, 31, 0, 36]).to_string(), key),
+        ])
+    );
+}
+
+/// A source file the adapter cannot read: the syntax layer skips it and the engine, which
+/// cannot read it either, records it as unavailable to the base layer; the run succeeds.
+#[test]
+fn a_file_without_read_permission_is_skipped_by_both_layers() {
+    use std::os::unix::fs::PermissionsExt;
+    let (case, root) = rust_flow();
+    let locked = root.join("app/src/locked.rs");
+    fs::write(&locked, "fn locked() {}\n").expect("write");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+    if fs::read(&locked).is_ok() {
+        println!("skipped: permissions do not bind the super-user, who may read any file");
+        return;
+    }
+    let mut index = Index::parse_from_bytes(&fs::read(root.join("index.scip")).expect("an index"))
+        .expect("SCIP");
+    index.documents.push(Document {
+        relative_path: "app/src/locked.rs".into(),
+        language: "rust".into(),
+        position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
+        ..Default::default()
+    });
+    fs::write(
+        root.join("index.scip"),
+        index.write_to_bytes().expect("encodable"),
+    )
+    .expect("write");
+    let out = case.temp.path().join("snapshot");
+    let run = index_run(&case, &root, &out);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).expect("chmod");
+    ok(&run);
+    assert_eq!(syntax_state(&out), "present");
+    let about: Vec<Value> = table(&out, "gaps.jsonl")
+        .into_iter()
+        .filter(|g| g["file"] == "app/src/locked.rs")
+        .collect();
+    assert_eq!(
+        about,
+        [
+            json!({"gap": "skipped-file", "file": "app/src/locked.rs", "layer": "syntax", "code": "unreadable", "src": "adapter:rust/syntax"}),
+            json!({"gap": "source-unavailable", "file": "app/src/locked.rs", "src": "scip:rust-analyzer"}),
+        ]
+    );
+}

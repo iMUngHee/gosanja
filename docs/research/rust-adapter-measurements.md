@@ -244,9 +244,23 @@ A separate executable using syn::parse_file measured syn on the original file, i
 
 The adapter design redirects Cargo target and build directories and the temporary directory into the output. It supplies an explicit child environment, checks the resolved Cargo and rustup homes and the registry and git cache locations, disables automatic toolchain installation, and checks locked metadata before indexing. The trials above explain these choices. They do not test all inherited variables, symlink layouts, operating systems or configurations. Project build scripts and procedural macros run with the process's permissions. Project and user configuration can direct compiler output elsewhere. A redirected target directory alone did not contain the source-writing build script.
 
-## Reference recall (step 6, pending)
+## Reference recall
 
-The real adapter test will record the hand-labelled total, the raw SCIP match count, and the snapshot reference match count, each over that same total. Record both exact lists of missed sites and the engine rule responsible for each reference lost during ingestion.
+Local measurement on 2026-11-24 with rust-analyzer 0.3.3049-standalone, rustc 1.99.1 and Gosanja 0.2.0. The corpus is synthetic and small: `fixtures/rust-recall`, one 19-line library written for this purpose. `fixtures/rust-recall/expected-refs.tsv` lists by hand 34 identifier tokens that name something the crate defines, other than that thing's own name token, each with its site (file, zero-based line, start byte column) and the position of the name token it names. The checked-in index was made by `fixtures/regenerate.sh rust-recall`.
+
+```sh
+cargo test -p gosanja-adapter-rust --test recall
+gosanja index --scip fixtures/rust-recall/index.scip --root fixtures/rust-recall --out "$OUT"
+```
+
+| Measure | Rule | Found |
+|---|---|---|
+| Raw | a reference occurrence of the index starts at the site, and its symbol is the symbol of the definition occurrence at the target | 34 of 34 |
+| Snapshot | the site is among the `sites` of a `ref` relation whose `to` is the entity defined at the target | 26 of 34 |
+
+The index misses none of the 34. The snapshot misses eight, all at sites whose occurrence carries a `local` symbol in the index (zero-based line and byte column): the parameters `c` (line 9, column 26), `t` (10, 35) and `d` (11, 33), the type parameter `T` (10, 24), and the `let` bindings `c` (14, 25), `w` (15, 24), `v` (16, 33) and `n` (17, 18). The engine drops them by the rule in `spec/snapshot.md` that local symbols have no key and are not rows, and the snapshot's `dropped_local_references` count is 8. No other rule dropped a reference.
+
+These eight rows name parameters, a type parameter and local variables. The plan for the corpus lists the kinds it covers (calls, method calls, trait methods through generics and `dyn`, re-exports and `use` paths, struct literals and patterns, types in signatures and fields, associated items, tokens inside `macro_rules!` and `format!`-family invocations) and does not name these; the hand-made list includes them because its author counted a local binding as a definition. Over the 26 rows that name an item with a key, both measures find 26 of 26. The test pins the total, both counts and both lists of missing rows as literals. A corpus this small says nothing about recall on real crates.
 
 ## Anchor miss rate (step 7, pending)
 
