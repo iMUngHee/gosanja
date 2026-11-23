@@ -78,13 +78,14 @@
       "type": "object",
       "properties": {
         "id": {"$ref": "adapter-result.schema.json#/$defs/portable", "minLength": 1},
-        "toolchain": {"$ref": "adapter-result.schema.json#/$defs/portable"},
+        "toolchain": {"$ref": "adapter-result.schema.json#/$defs/not-absolute"},
         "target": {"$ref": "adapter-result.schema.json#/$defs/portable"},
         "profile": {"$ref": "adapter-result.schema.json#/$defs/portable"},
-        "features": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/portable"}}
+        "features": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/not-absolute"}}
       },
       "required": ["id"]
     },
-    "portable": {"type": "string", "pattern": "^[^/\\\\]*$"}
+    "portable": {"type": "string", "pattern": "^[^/\\\\]*$"},
+    "not-absolute": {"type": "string", "not": {"pattern": "^(/|\\\\|~|[A-Za-z]:[/\\\\])"}}
   }
 }

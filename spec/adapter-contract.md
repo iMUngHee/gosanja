@@ -105,8 +105,10 @@ A build context:
 
 A build context states what the evidence is true for: a call observed with one feature set may
 not exist with another. Only the fields above are copied into the snapshot manifest; any other
-field is ignored. Their values may not contain `/` or `\`, so that no path can enter a
-snapshot through them; a `result.json` that breaks this fails its schema.
+field is ignored. These values are names, not paths. `id`, `target` and `profile` may not
+contain `/` or `\`. `toolchain` and each feature may contain `/`, as in Cargo's
+`package/feature`, but may not be an absolute path: they may not start with `/`, `\`, `~` or a
+drive prefix such as `C:\`. A `result.json` that breaks this fails its schema.
 
 ## Exit status and outcomes
 

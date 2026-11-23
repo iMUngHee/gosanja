@@ -557,6 +557,20 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
     // No path can enter a snapshot through a build context.
     schemas.assert_invalid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "toolchain": "/home/dev/rustc"}]}));
     schemas.assert_valid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "cwd": "ignored, not copied"}]}));
+    // A qualified feature name is not a path; an absolute path is refused in any spelling.
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "features": ["ascii/std", "derive"]}]}));
+    for absolute in [
+        "/abs/feature",
+        "~/feature",
+        "C:\\feature",
+        "\\\\host\\share",
+    ] {
+        schemas.assert_invalid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "features": [absolute]}]}));
+    }
+    schemas.assert_invalid(
+        "adapter-result",
+        &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "a/b"}]}),
+    );
     // Closed enumerations are closed.
     schemas.assert_invalid(
         "gap",

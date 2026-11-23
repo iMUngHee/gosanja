@@ -126,7 +126,8 @@ A scope entry:
 | `builds` | array | build contexts reported by the adapter, sorted by `id` |
 
 A build context is `{id, toolchain?, target?, profile?, features?}` and nothing else. `id` is
-unique within the scope and is what call evidence refers to. No value contains `/` or `\`.
+unique within the scope and is what call evidence refers to. The values are names, not paths:
+none is an absolute path, and `id`, `target` and `profile` contain no `/` or `\`.
 
 ## files.jsonl
 
