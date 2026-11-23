@@ -387,17 +387,24 @@ fn definition(symbol: &str, name: [i32; 3], enclosing: [i32; 3]) -> Occurrence {
 /// The fixture with `app/src/probe.rs` holding `source`, its index extended by a document for
 /// it, indexed through the engine; returns the snapshot directory.
 fn probe(source: &str, occurrences: Vec<Occurrence>) -> (Case, PathBuf) {
+    probes(vec![("app/src/probe.rs", source.to_owned(), occurrences)])
+}
+
+/// The fixture with more source files, each with a document of its own in the index.
+fn probes(files: Vec<(&str, String, Vec<Occurrence>)>) -> (Case, PathBuf) {
     let (case, root) = rust_flow();
-    fs::write(root.join("app/src/probe.rs"), source).expect("write");
     let mut index = Index::parse_from_bytes(&fs::read(root.join("index.scip")).expect("an index"))
         .expect("SCIP");
-    index.documents.push(Document {
-        relative_path: "app/src/probe.rs".into(),
-        language: "rust".into(),
-        position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
-        occurrences,
-        ..Default::default()
-    });
+    for (path, source, occurrences) in files {
+        fs::write(root.join(path), source).expect("write");
+        index.documents.push(Document {
+            relative_path: path.into(),
+            language: "rust".into(),
+            position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
+            occurrences,
+            ..Default::default()
+        });
+    }
     fs::write(
         root.join("index.scip"),
         index.write_to_bytes().expect("encodable"),
@@ -564,6 +571,55 @@ fn a_file_without_read_permission_is_skipped_by_both_layers() {
         [
             json!({"gap": "skipped-file", "file": "app/src/locked.rs", "layer": "syntax", "code": "unreadable", "src": "adapter:rust/syntax"}),
             json!({"gap": "source-unavailable", "file": "app/src/locked.rs", "src": "scip:rust-analyzer"}),
+        ]
+    );
+}
+
+/// An outline too deep for the engine's reader is withheld, and only that row loses it.
+#[test]
+fn an_outline_too_deep_is_withheld_and_the_layer_kept() {
+    // Each call of the chain holds the one before it: 70 levels.
+    let chain = format!("fn chain() {{ x{}; }}\n", ".m()".repeat(70));
+    let width = i32::try_from(chain.len() - 1).expect("short");
+    let plain = "fn plain() { f(); }\n".to_owned();
+    let (_case, out) = probes(vec![
+        (
+            "app/src/chain.rs",
+            chain,
+            vec![definition(
+                "rust-analyzer cargo flow-app 0.1.0 chain/chain().",
+                [0, 3, 8],
+                [0, 0, width],
+            )],
+        ),
+        (
+            "app/src/plain.rs",
+            plain,
+            vec![definition(
+                "rust-analyzer cargo flow-app 0.1.0 plain/plain().",
+                [0, 3, 8],
+                [0, 0, 19],
+            )],
+        ),
+    ]);
+    assert_eq!(syntax_state(&out), "present");
+    let rows = table(&out, "syntax.jsonl");
+    let row = |key: &str| {
+        rows.iter()
+            .find(|r| r["key"] == key)
+            .unwrap_or_else(|| panic!("no row {key}"))
+            .clone()
+    };
+    assert_eq!(row("cargo:flow-app:chain/chain().").get("outline"), None);
+    assert!(row("cargo:flow-app:plain/plain().")["outline"].is_array());
+    let skipped: Vec<_> = table(&out, "gaps.jsonl")
+        .into_iter()
+        .filter(|g| g["gap"] == "skipped-file")
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            json!({"gap": "skipped-file", "file": "app/src/chain.rs", "layer": "syntax", "code": "outline-too-deep", "src": "adapter:rust/syntax"})
         ]
     );
 }

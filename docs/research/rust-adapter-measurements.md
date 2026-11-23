@@ -22,7 +22,7 @@ With a valid lock in this library, the before/after tree listings also matched f
 | Lock generated, then local package version changed from 0.1.0 to 0.2.0 | Same locked command | 101. “cannot update the lock file … because --locked was passed to prevent this” |
 | Valid lock restored by restoring the original manifest; isolated Cargo home with registry index entry but no crate archive or source | `cargo metadata --format-version 1 --locked --offline` | 101. “failed to download `unicode-ident v1.0.27`” and “attempting to make an HTTP request, but --offline was specified” |
 
-All three failures had empty stdout. All four metadata commands produced zero watched write events. Inotify measures visible filesystem events, not every attempted system call. Cache writes outside the watched project were outside the observation.
+All three failures had empty stdout. All four metadata commands produced zero watched write events. Inotify measures visible filesystem events, not every attempted system call. These observations cover events in the watched project directories and net changes in the before/after listings. They do not measure writes elsewhere.
 
 ## Project build code and workspace writes
 
@@ -172,7 +172,7 @@ These observations describe producer anchors. Whether the adapter should emit a 
 | Binary requiring optional-bin, feature disabled | app/src/gated.rs |
 | Custom build | app/build.rs |
 
-The ninth document was app/src/child.rs. Stderr also reported duplicate symbols for the different target roots and their main functions. The producer emitted an index despite these warnings. Buildability of disabled targets was not tested.
+The ninth document was app/src/child.rs. Stderr also reported duplicate symbols for the different target roots and their main functions. The producer emitted an index despite these warnings. Buildability of disabled targets was not tested. In a separate edition-2021 package named roots (0.1.0), src/lib.rs contained one line, `pub fn library() {}`, and src/main.rs contained `fn main() {}`, both newline-terminated. Running `rust-analyzer scip . --output "$OUT/index.scip"` with 0.3.3049 produced two definition occurrences of `rust-analyzer cargo roots 0.1.0 crate/`: src/lib.rs [0,0,1,0] and src/main.rs [0,0,1,0].
 
 `outside-kit={path="../../outside-kit"}` in the application points to a sibling of the workspace. Locked metadata resolved that dependency. All nine SCIP document paths above are workspace-relative. No document represents outside-kit. The caller's occurrences do include the external symbols `rust-analyzer cargo outside-kit 0.1.0 crate/` and `rust-analyzer cargo outside-kit 0.1.0 letter().`. This was a direct sibling path, not a symlink or a dependency vendored beneath the root.
 
@@ -293,7 +293,7 @@ The most frequent opaque invocations in byteorder were `qc_byte_order!` (62), `b
 - https://github.com/BurntSushi/byteorder/tree/1.5.0 — `ec068eefa042d494475db125c4b034bd8e9e34dd`
 - https://github.com/BurntSushi/memchr/tree/2.7.6 — `9ba486e4ba7e865c0510305c5dacba73988d9f31`
 
-Both clones needed a generated Cargo.lock. Cargo updated the registry index during preparation. For byteorder it downloaded getrandom 0.1.16, rand_chacha 0.2.2, quickcheck 0.9.2, rand_hc 0.2.0, wasi 0.9.0+wasi-snapshot-preview1, rand_core 0.5.1 and rand 0.7.3. For memchr it downloaded quickcheck 1.1.0 and rand 0.10.4. All index runs used offline mode. The generated lockfile SHA-256 digests were `9ff31e9c38e091c79bc21eae3dc0be3aecba656ffec260a73873a630ce4270ee` and `9c4365b17d6655df8fe2dddec58d1c24fbad9003e6a5ee486bcc5bfd815c70c8`, respectively. Generating locks against a later registry may select different versions.
+Both clones needed a generated Cargo.lock. Cargo updated the registry index during preparation. For byteorder it downloaded getrandom 0.1.16, rand_chacha 0.2.2, quickcheck 0.9.2, rand_hc 0.2.0, wasi 0.9.0+wasi-snapshot-preview1, rand_core 0.5.1 and rand 0.7.3. For memchr it downloaded quickcheck 1.1.0 and rand 0.10.4. The registry cache was warm. The caller set `CARGO_NET_OFFLINE=true`, which the adapter does not forward to its tools. Network activity during indexing was not monitored. The generated lockfile SHA-256 digests were `9ff31e9c38e091c79bc21eae3dc0be3aecba656ffec260a73873a630ce4270ee` and `9c4365b17d6655df8fe2dddec58d1c24fbad9003e6a5ee486bcc5bfd815c70c8`, respectively. Generating locks against a later registry may select different versions.
 
 Equivalent Linux commands, with the two built binaries in `BIN` and a fresh absolute directory under `/var/tmp` in `D`:
 

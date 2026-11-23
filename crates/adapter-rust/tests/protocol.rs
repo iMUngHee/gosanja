@@ -68,7 +68,6 @@ fn invalid_invocation() {
     fs::create_dir(&nested).unwrap();
     symlink(&nested, &link).unwrap();
     let file = c.root.join("Cargo.toml");
-    let before = listing(&c.root);
     for (root, out) in [
         (&missing, &c.out),
         (&file, &c.out),
@@ -79,6 +78,7 @@ fn invalid_invocation() {
         (&c.root, &nested),
         (&c.root, &link),
     ] {
+        let before = listing(c.temp.path());
         let o = c
             .adapter()
             .arg("index")
@@ -91,9 +91,8 @@ fn invalid_invocation() {
         assert_eq!(o.status.code(), Some(2));
         let invalid = if root == &c.root { out } else { root };
         assert!(String::from_utf8_lossy(&o.stderr).contains(invalid.to_str().unwrap()));
+        assert_eq!(listing(c.temp.path()), before, "{root:?} -> {out:?}");
     }
-    assert_eq!(before, listing(&c.root));
-    assert_eq!(fs::read_dir(&c.out).unwrap().count(), 0);
 }
 #[test]
 fn cli_options_and_order() {
@@ -161,6 +160,50 @@ fn unwritable_output() {
     assert_eq!(o.status.code(), Some(1));
     assert_ne!(o.stderr, b"");
 }
+fn record_probes(c: &Case) {
+    let real = c.bin.join("real");
+    fs::create_dir(&real).unwrap();
+    let cargo = c.bin.join("cargo");
+    fs::rename(&cargo, real.join("cargo")).unwrap();
+    fs::write(
+        &cargo,
+        r#"#!/bin/sh
+set -eu
+if [ "$1" = --version ]; then echo 'cargo --version' >> "$HOME/probes"; fi
+exec "${0%/*}/real/cargo" "$@"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(cargo, fs::Permissions::from_mode(0o755)).unwrap();
+    c.stub(
+        r#"echo "rust-analyzer $*" >> "$HOME/probes"
+if [ "$1" = --version ]; then echo 'rust-analyzer test'; else exit 1; fi"#,
+    );
+}
+
+fn readonly_failure(c: &Case, cmd: &mut Command, code: &str, tools: &[&str]) -> Vec<u8> {
+    let entries = listing(&c.root);
+    for (path, (mode, _)) in &entries {
+        fs::set_permissions(c.root.join(path), fs::Permissions::from_mode(mode & !0o222)).unwrap();
+    }
+    let log = c.temp.path().join("home/probes");
+    fs::write(&log, "").unwrap();
+    let bytes = failed(c, cmd, code, tools);
+    let expected: Vec<_> = tools
+        .iter()
+        .map(|tool| format!("{tool} --version"))
+        .collect();
+    assert_eq!(
+        fs::read_to_string(log).unwrap().lines().collect::<Vec<_>>(),
+        expected,
+        "{code}"
+    );
+    for (path, (mode, _)) in entries {
+        fs::set_permissions(c.root.join(path), fs::Permissions::from_mode(mode)).unwrap();
+    }
+    bytes
+}
+
 #[test]
 fn preconditions() {
     for (scenario, code, n) in [
@@ -172,7 +215,7 @@ fn preconditions() {
         ("stale", "locked-metadata-failed", 2),
     ] {
         let mut c = Case::new();
-        c.stub("if [ \"$1\" = --version ]; then echo 'rust-analyzer test'; else echo called > \"$HOME/invoked\"; fi");
+        record_probes(&c);
         match scenario {
             "manifest" => fs::remove_file(c.root.join("Cargo.toml")).unwrap(),
             "tool" => fs::remove_file(c.bin.join("rust-analyzer")).unwrap(),
@@ -188,22 +231,13 @@ fn preconditions() {
                 .unwrap();
             }
         }
-        let entries = listing(&c.root);
-        for (path, (mode, _)) in &entries {
-            fs::set_permissions(c.root.join(path), fs::Permissions::from_mode(mode & !0o222))
-                .unwrap();
-        }
         let tools = &["cargo", "rust-analyzer"][..n];
-        let bytes = failed(&c, &mut c.index(), code, tools);
+        let bytes = readonly_failure(&c, &mut c.index(), code, tools);
         if scenario == "stale" {
             fs::remove_dir_all(&c.out).unwrap();
             fs::create_dir(&c.out).unwrap();
-            assert_eq!(bytes, failed(&c, &mut c.index(), code, tools));
+            assert_eq!(bytes, readonly_failure(&c, &mut c.index(), code, tools));
         }
-        for (path, (mode, _)) in entries {
-            fs::set_permissions(c.root.join(path), fs::Permissions::from_mode(mode)).unwrap();
-        }
-        assert!(!c.temp.path().join("home/invoked").exists());
     }
 }
 #[test]
@@ -247,9 +281,54 @@ fn tool_home_paths() {
         } else {
             "tool-home-inside-root"
         };
-        failed(&c, c.index().env(key, path), code, &[]);
+        record_probes(&c);
+        readonly_failure(&c, c.index().env(key, path), code, &[]);
     }
 }
+#[test]
+fn optional_tool_environment() {
+    let keys = [
+        "RUSTUP_TOOLCHAIN",
+        "RUSTUP_DIST_SERVER",
+        "RUSTUP_UPDATE_ROOT",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    ];
+    for supplied in [false, true] {
+        let c = Case::new();
+        c.stub(
+            r#"if [ "$1" = --version ]; then echo 'rust-analyzer test'; else
+            env > "$HOME/indexer-env"
+            cp "$2/index.scip" "$4"
+        fi"#,
+        );
+        let mut cmd = c.index();
+        if supplied {
+            for key in keys {
+                cmd.env(key, format!("value-{key}"));
+            }
+        }
+        assert_eq!(c.run(&mut cmd)["layers"]["base"]["status"], "ok");
+        let log = fs::read_to_string(c.temp.path().join("home/indexer-env")).unwrap();
+        for key in keys {
+            let actual = log
+                .lines()
+                .filter_map(|line| line.split_once('='))
+                .find(|(k, _)| *k == key);
+            let value = format!("value-{key}");
+            assert_eq!(actual, supplied.then_some((key, value.as_str())), "{key}");
+        }
+    }
+}
+
 #[test]
 fn child_environment_and_workspace_writes() {
     for mode in ["readonly", "configured", "hostile"] {
