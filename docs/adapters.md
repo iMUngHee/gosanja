@@ -116,6 +116,11 @@ gosanja: no installed adapter has a marker file in fixtures/go-basic
 name one with --adapter <name or path>, or index a SCIP file with --scip <file>
 ```
 
+If you have also built the Rust adapter (`cargo build -p gosanja-adapter-rust`), it sits
+beside the `gosanja` executable and recognises `Cargo.toml` as well. The list then shows
+`demo` and `rust`, the second command is refused because two adapters match, and you choose
+with `--adapter demo`.
+
 ## What is not there yet
 
 - Discovery has been exercised on Unix only. The rule for `.exe` names on Windows is

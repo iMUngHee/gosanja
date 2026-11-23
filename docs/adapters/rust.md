@@ -21,8 +21,10 @@ project, and each is tested:
 - It refuses to run when cargo's home, its `registry` or `git` directory, or rustup's home lies
   inside the project.
 - It never lets rustup install a toolchain.
-- It checks that `Cargo.lock` exists and is complete before it runs anything that would write
-  one.
+- It checks with `cargo metadata --locked` that `Cargo.lock` exists and is complete before it
+  runs anything that would write one.
+- It resolves cargo's and rustup's homes to absolute paths before it starts a tool, and gives
+  the tools exactly the paths it checked.
 
 Two things are outside these measures, as the adapter contract allows, and you should know
 them:
@@ -30,7 +32,8 @@ them:
 - **Your build scripts and procedural macros run.** `rust-analyzer scip` builds and runs them
   to see the code they generate, as `cargo build` and your editor do. A build script that
   writes into its own source directory will do so.
-- **Your cargo configuration stays in force**, apart from the two build directories. A
+- **Your cargo configuration stays in force**, the project's and the one in your cargo home,
+  apart from the two build directories. A
   compiler flag set there, for example an `--emit` path in `build.rustflags`, is applied as
   written.
 
@@ -62,25 +65,30 @@ target/debug/gosanja validate /tmp/gosanja-rust-flow --root fixtures/rust-flow
 
 ## When it cannot index
 
-A problem with the project is reported as a failed base layer with a code, and the engine
-exits 3 with `base layer failed: <code>`. What the tools printed is on standard error.
+Once the adapter runs, a problem with the project is reported as a failed base layer with a
+code, and the engine exits 3 with `base layer failed: <code>`. What a failing tool printed on
+its standard error is passed on. (When you name no adapter and the root has no `Cargo.toml`,
+the adapter is never chosen: the engine exits 2 and says that no installed adapter has a
+marker file there.)
 
 | Code | Meaning |
 | --- | --- |
-| `manifest-missing` | no `Cargo.toml` in the root |
-| `tool-home-inside-root` | cargo's or rustup's home, or cargo's `registry` or `git`, is in the project |
+| `manifest-missing` | no `Cargo.toml` in the root (seen only when the adapter was named with `--adapter`) |
+| `tool-home-inside-root` | cargo's or rustup's home, or cargo's `registry` or `git`, is in the project, or its path holds a `.` or `..` in a part that does not exist yet and so cannot be placed |
 | `tool-home-unresolvable` | such a home could not be resolved |
-| `toolchain-missing` | `cargo` or `rust-analyzer` could not be started |
+| `toolchain-missing` | `cargo --version` or `rust-analyzer --version` could not be started or failed |
 | `manifest-invalid` | `cargo metadata` rejects the manifests |
 | `not-workspace-root` | the root is not the root of its workspace |
 | `lockfile-missing` | no `Cargo.lock`; create one with `cargo generate-lockfile` |
 | `locked-metadata-failed` | the lockfile is out of date, or a dependency cannot be fetched |
 | `indexer-failed` | `rust-analyzer scip` failed or wrote no index |
 | `index-unreadable` | the index could not be decoded |
-| `index-incomplete` | the index lacks the root file of a library or binary of the workspace |
+| `index-incomplete` | the index lists no file, or lacks the root file of a library, procedural macro or binary of the workspace (a binary with `required-features` may be absent) |
 
-An invocation that is itself wrong (a root that is not a directory, an output directory that
-is missing, not empty, or inside the root) exits 2 and writes nothing.
+These codes are what you see through `gosanja index`, which creates the output directory
+itself. Run directly, the adapter also refuses an invocation that is itself wrong (a root
+that is not a directory, an output directory that is missing, not empty, or inside the root):
+it exits 2 and writes nothing.
 
 ## What the syntax layer reports
 
@@ -98,12 +106,15 @@ call when the index has a reference exactly there. A call whose callee is not a 
 ## What it cannot see
 
 - **Macro invocations.** The adapter does not expand macros and does not guess what their
-  tokens mean. Every invocation, in any position, is an `opaque` node and an `opaque-region`
-  gap. On test-heavy code this is most of the gaps: `assert_eq!` alone accounts for many. The
+  tokens mean. An invocation inside a function body, or written as an item in a trait, a
+  module or a file, is an `opaque` node and an `opaque-region` gap. One in a place that has
+  no outline is not reported at all: a field type, a function's parameter or return type, the
+  initializer of a constant or static. On test-heavy code this is most of the gaps: `assert_eq!` alone accounts for many. The
   references inside the invocation are still in the base layer.
 - **Items that exist only after expansion** have no syntax row.
-- **Items under a `#[cfg]` that is not active.** The adapter sees them, the index does not, and
-  each becomes an `unanchored` gap.
+- **Items under a `#[cfg]` that is not active.** In a file the index lists, the adapter sees
+  them, the index does not, and each becomes an `unanchored` gap. A file that the index does
+  not list at all, such as the file of an inactive `mod`, is never read.
 - **Enum variants, fields and items in `extern` blocks** have no syntax row, and constants and
   statics have no outline.
 - **A file that does not parse, is not UTF-8, cannot be read or starts with a byte-order

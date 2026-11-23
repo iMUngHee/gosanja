@@ -64,7 +64,7 @@ See [research/structural-diff-identity.md](research/structural-diff-identity.md)
 | `gosanja-schema` | `crates/schema` | Types of both interfaces and the version compatibility rules. Shared with adapters written in Rust. |
 | `gosanja-core` | `crates/core` | Decoding, keys, the graph, side-car joins, writing, validation, running adapters. Knows no language. |
 | `gosanja` | `crates/cli` | The command line. Reads files, finds installed adapters (`discover`), calls the core, sets exit codes. |
-| `gosanja-adapter-rust` | `crates/adapter-rust` | The Rust adapter, a separate program: runs `rust-analyzer scip` for the base layer and reads source with `syn` for the syntax layer. Depends on `gosanja-schema` only. |
+| `gosanja-adapter-rust` | `crates/adapter-rust` | The Rust adapter, a separate program: runs `rust-analyzer scip` for the base layer and reads source with `syn` for the syntax layer. Of this workspace's crates it depends on `gosanja-schema` only; its tests also use the core. |
 
 Core modules:
 

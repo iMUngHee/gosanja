@@ -4,7 +4,7 @@ Local observations on 2026-11-24, Linux x86_64. The synthetic probes used rustc 
 
 For the synthetic probes, in command examples ROOT is the workspace, OUT is an existing directory outside it, and TARGET and BUILD are pre-created directories under OUT. Cargo ran offline with cached dependencies. One workspace had a binary and library package, a procedural-macro member, a build script, unicode-ident 1.0.27 from the registry and a sibling path dependency. The configuration probes used a locked library named counter with no project build code, optionally depending on itoa 1.0.18.
 
-## Lockfile creation and preflight (F1, F3)
+## Lockfile creation and preflight
 
 In a dependency-free edition-2021 library with its target directory redirected, each of the following commands started with Cargo.lock missing and finished successfully with a nonempty Cargo.lock. The index output was outside the workspace.
 
@@ -24,7 +24,7 @@ With a valid lock in this library, the before/after tree listings also matched f
 
 All three failures had empty stdout. All four metadata commands produced zero watched write events. Inotify measures visible filesystem events, not every attempted system call. Cache writes outside the watched project were outside the observation.
 
-## Project build code and workspace writes (F2, D2)
+## Project build code and workspace writes
 
 The input was a writable two-member workspace: an application with a build script, a procedural macro crate defining an identity attribute used by the application, a cached registry dependency and a sibling path dependency. Starting with Cargo.lock present, the runner sets `CARGO_TARGET_DIR` outside the workspace, sets Cargo offline, and runs these commands from the trial directory:
 
@@ -45,7 +45,7 @@ The second input replaces `app/build.rs` with a main function calling `std::fs::
 
 Both index commands exited 0. These comparisons cover the final workspace contents and modes. They do not detect transient writes subsequently undone, mtime-only updates or writes outside the workspace.
 
-## Cargo build directories, temporary files and logging (D2)
+## Cargo build directories, temporary files and logging
 
 Input: one locked crate named counter with a `[workspace]` section, one library function and no dependencies. Both paths below are under its root. In the template cases the build setting is `"{workspace-root}/configured-build"`. TARGET and BUILD below denote absolute, pre-created directories under that case's output, outside the project.
 
@@ -93,7 +93,7 @@ rust-analyzer scip . --config-path "$OUT/settings.json" --output "$OUT/settings.
 
 The supplied JSON set cargo.buildScripts.enable and procMacro.enable to false. The indexer logged both a configuration diagnostic and “Loading build script probe run”. This run establishes that the script ran with that input file; it does not establish how the indexer interpreted each setting.
 
-## Cargo cache placement (D2)
+## Cargo cache placement
 
 Input: counter now depends on exactly itoa 1.0.18. The same valid lockfile is present before every run. Cargo's home points to an existing `project/cache` directory. Both build-directory overrides point outside. Each case ran:
 
@@ -110,7 +110,7 @@ CARGO_HOME="$ROOT/cache" cargo metadata --locked --offline --format-version 1
 
 All listed changes are under cache/. The input project's Cargo.lock remained byte-identical. Offline failure still creates cache entries in the project.
 
-## Definition anchors and enclosing ranges (F4)
+## Definition anchors and enclosing ranges
 
 The probe decoded the SCIP Document occurrences with the Definition role, reading the packed range and enclosing_range fields. Each pair below is name range, then enclosing range. The SCIP triplet is [line,start,end]; a four-element range is [startLine,startColumn,endLine,endColumn]. Byte columns and lines are zero-based.
 
@@ -157,7 +157,7 @@ A second index of a two-member fixture (flow-app and flow-kit) contained the fol
 
 These observations describe producer anchors. Whether the adapter should emit a syntax row for a variant, field or other construct is a separate interface decision.
 
-## Target documents and sibling dependencies (F5)
+## Target documents and sibling dependencies
 
 `cargo metadata --locked --format-version 1` recorded an empty enabled-feature list for trial-app. Comparing its target paths with the index document list gave:
 
@@ -200,7 +200,7 @@ $ wc -c sibling/out/snapshot/gaps.jsonl
 0 sibling/out/snapshot/gaps.jsonl
 ```
 
-## Fixed-path index reproducibility (F6)
+## Fixed-path index reproducibility
 
 The runner executed two identical scip commands at the same path, specifying two cache-priming threads, before changing the build script. A second runner restored the original fixture and ran the same indexer four more times with its default thread setting. Output files and Cargo targets are outside the workspace. The first pair compared equal with `cmp a.scip b.scip`. All six files were 5,902 bytes and had this SHA-256:
 
@@ -210,7 +210,7 @@ aa65ff4869181b0ca88a951a3d6c309c73f38f2a909a98b2b03432a1932b5d5e
 
 This is evidence for one dependency-bearing workspace at a fixed path on one Linux host. Stderr varied between runs. The index metadata contains the absolute project URI. Relocated, cross-machine and cross-version byte equality remain unmeasured.
 
-## Missing pinned toolchain (F7, D2)
+## Missing pinned toolchain
 
 The probe writes a toolchain file pinning `nightly-2001-01-01`, removes the toolchain override from the child environment and sets `RUSTUP_DIST_SERVER` to an ephemeral loopback HTTP server. The listener records paths and always answers 404. From that project the script runs `cargo --version` twice.
 
@@ -225,7 +225,7 @@ Both commands had empty stdout. The listener served no toolchain data. These res
 RUSTUP_HOME="$ROOT/new-rustup" RUSTUP_TOOLCHAIN=1.99.1 RUSTUP_AUTO_INSTALL=0 cargo --version
 ```
 
-## Unicode columns, span joins and BOM (F8)
+## Unicode columns, span joins and BOM
 
 `(cd span && cargo run --offline --quiet)` runs an ordinary executable using proc-macro2. Each input `/*é*/ fn first() {}`, `/*界*/ fn first() {}` and `/*🦀*/ fn first() {}` gave the identical half-open name span, line 1, columns 9–14. The characters take two, three and four UTF-8 bytes respectively. Columns count Unicode scalar values in these probes. Joining the first token's span to the identifier returned Some, columns 6–14, in all three cases. This exercises joins within one input outside a procedural macro.
 
