@@ -673,7 +673,9 @@ fn the_root_is_checked_before_any_adapter_is_described() {
     let file = root.join("README");
     let before = fs::read(&file).expect("read");
     let run = world.index(&file, &out);
-    run.expect(3).says(&file.to_string_lossy());
+    // Said as such, not as a failed lookup inside it.
+    run.expect(3)
+        .says(&format!("the root {} is not a directory", file.display()));
     quiet(&run);
     assert_eq!(fs::read(&file).expect("read"), before);
 
@@ -881,6 +883,55 @@ fn empty_and_relative_entries_are_ignored_and_one_with_a_space_is_searched() {
     assert!(!stdout.contains("here"), "{stdout}");
     assert_eq!(run.record("relative"), Vec::<String>::new());
     assert_eq!(run.record("here"), Vec::<String>::new());
+}
+
+#[test]
+fn search_entries_that_are_no_directory_are_ignored() {
+    let mut world = World::new();
+    world.install("rust", &Fake::default());
+    let file = world.base().join("a-file");
+    fs::write(&file, "not a directory\n").expect("write");
+    world.search = vec![
+        world.base().join("missing").into_os_string(),
+        file.clone().into_os_string(),
+        file.join("child").into_os_string(),
+        world.adapters().into_os_string(),
+    ];
+    let run = world.list();
+    run.expect(0);
+    assert!(run.stdout().starts_with("rust "), "{}", run.stdout());
+}
+
+#[test]
+fn a_search_entry_that_cannot_be_inspected_stops_discovery() {
+    let mut world = World::new();
+    if !permissions_bind(&world) {
+        return;
+    }
+    world.install("rust", &Fake::markers(RUST));
+    let locked = world.dir("locked");
+    let behind = locked.join("inner");
+    world.search.insert(0, behind.clone().into_os_string());
+    let root = world.project("project");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+    let runs = [world.list(), world.index(&root, &world.base().join("out"))];
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod");
+    for run in &runs {
+        run.expect(3).says(&behind.to_string_lossy());
+        assert_eq!(run.record("rust"), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn adapter_takes_list_or_describe_only() {
+    let world = World::new();
+    world.install("rust", &Fake::default());
+    let run = world.run(&["adapter".as_ref(), "show".as_ref(), "rust".as_ref()]);
+    run.expect(2).says("usage:");
+    assert_eq!(run.record("rust"), Vec::<String>::new());
+    world
+        .run(&["adapter".as_ref(), "list".as_ref(), "rust".as_ref()])
+        .expect(2);
 }
 
 #[test]

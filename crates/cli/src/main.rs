@@ -51,15 +51,6 @@ struct Failure {
     message: String,
 }
 
-impl std::fmt::Display for Failure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-/// Carries a decided outcome out of the publication step.
-impl std::error::Error for Failure {}
-
 fn fail(code: u8, message: impl Into<String>) -> Failure {
     Failure {
         code,
@@ -318,32 +309,36 @@ fn index(options: &Options) -> Result<(), Failure> {
     check_root(root)?;
     // The output is judged first, as for every source; then nothing is described before the
     // cache is known to lie outside the root and the output.
-    publish::publish(root, out, |stage| {
-        let cache = adapter_cache(root, out)
-            .map_err(|e| io::Error::other(fail(INPUT_FAILED, e.to_string())))?;
+    // A refusal decided inside the publication step keeps its own code and message.
+    let mut decided = None;
+    let mut decide = |failure: Failure| {
+        decided = Some(failure);
+        io::Error::other("decided")
+    };
+    let published = publish::publish(root, out, |stage| {
+        let cache =
+            adapter_cache(root, out).map_err(|e| decide(fail(INPUT_FAILED, e.to_string())))?;
         let described = match adapter_argument {
             Some(which) => named(which.as_os_str()),
             None => automatic(root),
         }
-        .map_err(io::Error::other)?;
+        .map_err(&mut decide)?;
         let sources = FsSource::new(root)?;
         fs::create_dir_all(&cache)?;
         let output = described.run(root, &cache).map_err(io::Error::other)?;
         let snapshot =
             sidecar::build(output, &sources, &project_name(root)).map_err(io::Error::other)?;
         write::write_snapshot(stage, &snapshot)
-    })
-    .map_err(|e| {
+    });
+    published.map_err(|e| {
+        if let Some(failure) = decided {
+            return failure;
+        }
         let code = match &e {
-            publish::PublishError::Io(error) => {
-                let cause = error.get_ref();
-                if let Some(decided) = cause.and_then(|c| c.downcast_ref::<Failure>()) {
-                    return fail(decided.code, decided.message.clone());
-                }
-                cause
-                    .and_then(|c| c.downcast_ref::<adapter::AdapterError>())
-                    .map_or(INPUT_FAILED, adapter::AdapterError::exit_code)
-            }
+            publish::PublishError::Io(error) => error
+                .get_ref()
+                .and_then(|cause| cause.downcast_ref::<adapter::AdapterError>())
+                .map_or(INPUT_FAILED, adapter::AdapterError::exit_code),
             publish::PublishError::Refused(_) => REFUSED,
         };
         fail(code, e.to_string())

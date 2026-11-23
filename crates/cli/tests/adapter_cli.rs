@@ -245,6 +245,12 @@ fn invalid_cache_paths_report_why_preparation_failed() {
     check(&result, 3);
     assert!(!tmp.path().join("intermediate").exists());
     assert!(!tmp.path().join("other").exists());
+    // The traversal is refused as written, also when it would resolve.
+    fs::create_dir(tmp.path().join("intermediate")).unwrap();
+    let result = cli("good", &root, &output, &cache);
+    check(&result, 3);
+    assert!(!tmp.path().join("other").exists());
+    assert!(!output.exists());
 
     let cache = file.join("subdir");
     let expected = cache.canonicalize().unwrap_err().to_string();
