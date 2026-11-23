@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use gosanja_core::publish;
 use gosanja_core::validate;
@@ -69,10 +69,10 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
             if subcommand != "describe" {
                 return Err(usage("expected adapter describe <program>"));
             }
-            let (manifest, _) = adapter::describe(Command::new(program))
+            let described = describe_adapter(Path::new(program))
                 .map_err(|e| fail(e.exit_code(), e.to_string()))?;
             let mut stdout = io::stdout().lock();
-            serde_json::to_writer(&mut stdout, &manifest)
+            serde_json::to_writer(&mut stdout, described.manifest())
                 .map_err(|e| fail(INPUT_FAILED, e.to_string()))?;
             writeln!(stdout).map_err(|e| fail(INPUT_FAILED, e.to_string()))
         }
@@ -129,6 +129,13 @@ impl Options {
     }
 }
 
+fn describe_adapter(path: &Path) -> Result<adapter::Described, adapter::AdapterError> {
+    adapter::describe(adapter::Invocation::new(
+        std::path::absolute(path)?,
+        Vec::new(),
+    )?)
+}
+
 fn index(options: &Options) -> Result<(), Failure> {
     if !options.positional.is_empty() {
         return Err(usage("index takes no positional argument"));
@@ -142,8 +149,9 @@ fn index(options: &Options) -> Result<(), Failure> {
         return publish::publish(root, out, |stage| {
             let sources = FsSource::new(root)?;
             let cache = adapter_cache(root)?;
-            let output =
-                adapter::run(|| Command::new(program), root, &cache).map_err(io::Error::other)?;
+            let output = describe_adapter(program)
+                .and_then(|d| d.run(root, &cache))
+                .map_err(io::Error::other)?;
             let snapshot =
                 sidecar::build(output, &sources, &project_name(root)).map_err(io::Error::other)?;
             write::write_snapshot(stage, &snapshot)

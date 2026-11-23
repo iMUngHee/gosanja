@@ -211,6 +211,35 @@ fn a_relation_written_twice_is_reported_and_a_repeated_gap_is_not() {
     assert_eq!(check(&gaps), []);
 }
 
+/// One `skipped-file` row stands for one distinct file and code of a layer, wherever its
+/// repetition sorts and whatever unknown fields either copy carries.
+#[test]
+fn a_skipped_file_fact_is_written_once() {
+    let gaps = |rows: &[&str]| {
+        let files = appended(golden(), "gaps.jsonl", rows);
+        let count = rows.len();
+        with(files, "manifest.json", |t| {
+            t.replace(r#""gaps":0"#, &format!(r#""gaps":{count}"#))
+        })
+    };
+    let fact =
+        r#"{"gap":"skipped-file","file":"a.rs","layer":"base","code":"x","src":"adapter:x/base"}"#;
+    assert_eq!(
+        check(&gaps(&[fact, fact])),
+        [("gaps.jsonl", "duplicate-row")]
+    );
+    // Sorted by bytes, another row lies between the two copies of the fact.
+    let with_extra = r#"{"gap":"skipped-file","aa":1,"file":"a.rs","layer":"base","code":"x","src":"adapter:x/base"}"#;
+    let between =
+        r#"{"gap":"skipped-file","file":"a.rs","layer":"base","code":"w","src":"adapter:x/base"}"#;
+    let found = validate::validate(&gaps(&[with_extra, between, fact]), None).expect("own version");
+    assert_eq!(codes(&found), [("gaps.jsonl", "duplicate-row")]);
+    assert_eq!(found[0].line, Some(3), "{found:?}");
+    // Another layer or another code is another fact.
+    let other_layer = r#"{"gap":"skipped-file","file":"a.rs","layer":"syntax","code":"x","src":"adapter:x/syntax"}"#;
+    assert_eq!(check(&gaps(&[between, fact, other_layer])), []);
+}
+
 /// The sort key of `relations.jsonl` is (`from`, `rel`, `to`, …), which is not the byte order
 /// of a row that starts `from`, `to`, `rel`.
 #[test]
@@ -327,6 +356,58 @@ fn a_gap_must_name_listed_files_and_existing_rows() {
         r#"{"gap":"open-call","file":"src/lib.rs","range":[9,0,9,1],"layer":"syntax","src":"adapter:x/syntax"}"#,
     );
     assert_eq!(check(&outside), [("gaps.jsonl", "position-outside-file")]);
+}
+
+#[test]
+fn a_skipped_file_gap_names_a_file_that_need_not_be_listed() {
+    let gaps = |rows: &[&str]| {
+        let files = appended(golden(), "gaps.jsonl", rows);
+        let count = rows.len();
+        with(files, "manifest.json", |t| {
+            t.replace(r#""gaps":0"#, &format!(r#""gaps":{count}"#))
+        })
+    };
+    let skipped = gaps(&[
+        r#"{"gap":"skipped-file","file":"src/generated.rs","layer":"base","code":"parse-error","src":"adapter:x/base"}"#,
+        r#"{"gap":"skipped-file","file":"src/generated.rs","layer":"syntax","code":"parse-error","src":"adapter:x/syntax"}"#,
+        r#"{"gap":"skipped-file","file":"src/lib.rs","layer":"calls","code":"too-large","src":"adapter:x/calls"}"#,
+    ]);
+    assert_eq!(check(&skipped), []);
+    assert_eq!(check_with_root(&skipped), []);
+    for malformed in [
+        r#"{"gap":"skipped-file","file":"src/lib.rs","range":[0,0,0,1],"layer":"base","code":"x","src":"adapter:x/base"}"#,
+        r#"{"gap":"skipped-file","file":"src/lib.rs","layer":"syntax","code":"x","src":"adapter:x/base"}"#,
+        r#"{"gap":"skipped-file","file":"src/lib.rs","layer":"base","src":"adapter:x/base"}"#,
+        r#"{"gap":"open-call","file":"src/lib.rs","range":[0,0,0,1],"layer":"base","src":"adapter:x/base"}"#,
+    ] {
+        let found = check(&gaps(&[malformed]));
+        let of_the_table: Vec<_> = found.iter().filter(|(f, _)| *f == "gaps.jsonl").collect();
+        assert_eq!(of_the_table, [&("gaps.jsonl", "schema")], "{malformed}");
+    }
+}
+
+#[test]
+fn only_a_call_node_may_name_a_callee_and_it_may_leave_it_out() {
+    let row = |outline: &str| {
+        let files = appended(
+            golden(),
+            "syntax.jsonl",
+            &[&format!(
+                r#"{{"key":"cargo:demo:views/render().","outline":[{outline}],"src":"adapter:x/syntax"}}"#
+            )],
+        );
+        with(files, "manifest.json", |t| {
+            t.replace(r#""syntax":0"#, r#""syntax":1"#)
+        })
+    };
+    let without_name = row(
+        r#"{"k":"call","range":[6,8,6,38],"children":[{"k":"call","range":[6,8,6,26],"callee":[6,16,6,19]}]}"#,
+    );
+    assert_eq!(check(&without_name), []);
+    let found = check(&row(
+        r#"{"k":"branch","range":[3,4,7,5],"callee":[3,7,3,12]}"#,
+    ));
+    assert!(found.contains(&("syntax.jsonl", "schema")), "{found:?}");
 }
 
 #[test]
@@ -488,6 +569,15 @@ fn unknown_gap_layers_and_nested_outline_kinds_are_unknown_values() {
         assert_eq!((read.gaps.len(), read.syntax.len()), (0, 0), "{name}");
         assert_eq!(read.entities.len(), 1, "{name}");
     }
+}
+
+#[test]
+fn a_newer_gap_kind_may_name_the_base_layer() {
+    let gap = r#"{"gap":"future","file":"a.rs","layer":"base","src":"adapter:x/base"}"#;
+    let newer_reader = read(&newer(&[("gaps.jsonl", gap)]), 0);
+    // The entity of `newer` with an unknown role is the other skipped row.
+    assert_eq!((newer_reader.gaps.len(), newer_reader.skipped), (0, 2));
+    assert_eq!(codes(&newer_reader.diagnostics), []);
 }
 
 #[test]

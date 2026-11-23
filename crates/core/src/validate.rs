@@ -10,8 +10,8 @@ use std::fmt;
 use gosanja_schema::compat::{self, Acceptance, Refusal, RowVerdict, Version};
 use gosanja_schema::position::{Range, Site};
 use gosanja_schema::snapshot::{
-    EntityRow, ExternalRow, FORMAT, FileRow, GapRow, Manifest, RelationRow, SCHEMA_VERSION,
-    SyntaxRow,
+    EntityRow, ExternalRow, FORMAT, FileRow, GapKind, GapRow, Manifest, RelationRow,
+    SCHEMA_VERSION, SyntaxRow,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -676,7 +676,21 @@ impl Checks {
             .map(|(_, e)| e.key.as_str())
             .chain(snap.externals.iter().map(|(_, e)| e.key.as_str()))
             .collect();
+        // One `skipped-file` row per distinct file and code of a layer; its copies need not be
+        // neighbours, since unknown fields take part in the byte order.
+        let mut skipped = BTreeMap::new();
         for (line, g) in &snap.gaps {
+            if g.gap == GapKind::SkippedFile {
+                let first = *skipped.entry((g.layer, &g.file, &g.code)).or_insert(*line);
+                if first != *line {
+                    self.diag(
+                        "gaps.jsonl",
+                        *line,
+                        "duplicate-row",
+                        format!("the skipped file of line {first} again"),
+                    );
+                }
+            }
             for key in g.keys.iter().flatten() {
                 if !keys.contains(key.as_str()) {
                     self.diag(

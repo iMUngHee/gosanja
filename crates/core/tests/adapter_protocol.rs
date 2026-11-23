@@ -1,7 +1,8 @@
 //! Process-level checks for the adapter contract and snapshot publication.
+mod support;
 use gosanja_core::{adapter, publish};
 use gosanja_schema::snapshot::{FailedDetail, GapKind, LayerState};
-use std::{fs, io, path::Path, process::Command};
+use std::{fs, io, path::Path};
 use tempfile::tempdir;
 
 fn run(
@@ -9,19 +10,7 @@ fn run(
     root: &Path,
     parent: &Path,
 ) -> Result<adapter::AdapterOutput, adapter::AdapterError> {
-    adapter::run(
-        || {
-            let mut cmd = Command::new("sh");
-            cmd.arg(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../fixtures/fake-adapter/adapter.sh"
-            ))
-            .args(["--mode", mode]);
-            cmd
-        },
-        root,
-        parent,
-    )
+    support::fake(mode)?.run(root, parent)
 }
 
 #[test]
@@ -220,4 +209,44 @@ fn missing_output_parent_is_a_refusal_and_creates_nothing() {
     .unwrap_err();
     assert_eq!(err.exit_code(), 2);
     assert!(!missing.exists());
+}
+
+#[test]
+fn invocation_rejects_programs_that_are_not_absolute() {
+    for program in ["sh", "./adapter.sh"] {
+        assert_eq!(
+            adapter::Invocation::new(program.into(), vec![])
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+}
+
+#[test]
+fn reported_skips_follow_layer_availability_and_nameless_calls_keep_their_range() {
+    let temp = tempdir().unwrap();
+    let root = support::fixture("rust-basic");
+    let skipped = run("skipped", &root, temp.path()).unwrap();
+    assert_eq!(
+        skipped
+            .gaps
+            .iter()
+            .filter(|g| g.gap == GapKind::SkippedFile)
+            .count(),
+        4
+    );
+    // Even an ok result entry cannot supply syntax that the manifest never offered.
+    let absent = run("skip-not-offered", &root, temp.path()).unwrap();
+    assert_eq!(absent.layers.syntax, LayerState::Absent);
+    assert_eq!(absent.gaps.len(), 1);
+    assert_eq!(absent.gaps[0].gap, GapKind::MissingLayer);
+    let unnamed = run("nameless-call", &root, temp.path()).unwrap();
+    let node = &unnamed.syntax[0].outline.as_ref().unwrap()[0];
+    assert_eq!(node.k, gosanja_schema::snapshot::OutlineKind::Call);
+    assert_eq!(node.callee, None);
+    assert_eq!(
+        node.range,
+        gosanja_schema::position::Range::new(4, 8, 4, 15)
+    );
 }

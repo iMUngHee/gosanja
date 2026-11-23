@@ -1,4 +1,4 @@
-# Snapshot, schema 0.1
+# Snapshot, schema 0.2
 
 A snapshot is what `gosanja index` writes: the facts established about one source tree at one
 moment. It is a directory of seven files. The same input always produces the same bytes.
@@ -32,7 +32,9 @@ Every file is always present. The conventions for paths, ranges and versions are
 - **Provenance.** Every row of `entities.jsonl`, `externals.jsonl`, `relations.jsonl`,
   `syntax.jsonl` and `gaps.jsonl` has `src`, one of:
   - `scip:<tool name>`, taken from an index produced by that tool;
-  - `adapter:<adapter name>/<layer>`, taken from an adapter's `syntax` or `calls` layer;
+  - `adapter:<adapter name>/<layer>`, taken from an adapter's `syntax` or `calls` layer; a
+    `skipped-file` gap, which records what an adapter reported about one of its layers, may
+    also name `base`;
   - `core:<pass>`, derived by the engine. The passes are `containment`, `identity` and
     `reference-in-body`.
 
@@ -113,7 +115,7 @@ manager, package and version as what it contains and is qualified by the same ru
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-snapshot"` | marks the directory as a snapshot; see Publication |
-| `schema` | version | snapshot schema version, `0.1` |
+| `schema` | version | snapshot schema version, `0.2` |
 | `tool` | `{name, version}` | the engine that wrote the snapshot |
 | `project` | `{name}` | a display name; it carries no identity |
 | `scopes` | array | one entry per indexed scope, in path order |
@@ -308,7 +310,7 @@ An outline node:
 | `k` | enum | node kind, below |
 | `detail` | string, optional | the construct in the language's own words, for example `match`, `for-range`, `?` |
 | `range` | range | extent of the construct |
-| `callee` | range, `call` only | the callee name token |
+| `callee` | range, optional, `call` only | the callee name token; absent when the callee is not a name |
 | `children` | array of nodes, optional | nested nodes in source order |
 
 | `k` | Covers |
@@ -320,7 +322,7 @@ An outline node:
 | `await` | a suspension point |
 | `spawn` | starting concurrent or deferred work: `go`, `defer`, a spawned task |
 | `closure` | a nested function body |
-| `call` | a call expression |
+| `call` | a call expression, with `callee` when the callee is a name (`f(x)`, `x.m()`) and without it otherwise (`make()(x)`, `(self.f)(x)`) |
 | `opaque` | a region the adapter could not read, such as an unexpanded macro body |
 
 An outline is a description of syntax. It states neither execution order nor reachability. An
@@ -356,8 +358,9 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `missing-layer` | the adapter does not offer an optional layer | `layer` |
 | `failed-layer` | an optional layer failed, was reported without a status, or was malformed | `layer`, `code`, `detail` |
 | `unanchored` | an anchor matched no definition or several | `layer`, `anchor` |
-| `open-call` | a reported call's callee token matches no reference | `file`, `range` |
+| `open-call` | a reported call's callee token matches no reference, or the call has no callee token | `file`, `range`: the callee token in the first case, the whole call node in the second |
 | `opaque-region` | the syntax layer marked a region as unreadable | `file`, `range`, `keys`: the entity |
+| `skipped-file` | an adapter layer reported a file it was meant to cover and could not process | `file`, `layer`, `code`; one row per distinct file and code of a layer |
 | `unknown-build-context` | call evidence names a build context the adapter did not report | `layer`, `count` |
 | `unknown-value` | rows were skipped under the compatibility rules | `layer`, `count` |
 
@@ -365,7 +368,7 @@ The `src` of a gap names what the gap is about:
 
 | `src` | Gaps |
 | --- | --- |
-| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `unknown-build-context`, `unknown-value`, and `position-out-of-range` for a side-car row |
+| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `skipped-file`, `unknown-build-context`, `unknown-value`, and `position-out-of-range` for a side-car row |
 | `scip:<tool>` | `undecodable-document`, `document-outside-root`, `source-unavailable`, and `position-out-of-range` for an occurrence |
 | `core:identity` | `symbol-collision` |
 | `core:reference-in-body` | `unattributed-references`, `overlapping-bodies` |
@@ -376,6 +379,12 @@ single gap: location (`document-outside-root`), availability (`source-unavailabl
 
 `detail` for `failed-layer` is one of `reported-failed`, `no-status`, `file-missing`,
 `row-invalid`.
+
+A `skipped-file` gap has `file`, `layer`, `code` and `src`, and none of `range`, `count`,
+`keys`, `anchor` and `detail`. The file need not be listed in `files.jsonl`: the engine records
+what the adapter reported and does not open the file. The layer named in `src` is the field
+`layer`, and it may be `base`: this is the only row whose provenance names the base layer of
+an adapter. Every other `adapter:` provenance names `syntax` or `calls`.
 
 ## Publication
 

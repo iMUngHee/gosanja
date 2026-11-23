@@ -8,15 +8,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use gosanja_schema::contract::{
-    AdapterManifest, AdapterResult, Anchor, CallEvidence, CallSite, Diagnostic, LayerName,
-    LayerResult, LayerStatus, Requirement, SyntaxFact,
+    AdapterManifest, AdapterResult, Anchor, CONTRACT_VERSION, CallEvidence, CallSite, Diagnostic,
+    LayerName, LayerResult, LayerStatus, Requirement, SkippedFile, SyntaxFact,
 };
 use gosanja_schema::position::{PositionEncoding, Range, Site};
 use gosanja_schema::snapshot::{
     AdapterInfo, BuildContext, Counts, Def, EntityRow, Evidence, ExternalRow, FORMAT, FailedDetail,
     FileRow, GapKind, GapRow, Layer, LayerState, Layers, Manifest, Mechanism, OutlineKind,
-    OutlineNode, Package, Project, RefRole, Rel, RelationRow, Resolution, Role, Scope, SyntaxRow,
-    Tool,
+    OutlineNode, Package, Project, RefRole, Rel, RelationRow, Resolution, Role, SCHEMA_VERSION,
+    Scope, SyntaxRow, Tool,
 };
 use jsonschema::{Registry, Validator};
 use serde_json::{Value, json};
@@ -177,7 +177,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
 
     let manifest = Manifest {
         format: FORMAT.into(),
-        schema: "0.1".into(),
+        schema: "0.2".into(),
         tool: Tool {
             name: "gosanja".into(),
             version: "0.1.0".into(),
@@ -190,7 +190,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
             adapter: Some(AdapterInfo {
                 name: "fake".into(),
                 version: "0.0.1".into(),
-                contract: "0.1".into(),
+                contract: "0.2".into(),
             }),
             indexers: vec![Tool {
                 name: "rust-analyzer".into(),
@@ -335,11 +335,9 @@ fn syntax_rows_pass_their_schema() {
     schemas.assert_valid("syntax", &to_value(&syntax));
 }
 
-#[test]
-fn every_gap_kind_passes_its_schema() {
-    let schemas = Schemas::load();
-
-    let gaps = [
+/// One valid row of every gap kind.
+fn gap_of_every_kind() -> Vec<GapRow> {
+    vec![
         GapRow {
             keys: Some(vec![
                 "cargo:demo:a/f().".into(),
@@ -420,10 +418,28 @@ fn every_gap_kind_passes_its_schema() {
             count: Some(1),
             ..GapRow::new(GapKind::UnknownValue, "adapter:fake/calls")
         },
-    ];
-    for gap in &gaps {
+        skipped_file("base"),
+    ]
+}
+
+fn skipped_file(layer: &str) -> GapRow {
+    serde_json::from_value(json!({"gap": "skipped-file", "file": "src/generated.rs", "layer": layer, "code": "parse-error", "src": format!("adapter:fake/{layer}")}))
+        .expect("a skipped-file gap")
+}
+
+#[test]
+fn every_gap_kind_passes_its_schema() {
+    let schemas = Schemas::load();
+    for gap in &gap_of_every_kind() {
         schemas.assert_valid("gap", &to_value(gap));
     }
+}
+
+#[test]
+fn both_interfaces_are_at_0_2() {
+    assert_eq!(CONTRACT_VERSION.to_string(), "0.2");
+    assert_eq!(SCHEMA_VERSION.to_string(), "0.2");
+    assert_eq!(to_value(&GapKind::SkippedFile), json!("skipped-file"));
 }
 
 #[test]
@@ -431,7 +447,7 @@ fn every_adapter_file_type_passes_its_schema() {
     let schemas = Schemas::load();
 
     let manifest = AdapterManifest {
-        contract: "0.1".into(),
+        contract: "0.2".into(),
         name: "fake".into(),
         version: "0.0.1".into(),
         languages: vec!["rust".into()],
@@ -441,17 +457,22 @@ fn every_adapter_file_type_passes_its_schema() {
             tool: "rust-analyzer".into(),
             version: None,
         }]),
+        markers: Some(vec!["Cargo.toml".into()]),
     };
     schemas.assert_valid("adapter-manifest", &to_value(&manifest));
 
     let result = AdapterResult {
-        contract: "0.1".into(),
+        contract: "0.2".into(),
         layers: BTreeMap::from([
             (
                 "base".to_owned(),
                 LayerResult {
                     status: LayerStatus::Ok,
                     diagnostics: None,
+                    skipped: Some(vec![SkippedFile {
+                        file: "src/generated.rs".into(),
+                        code: "parse-error".into(),
+                    }]),
                 },
             ),
             (
@@ -462,6 +483,7 @@ fn every_adapter_file_type_passes_its_schema() {
                         code: "parse-error".into(),
                         message: Some("src/a.rs: pid 4242 after 31 ms".into()),
                     }]),
+                    skipped: None,
                 },
             ),
         ]),
@@ -472,7 +494,7 @@ fn every_adapter_file_type_passes_its_schema() {
         }]),
     };
     schemas.assert_valid("adapter-result", &to_value(&result));
-    schemas.assert_valid("adapter-result", &json!({"contract": "0.1", "layers": {}}));
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.2", "layers": {}}));
 
     let fact = SyntaxFact {
         anchor: anchor(Some(7), None),
@@ -555,21 +577,21 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
         &json!({"key": "cargo:d:f().", "name": "f", "group": true, "src": "core:identity"}),
     );
     // No path can enter a snapshot through a build context.
-    schemas.assert_invalid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "toolchain": "/home/dev/rustc"}]}));
-    schemas.assert_valid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "cwd": "ignored, not copied"}]}));
+    schemas.assert_invalid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "toolchain": "/home/dev/rustc"}]}));
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "cwd": "ignored, not copied"}]}));
     // A qualified feature name is not a path; an absolute path is refused in any spelling.
-    schemas.assert_valid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "features": ["ascii/std", "derive"]}]}));
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "features": ["ascii/std", "derive"]}]}));
     for absolute in [
         "/abs/feature",
         "~/feature",
         "C:\\feature",
         "\\\\host\\share",
     ] {
-        schemas.assert_invalid("adapter-result", &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "release", "features": [absolute]}]}));
+        schemas.assert_invalid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "features": [absolute]}]}));
     }
     schemas.assert_invalid(
         "adapter-result",
-        &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "a/b"}]}),
+        &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "a/b"}]}),
     );
     // A group row carries no kind.
     schemas.assert_invalid("entity", &json!({"key": "cargo:d:f().", "symbol": "s cargo d 1 f().", "name": "f", "group": true, "kind": "rust:function", "src": "core:identity"}));
@@ -604,9 +626,136 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
         &json!({"anchor": {"file": "a.rs", "line": 1, "col": 0}, "body": [1, 2, 3]}),
     );
     // A diagnostic code is a short identifier, not a sentence.
-    schemas.assert_invalid("adapter-result", &json!({"contract": "0.1", "layers": {"base": {"status": "failed", "diagnostics": [{"code": "Could not run"}]}}}));
+    schemas.assert_invalid("adapter-result", &json!({"contract": "0.2", "layers": {"base": {"status": "failed", "diagnostics": [{"code": "Could not run"}]}}}));
     // A version is two integers.
     schemas.assert_invalid("adapter-manifest", &json!({"contract": "0.1.0", "name": "x", "version": "1", "languages": ["go"], "position_encoding": "utf-8", "layers": ["base"]}));
+}
+
+#[test]
+fn markers_are_portable_file_names() {
+    let schemas = Schemas::load();
+    let manifest = json!({"contract": "0.2", "name": "x", "version": "1", "languages": ["rust"], "position_encoding": "utf-8", "layers": ["base"]});
+    schemas.assert_valid("adapter-manifest", &manifest);
+    let mut with = manifest.clone();
+    with["markers"] = json!(["Cargo.toml", "go.mod", ".tool-versions", "a_b-c.1"]);
+    schemas.assert_valid("adapter-manifest", &with);
+    with["markers"] = json!([]);
+    schemas.assert_valid("adapter-manifest", &with);
+    for marker in [
+        "", ".", "..", "a/b", "a\\b", "C:x", "a\u{0}b", "a b", "a\nb",
+    ] {
+        let mut bad = manifest.clone();
+        bad["markers"] = json!([marker]);
+        schemas.assert_invalid("adapter-manifest", &bad);
+    }
+}
+
+#[test]
+fn every_layer_may_list_skipped_files() {
+    let schemas = Schemas::load();
+    let entry = |skipped: Value| json!({"status": "ok", "skipped": skipped});
+    for layer in ["base", "syntax", "calls"] {
+        let result = |skipped: Value| json!({"contract": "0.2", "layers": {layer: entry(skipped)}});
+        schemas.assert_valid("adapter-result", &result(json!([])));
+        schemas.assert_valid(
+            "adapter-result",
+            &result(json!([{"file": "src/a.rs", "code": "parse-error"}, {"file": "b.rs", "code": "too-large", "later": 1}])),
+        );
+        for bad in [
+            json!({"file": "/abs/a.rs", "code": "parse-error"}),
+            json!({"file": "C:/a.rs", "code": "parse-error"}),
+            json!({"file": "src/../a.rs", "code": "parse-error"}),
+            json!({"file": "src/a.rs", "code": "Parse error"}),
+            json!({"file": "src/a.rs"}),
+            json!({"code": "parse-error"}),
+        ] {
+            schemas.assert_invalid("adapter-result", &result(json!([bad])));
+        }
+        // A failed layer's entry is checked too.
+        schemas.assert_invalid(
+            "adapter-result",
+            &json!({"contract": "0.2", "layers": {layer: {"status": "failed", "skipped": [{"file": "/a.rs", "code": "x"}]}}}),
+        );
+    }
+}
+
+#[test]
+fn a_skipped_file_gap_has_exactly_its_fields() {
+    let schemas = Schemas::load();
+    for layer in ["base", "syntax", "calls"] {
+        let gap = to_value(&skipped_file(layer));
+        schemas.assert_valid("gap", &gap);
+        let mut extra = gap.clone();
+        extra["added_by_a_later_minor"] = json!(true);
+        schemas.assert_valid("gap", &extra);
+        for (field, value) in [
+            ("range", json!([0, 0, 0, 1])),
+            ("count", json!(1)),
+            ("keys", json!(["cargo:demo:a/f()."])),
+            ("anchor", json!({"file": "a.rs", "line": 0, "col": 0})),
+            ("detail", json!("reported-failed")),
+        ] {
+            let mut forbidden = gap.clone();
+            forbidden[field] = value;
+            schemas.assert_invalid("gap", &forbidden);
+        }
+        for field in ["file", "layer", "code"] {
+            let mut missing = gap.clone();
+            missing.as_object_mut().expect("an object").remove(field);
+            schemas.assert_invalid("gap", &missing);
+        }
+        for other in ["base", "syntax", "calls"]
+            .into_iter()
+            .filter(|o| *o != layer)
+        {
+            let mut disagreeing = gap.clone();
+            disagreeing["layer"] = json!(other);
+            schemas.assert_invalid("gap", &disagreeing);
+        }
+    }
+}
+
+#[test]
+fn only_a_skipped_file_gap_names_the_base_layer() {
+    let schemas = Schemas::load();
+    for gap in gap_of_every_kind() {
+        let mut row = to_value(&gap);
+        let kind = row["gap"].clone();
+        row["src"] = json!("adapter:x/base");
+        if row.get("layer").is_some() {
+            row["layer"] = json!("base");
+        }
+        if kind == json!("skipped-file") {
+            schemas.assert_valid("gap", &row);
+        } else {
+            schemas.assert_invalid("gap", &row);
+        }
+    }
+    let mut relation = to_value(&relation(Rel::Ref));
+    relation["src"] = json!("adapter:x/base");
+    schemas.assert_invalid("relation", &relation);
+    schemas.assert_invalid(
+        "syntax",
+        &json!({"key": "cargo:demo:a/f().", "src": "adapter:x/base"}),
+    );
+    schemas.assert_invalid(
+        "entity",
+        &json!({"key": "cargo:d:k.", "role": "module", "name": "k", "virtual": true, "src": "adapter:x/base"}),
+    );
+}
+
+#[test]
+fn only_a_call_node_names_a_callee_and_it_may_omit_it() {
+    let schemas = Schemas::load();
+    let row = |node: Value| json!({"key": "cargo:demo:a/f().", "outline": [node], "src": "adapter:x/syntax"});
+    let fact =
+        |node: Value| json!({"anchor": {"file": "a.rs", "line": 0, "col": 3}, "outline": [node]});
+    let call_without = json!({"k": "call", "range": [1, 4, 1, 12], "children": [{"k": "call", "range": [1, 4, 1, 10], "callee": [1, 4, 1, 8]}]});
+    let branch_with = json!({"k": "branch", "range": [1, 4, 1, 12], "callee": [1, 4, 1, 8]});
+    schemas.assert_valid("syntax", &row(call_without.clone()));
+    schemas.assert_valid("syntax-fact", &fact(call_without));
+    schemas.assert_invalid("syntax", &row(branch_with.clone()));
+    schemas.assert_invalid("syntax-fact", &fact(branch_with));
 }
 
 /// Maps a file of a snapshot directory to the schema of its rows.
@@ -668,9 +817,13 @@ fn snapshots_in_the_repository_pass_the_schemas() {
                 .unwrap_or_else(|e| panic!("{} must exist: {e}", path.display()));
             let schema = schema_of(name).expect("every snapshot file has a schema");
             if name == "manifest.json" {
-                schemas.assert_valid(
-                    schema,
-                    &serde_json::from_str(&text).expect("manifest is JSON"),
+                let manifest: Value = serde_json::from_str(&text).expect("manifest is JSON");
+                schemas.assert_valid(schema, &manifest);
+                assert_eq!(
+                    manifest["schema"],
+                    json!(SCHEMA_VERSION.to_string()),
+                    "{} is stamped with the current schema",
+                    path.display()
                 );
                 continue;
             }

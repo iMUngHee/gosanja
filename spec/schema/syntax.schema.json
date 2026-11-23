@@ -30,7 +30,6 @@
             "properties": {"k": {"const": "call"}},
             "required": ["k"]
           },
-          "then": {"required": ["callee"]},
           "else": {
             "properties": {"callee": false}
           }

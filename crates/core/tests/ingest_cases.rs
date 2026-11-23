@@ -8,7 +8,7 @@ use gosanja_core::validate;
 use gosanja_core::write::{self, FsSource, SnapshotFiles};
 use gosanja_schema::compat::Version;
 use gosanja_schema::position::{Range, Site};
-use gosanja_schema::snapshot::{GapKind, Rel};
+use gosanja_schema::snapshot::{GapKind, Rel, SCHEMA_VERSION};
 use scip::types::{Document, PositionEncoding};
 use support::{
     DEF, MemSource, REF, Recording, build, diagnostics, doc, doc_in, entity, gaps, index, occ,
@@ -671,16 +671,17 @@ fn unknown_values_are_malformed_under_an_understood_minor() {
 #[test]
 fn another_minor_or_major_is_refused_before_reading() {
     let mut files = write::serialise(&build(&index("t", vec![]), &MemSource::default()));
-    let _own = validate::read(&files, Version::new(0, 1)).expect("its own version");
-    for schema in ["0.2", "1.0"] {
-        let manifest = String::from_utf8(files.manifest.clone().expect("manifest"))
-            .expect("utf-8")
-            .replace("\"schema\":\"0.1\"", &format!("\"schema\":\"{schema}\""));
-        files.manifest = Some(manifest.into_bytes());
-        assert!(
-            validate::read(&files, Version::new(0, 1)).is_err(),
-            "{schema}"
+    let own = format!("\"schema\":\"{SCHEMA_VERSION}\"");
+    let manifest = String::from_utf8(files.manifest.clone().expect("manifest")).expect("utf-8");
+    assert!(manifest.contains(&own), "{manifest}");
+    let _own = validate::read(&files, SCHEMA_VERSION).expect("its own version");
+    for schema in ["0.1", "0.3", "1.0"] {
+        files.manifest = Some(
+            manifest
+                .replace(&own, &format!("\"schema\":\"{schema}\""))
+                .into_bytes(),
         );
+        assert!(validate::read(&files, SCHEMA_VERSION).is_err(), "{schema}");
     }
 }
 

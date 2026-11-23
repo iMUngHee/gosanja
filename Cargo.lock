@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "gosanja"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gosanja-core",
  "gosanja-schema",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "gosanja-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gosanja-schema",
  "jsonschema",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "gosanja-schema"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jsonschema",
  "serde",

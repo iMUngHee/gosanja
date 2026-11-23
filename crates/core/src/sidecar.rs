@@ -223,9 +223,12 @@ fn syntax_calls(snapshot: &mut Snapshot, adapter: &str, calls: &mut Calls) {
                 gap.file = Some(file.clone());
                 gap.range = Some(node.range);
                 snapshot.gaps.push(gap);
-            } else if let (OutlineKind::Call, Some(token)) = (node.k, node.callee) {
+            } else if node.k == OutlineKind::Call {
+                let token = node.callee.unwrap_or(node.range);
                 let site = Site::new(file, token);
-                if let Some(targets) = refs.get(&(row.key.as_str(), &site)) {
+                if node.callee.is_some()
+                    && let Some(targets) = refs.get(&(row.key.as_str(), &site))
+                {
                     let [sl, sc, el, ec] = token.0;
                     for &target in targets {
                         calls

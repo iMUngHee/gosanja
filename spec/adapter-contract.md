@@ -1,4 +1,4 @@
-# Adapter contract, version 0.1
+# Adapter contract, version 0.2
 
 An adapter is a program that knows one language ecosystem. The engine knows none: it runs an
 adapter, reads the files the adapter wrote, and builds a [snapshot](snapshot.md) from them. An
@@ -47,6 +47,12 @@ work and needs no project.
 | `position_encoding` | `utf-8`, `utf-16` or `utf-32` | the unit of every column in `syntax.jsonl` and `calls.jsonl` |
 | `layers` | array | the layers it can produce; always includes `base` |
 | `requires` | array of `{tool, version?}`, optional | external tools it needs at run time |
+| `markers` | array of strings, optional | file names whose presence in a project root marks the ecosystem, for example `Cargo.toml` |
+
+A marker is one portable file name: it matches `^[A-Za-z0-9._-]+$` and is not `.` or `..`. It
+is present when `<root>/<marker>`, with links followed, is a regular file. Several markers
+are alternatives. The engine uses markers to choose among installed adapters when the user
+names none; an adapter without markers is used only when it is named.
 
 ### index
 
@@ -86,12 +92,20 @@ A layer entry:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `status` | `ok` or `failed` | |
-| `diagnostics` | array of `{code, message?}`, optional | what went wrong, or what was skipped |
+| `diagnostics` | array of `{code, message?}`, optional | what went wrong |
+| `skipped` | array of `{file, code}`, optional | files the layer was meant to cover and could not process |
 
 `code` matches `^[a-z][a-z0-9-]{0,63}$` and names a kind of problem, for example
 `toolchain-missing`. `message` is free text for a human and may hold paths, process ids or
 timings. Only the first `code` of a failed layer is stored in the snapshot; a `message` never
 is, so two equivalent failures give identical snapshots.
+
+`skipped` lets a layer succeed without hiding what it left out: a source file that does not
+parse, a file that is not valid text. `file` is a path relative to `--root` and `code` has the
+form of a diagnostic code. The whole of `result.json` is checked against its schema, so a
+malformed entry is an adapter failure whatever the layer's status. For a layer whose status is
+`ok`, the engine records one `skipped-file` gap for each distinct file and code of that layer,
+without opening the file. A layer that is missing, failed or discarded contributes none.
 
 A build context:
 
@@ -183,6 +197,9 @@ meanings given in [snapshot.md](snapshot.md#syntaxjsonl). These rules bind the a
   `foo(bar)`, `m` in `x.m()`. The engine creates a call only when a reference of the base layer
   sits exactly on that range, and it labels the call `resolution: declared`,
   `mechanism: unknown`. The syntax layer says nothing about dispatch.
+- When the callee is not a name, as in `make()(x)` or `(self.f)(x)`, the `call` node has no
+  `callee`. An adapter never widens `callee` to an expression. The engine derives no call from
+  such a node and records an `open-call` gap with the node's range.
 - What the adapter cannot read, it marks with an `opaque` node covering the region. Leaving the
   region out would claim that it holds nothing.
 - Nodes are nested by containment and listed in source order.
@@ -251,7 +268,7 @@ depend on the order of the rows.
    definition with no body from either source is not checked.
 
 A discarded layer contributes nothing but its one `failed-layer` gap: no rows, no bodies, no
-file rows, and none of the gaps that an earlier phase recorded for it.
+file rows, none of the gaps that an earlier phase recorded for it, and no `skipped-file` gap.
 
 ## Worked examples
 
@@ -259,6 +276,12 @@ file rows, and none of the gaps that an earlier phase recorded for it.
 two `call` nodes, one with `callee` on `render` and a child with `callee` on `empty`. `x` and
 `y` are not callees. The snapshot gets `call` relations from `page` to `render` and to `empty`,
 both `declared`; references to `x` and `y`, if they are not locals, stay `ref`.
+
+**A call through a call.** For `make()(x)` inside `fn page`, the syntax layer reports an outer
+`call` node without `callee` and, nested in it, a `call` node with `callee` on `make`. The
+snapshot gets a `declared` call from `page` to `make` and an `open-call` gap over the outer
+call. If the calls layer knows what the outer call reaches, it reports that as a row of its
+own, and the relation and the gap stand side by side.
 
 **A method on an interface.** For `s.Write(p)` where `s` has interface type, the base layer
 binds `Write` to the interface's method. The syntax layer yields a `declared` call to that
@@ -276,6 +299,11 @@ implementation. The calls layer reports caller, callee, `mechanism: drop`,
 
 **Two builds.** The same call observed with and without a feature is two rows with different
 `build` values. The snapshot holds one relation with two evidence entries.
+
+**A file that does not parse.** A syntax layer that cannot parse `src/broken.rs` still reports
+every other file, sets its status to `ok` and lists
+`{"file": "src/broken.rs", "code": "parse-failed"}` under `skipped`. The snapshot records a
+`skipped-file` gap for that file and layer.
 
 **An unreadable macro.** A Rust adapter that does not expand macros reports an `opaque` node
 over the body of `select! { … }`. The snapshot records an `opaque-region` gap there.

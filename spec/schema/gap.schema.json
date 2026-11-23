@@ -18,7 +18,8 @@
         "open-call",
         "opaque-region",
         "unknown-build-context",
-        "unknown-value"
+        "unknown-value",
+        "skipped-file"
       ]
     },
     "file": {
@@ -55,7 +56,15 @@
       ]
     },
     "src": {
-      "$ref": "entity.schema.json#/$defs/provenance"
+      "anyOf": [
+        {
+          "$ref": "entity.schema.json#/$defs/provenance"
+        },
+        {
+          "type": "string",
+          "pattern": "^adapter:[a-z0-9-]+/base$"
+        }
+      ]
     }
   },
   "required": [
@@ -417,6 +426,57 @@
         "properties": {
           "src": {
             "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gap": {
+            "const": "skipped-file"
+          }
+        },
+        "required": [
+          "gap"
+        ]
+      },
+      "then": {
+        "required": [
+          "file",
+          "layer",
+          "code"
+        ],
+        "properties": {
+          "range": false,
+          "count": false,
+          "keys": false,
+          "anchor": false,
+          "detail": false,
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/(?:base|syntax|calls)$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/base$"
+          }
+        },
+        "required": [
+          "src"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gap": {
+            "const": "skipped-file"
+          },
+          "layer": {
+            "const": "base"
           }
         }
       }

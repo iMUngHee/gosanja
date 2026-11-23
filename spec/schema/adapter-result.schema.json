@@ -7,60 +7,9 @@
     "layers": {
       "type": "object",
       "properties": {
-        "base": {
-          "type": "object",
-          "properties": {
-            "status": {"enum": ["ok", "failed"]},
-            "diagnostics": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "code": {"$ref": "adapter-result.schema.json#/$defs/code"},
-                  "message": {"type": "string"}
-                },
-                "required": ["code"]
-              }
-            }
-          },
-          "required": ["status"]
-        },
-        "syntax": {
-          "type": "object",
-          "properties": {
-            "status": {"enum": ["ok", "failed"]},
-            "diagnostics": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "code": {"$ref": "adapter-result.schema.json#/$defs/code"},
-                  "message": {"type": "string"}
-                },
-                "required": ["code"]
-              }
-            }
-          },
-          "required": ["status"]
-        },
-        "calls": {
-          "type": "object",
-          "properties": {
-            "status": {"enum": ["ok", "failed"]},
-            "diagnostics": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "code": {"$ref": "adapter-result.schema.json#/$defs/code"},
-                  "message": {"type": "string"}
-                },
-                "required": ["code"]
-              }
-            }
-          },
-          "required": ["status"]
-        }
+        "base": {"$ref": "adapter-result.schema.json#/$defs/entry"},
+        "syntax": {"$ref": "adapter-result.schema.json#/$defs/entry"},
+        "calls": {"$ref": "adapter-result.schema.json#/$defs/entry"}
       }
     },
     "builds": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/build"}},
@@ -68,6 +17,35 @@
   },
   "required": ["contract", "layers"],
   "$defs": {
+    "entry": {
+      "type": "object",
+      "properties": {
+        "status": {"enum": ["ok", "failed"]},
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {"$ref": "adapter-result.schema.json#/$defs/code"},
+              "message": {"type": "string"}
+            },
+            "required": ["code"]
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {"$ref": "file.schema.json#/$defs/path"},
+              "code": {"$ref": "adapter-result.schema.json#/$defs/code"}
+            },
+            "required": ["file", "code"]
+          }
+        }
+      },
+      "required": ["status"]
+    },
     "tool": {
       "type": "object",
       "properties": {"name": {"type": "string"}, "version": {"type": "string"}},

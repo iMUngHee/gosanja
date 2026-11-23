@@ -9,8 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-gosanja-core = { version = "0.1.0", path = "../core" }
-gosanja-schema = { version = "0.1.0", path = "../schema" }
+gosanja-core = { version = "0.2.0", path = "../core" }
+gosanja-schema = { version = "0.2.0", path = "../schema" }
 serde_json = "1"
 
 [dev-dependencies]

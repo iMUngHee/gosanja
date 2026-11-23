@@ -280,3 +280,36 @@ pub fn implementing(symbol: &str, implemented: &[&str]) -> SymbolInformation {
     s.relationships.push(reference_only);
     s
 }
+
+pub fn shell() -> PathBuf {
+    #[cfg(unix)]
+    {
+        PathBuf::from("/bin/sh")
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|p| p.is_absolute())
+            .map(|p| p.join("sh.exe"))
+            .find(|p| p.is_file())
+            .expect("absolute sh.exe on PATH")
+    }
+}
+
+pub fn fake(
+    mode: &str,
+) -> Result<gosanja_core::adapter::Described, gosanja_core::adapter::AdapterError> {
+    use gosanja_core::adapter::{Invocation, describe};
+    describe(Invocation::new(
+        shell(),
+        vec![
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/fake-adapter/adapter.sh"
+            )
+            .into(),
+            "--mode".into(),
+            mode.into(),
+        ],
+    )?)
+}

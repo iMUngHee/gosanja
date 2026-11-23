@@ -1,6 +1,6 @@
 # Contributing to gosanja
 
-gosanja is at an early stage: the two interfaces are at version 0.1 and may still change in
+gosanja is at an early stage: the two interfaces are at version 0.2 and may still change in
 breaking ways. Read [docs/CONVENTIONS.md](docs/CONVENTIONS.md) before changing code; it is short
 and holds the rules the code cannot show.
 

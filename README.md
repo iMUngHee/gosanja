@@ -17,7 +17,7 @@ made from surveyed facts.
 
 Early. The engine reads a [SCIP](https://github.com/scip-code/scip) index and writes a
 snapshot; language adapters for Rust, Go and TypeScript, and the comparison of two snapshots,
-are planned and not yet here. Both interfaces are at version 0.1 and may change.
+are planned and not yet here. Both interfaces are at version 0.2 and may change.
 
 ## Try it
 

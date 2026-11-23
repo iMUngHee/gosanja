@@ -4,8 +4,8 @@ Two interfaces of gosanja are specified here and are normative:
 
 | Document | Interface | Version |
 | --- | --- | --- |
-| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.1 |
-| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.1 |
+| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.2 |
+| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.2 |
 
 The JSON Schemas under [schema/](schema/) define the shape of every file. Where a document and
 a schema disagree, that is a defect in both: report it, and until it is fixed the schema decides

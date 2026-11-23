@@ -1,16 +1,17 @@
 //! Runs an adapter and keeps only contract-validated inputs and stable diagnostics.
 use std::{
+    ffi::OsString,
     fs::{self, File},
     io::{self, BufRead, BufReader},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use gosanja_schema::{
     compat::{self, Acceptance, RowVerdict, Version},
     contract::{
-        AdapterManifest, AdapterResult, CONTRACT_VERSION, CallEvidence, LayerName, LayerStatus,
-        RESULT_FILE, SyntaxFact,
+        AdapterManifest, AdapterResult, CONTRACT_VERSION, CallEvidence, LayerName, LayerResult,
+        LayerStatus, RESULT_FILE, SyntaxFact,
     },
     snapshot::{BuildContext, FailedDetail, GapKind, GapRow, Layer, LayerState, Layers},
 };
@@ -142,6 +143,17 @@ pub fn read_calls(
     read_rows(reader, Schema::CallEvidence, acceptance, |_| true)
 }
 
+fn skipped_files(entry: &LayerResult, layer: Layer, src: &str) -> impl Iterator<Item = GapRow> {
+    let distinct: std::collections::BTreeSet<_> = entry.skipped.iter().flatten().collect();
+    distinct.into_iter().map(move |file| {
+        let mut gap = GapRow::new(GapKind::SkippedFile, src);
+        gap.layer = Some(layer);
+        gap.file = Some(file.file.clone());
+        gap.code = Some(file.code.clone());
+        gap
+    })
+}
+
 struct OptionalLayer<'a> {
     adapter: &'a str,
     acceptance: Acceptance,
@@ -178,10 +190,11 @@ impl OptionalLayer<'_> {
                     .map(|d| d.code.clone());
                 FailedDetail::ReportedFailed
             }
-            Some(_) => match regular(&dir.join(format!("{}.jsonl", self.name))) {
+            Some(entry) => match regular(&dir.join(format!("{}.jsonl", self.name))) {
                 Err(_) => FailedDetail::FileMissing,
                 Ok(file) => match read(BufReader::new(file), self.acceptance) {
                     Ok((rows, skipped)) => {
+                        gaps.extend(skipped_files(entry, self.layer, &gap.src));
                         if skipped > 0 {
                             gap.gap = GapKind::UnknownValue;
                             gap.count = Some(skipped);
@@ -198,12 +211,58 @@ impl OptionalLayer<'_> {
     }
 }
 
+/// The fixed program, leading arguments and working directory of an adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Invocation {
+    program: PathBuf,
+    args: Vec<OsString>,
+    dir: PathBuf,
+}
+
+impl Invocation {
+    /// Records the current working directory for both protocol commands.
+    ///
+    /// # Errors
+    /// The program must be absolute and the current directory must be accessible.
+    pub fn new(program: PathBuf, args: Vec<OsString>) -> io::Result<Self> {
+        if !program.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "adapter program must be an absolute path",
+            ));
+        }
+        Ok(Self {
+            program,
+            args,
+            dir: std::env::current_dir()?,
+        })
+    }
+
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args).current_dir(&self.dir);
+        cmd
+    }
+}
+
+/// An invocation whose manifest and protocol version have been accepted.
+#[derive(Debug)]
+pub struct Described {
+    invocation: Invocation,
+    manifest: AdapterManifest,
+    acceptance: Acceptance,
+}
+
 /// Reads and validates the manifest printed by an adapter and selects the reader policy.
 ///
 /// # Errors
 /// Reports process or manifest errors and refuses incompatible contract versions.
-pub fn describe(mut command: Command) -> Result<(AdapterManifest, Acceptance), AdapterError> {
-    let describe = command.arg("describe").stderr(Stdio::inherit()).output()?;
+pub fn describe(invocation: Invocation) -> Result<Described, AdapterError> {
+    let describe = invocation
+        .command()
+        .arg("describe")
+        .stderr(Stdio::inherit())
+        .output()?;
     if !describe.status.success() {
         return Err(io::Error::other(format!("describe exited {}", describe.status)).into());
     }
@@ -216,97 +275,122 @@ pub fn describe(mut command: Command) -> Result<(AdapterManifest, Acceptance), A
     let acceptance =
         compat::accept(CONTRACT_VERSION, version).map_err(AdapterError::Incompatible)?;
     let manifest: AdapterManifest = parse(validator(Schema::AdapterManifest), value)?;
-    Ok((manifest, acceptance))
+    Ok(Described {
+        invocation,
+        manifest,
+        acceptance,
+    })
 }
 
-/// Runs describe and index in sequence, with a fresh command for each invocation.
-///
-/// # Errors
-/// Refuses incompatible manifests before indexing. Reports process, protocol and base-layer
-/// failures. Optional layer failures are returned as gaps alongside the base index.
-pub fn run(
-    command: impl Fn() -> Command,
-    root: &Path,
-    scratch_parent: &Path,
-) -> Result<AdapterOutput, AdapterError> {
-    let root = root.canonicalize()?;
-    let parent = scratch_parent.canonicalize()?;
-    if parent.starts_with(&root) {
-        return Err(io::Error::other("adapter output would be inside source tree").into());
+impl Described {
+    /// The manifest used to choose this adapter.
+    #[must_use]
+    pub const fn manifest(&self) -> &AdapterManifest {
+        &self.manifest
     }
-    let (manifest, acceptance) = describe(command())?;
-    let dir = tempfile::tempdir_in(parent)?;
-    let status = command()
-        .arg("index")
-        .arg("--root")
-        .arg(&root)
-        .arg("--out")
-        .arg(dir.path())
-        .status()?;
-    if !status.success() {
-        return Err(io::Error::other(format!("index exited {status}")).into());
+
+    /// The invocation bound to this manifest.
+    #[must_use]
+    pub const fn invocation(&self) -> &Invocation {
+        &self.invocation
     }
-    let mut value: Value = serde_json::from_reader(regular(&dir.path().join(RESULT_FILE))?)
-        .map_err(io::Error::from)?;
-    // Unknown fields under layers need no status, regardless of their JSON type.
-    if let Some(layers) = value.get_mut("layers").and_then(Value::as_object_mut) {
-        layers.retain(|k, _| matches!(k.as_str(), "base" | "syntax" | "calls"));
-    }
-    let result: AdapterResult = parse(validator(Schema::AdapterResult), value)?;
-    if result.contract != manifest.contract {
-        return Err(io::Error::other("result contract differs from describe").into());
-    }
-    for entry in result.layers.values() {
-        for diagnostic in entry.diagnostics.iter().flatten() {
-            if let Some(message) = &diagnostic.message {
-                eprintln!("{}: {message}", diagnostic.code);
+
+    /// Runs the described adapter and reads its index and optional layers.
+    ///
+    /// # Errors
+    /// Reports process, protocol and base-layer failures.
+    pub fn run(self, root: &Path, scratch_parent: &Path) -> Result<AdapterOutput, AdapterError> {
+        let Self {
+            invocation,
+            manifest,
+            acceptance,
+        } = self;
+        let root = root.canonicalize()?;
+        let parent = scratch_parent.canonicalize()?;
+        if parent.starts_with(&root) {
+            return Err(io::Error::other("adapter output would be inside source tree").into());
+        }
+        let dir = tempfile::tempdir_in(parent)?;
+        let status = invocation
+            .command()
+            .arg("index")
+            .arg("--root")
+            .arg(&root)
+            .arg("--out")
+            .arg(dir.path())
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other(format!("index exited {status}")).into());
+        }
+        let mut value: Value = serde_json::from_reader(regular(&dir.path().join(RESULT_FILE))?)
+            .map_err(io::Error::from)?;
+        // Unknown fields under layers need no status, regardless of their JSON type.
+        if let Some(layers) = value.get_mut("layers").and_then(Value::as_object_mut) {
+            layers.retain(|k, _| matches!(k.as_str(), "base" | "syntax" | "calls"));
+        }
+        let result: AdapterResult = parse(validator(Schema::AdapterResult), value)?;
+        if result.contract != manifest.contract {
+            return Err(io::Error::other("result contract differs from describe").into());
+        }
+        for entry in result.layers.values() {
+            for diagnostic in entry.diagnostics.iter().flatten() {
+                if let Some(message) = &diagnostic.message {
+                    eprintln!("{}: {message}", diagnostic.code);
+                }
             }
         }
+        let base = result.layers.get("base");
+        let Some(base) = base.filter(|entry| entry.status == LayerStatus::Ok) else {
+            let first = base.and_then(|entry| entry.diagnostics.as_deref()?.first());
+            let reason = first.map_or_else(
+                || "base layer failed".to_owned(),
+                |d| format!("base layer failed: {}", d.code),
+            );
+            return Err(io::Error::other(reason).into());
+        };
+        let index = regular(&dir.path().join("index.scip"))?;
+        let mut gaps = skipped_files(
+            base,
+            Layer::Base,
+            &format!("adapter:{}/base", manifest.name),
+        )
+        .collect();
+        let (syntax_state, syntax) = OptionalLayer {
+            adapter: &manifest.name,
+            acceptance,
+            name: "syntax",
+            layer: Layer::Syntax,
+            offered: manifest.layers.contains(&LayerName::Syntax),
+        }
+        .read(dir.path(), &result, &mut gaps, read_syntax);
+        let (calls_state, calls) = OptionalLayer {
+            adapter: &manifest.name,
+            acceptance,
+            name: "calls",
+            layer: Layer::Calls,
+            offered: manifest.layers.contains(&LayerName::Calls),
+        }
+        .read(dir.path(), &result, &mut gaps, read_calls);
+        let builds = result.builds.unwrap_or_default();
+        let mut ids = std::collections::HashSet::new();
+        if builds.iter().any(|context| !ids.insert(&context.id)) {
+            return Err(io::Error::other("duplicate build context id").into());
+        }
+        Ok(AdapterOutput {
+            index,
+            manifest,
+            builds,
+            layers: Layers {
+                base: LayerState::Present,
+                syntax: syntax_state,
+                calls: calls_state,
+            },
+            syntax,
+            calls,
+            gaps,
+            _directory: dir,
+        })
     }
-    if !result
-        .layers
-        .get("base")
-        .is_some_and(|entry| entry.status == LayerStatus::Ok)
-    {
-        return Err(io::Error::other("base layer did not succeed").into());
-    }
-    let index = regular(&dir.path().join("index.scip"))?;
-    let mut gaps = Vec::new();
-    let (syntax_state, syntax) = OptionalLayer {
-        adapter: &manifest.name,
-        acceptance,
-        name: "syntax",
-        layer: Layer::Syntax,
-        offered: manifest.layers.contains(&LayerName::Syntax),
-    }
-    .read(dir.path(), &result, &mut gaps, read_syntax);
-    let (calls_state, calls) = OptionalLayer {
-        adapter: &manifest.name,
-        acceptance,
-        name: "calls",
-        layer: Layer::Calls,
-        offered: manifest.layers.contains(&LayerName::Calls),
-    }
-    .read(dir.path(), &result, &mut gaps, read_calls);
-    let builds = result.builds.unwrap_or_default();
-    let mut ids = std::collections::HashSet::new();
-    if builds.iter().any(|context| !ids.insert(&context.id)) {
-        return Err(io::Error::other("duplicate build context id").into());
-    }
-    Ok(AdapterOutput {
-        index,
-        manifest,
-        builds,
-        layers: Layers {
-            base: LayerState::Present,
-            syntax: syntax_state,
-            calls: calls_state,
-        },
-        syntax,
-        calls,
-        gaps,
-        _directory: dir,
-    })
 }
 
 #[cfg(test)]
@@ -320,7 +404,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("syntax.jsonl");
         let result: AdapterResult =
-            serde_json::from_value(json!({"contract":"1.1","layers":{"syntax":{"status":"ok"}}}))
+            serde_json::from_value(json!({"contract":"1.1","layers":{"syntax":{"status":"ok","skipped":[{"file":"omitted","code":"unreadable"}]}}}))
                 .unwrap();
         let layer = OptionalLayer {
             name: "syntax",
@@ -335,10 +419,17 @@ mod tests {
         let mut gaps = Vec::new();
         let (state, rows) = layer.read(dir.path(), &result, &mut gaps, read_syntax);
         assert_eq!((state, rows.len()), (LayerState::Present, 1));
-        assert_eq!(gaps.len(), 1);
-        assert_eq!(gaps[0].gap, GapKind::UnknownValue);
-        assert_eq!(gaps[0].count, Some(2));
-        assert_eq!(gaps[0].src, "adapter:fake/syntax");
+        assert_eq!(gaps.len(), 2);
+        assert!(
+            gaps.iter()
+                .any(|g| g.gap == GapKind::SkippedFile && g.file.as_deref() == Some("omitted"))
+        );
+        let unknown = gaps
+            .iter()
+            .find(|g| g.gap == GapKind::UnknownValue)
+            .unwrap();
+        assert_eq!(unknown.count, Some(2));
+        assert_eq!(unknown.src, "adapter:fake/syntax");
         fs::write(file, format!("{future}\n{known}\n{{}}\n")).unwrap();
         gaps.clear();
         let (state, rows) = layer.read(dir.path(), &result, &mut gaps, read_syntax);

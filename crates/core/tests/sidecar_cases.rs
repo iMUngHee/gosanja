@@ -1,4 +1,5 @@
 //! Adapter side-car conformance against concrete definitions and reference sites.
+mod support;
 use gosanja_core::adapter::{read_calls, read_syntax};
 use gosanja_schema::compat::{Acceptance, Version, accept};
 use std::io::Cursor;
@@ -33,7 +34,7 @@ fn newer_minor_skips_only_unknown_enum_strings() {
 }
 
 use gosanja_core::{
-    adapter::{self, AdapterOutput},
+    adapter::AdapterOutput,
     graph::Snapshot,
     sidecar,
     write::{FsSource, serialise},
@@ -50,26 +51,11 @@ use std::{
     fs,
     io::{Seek, Write},
     path::Path,
-    process::Command,
 };
 
 const SOURCE: &str = "owner\n🦀foo(bar)\nempty()\nfoo bar empty\ndup dup\n";
 fn fixture(root: &Path, tmp: &Path, mode: &str) -> AdapterOutput {
-    let mut output = adapter::run(
-        || {
-            let mut command = Command::new("sh");
-            command
-                .arg(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../fixtures/fake-adapter/adapter.sh"
-                ))
-                .args(["--mode", mode]);
-            command
-        },
-        root,
-        tmp,
-    )
-    .unwrap();
+    let mut output = support::fake(mode).unwrap().run(root, tmp).unwrap();
     let mut doc = Document {
         relative_path: "x".into(),
         language: "test".into(),
@@ -316,20 +302,7 @@ fn additional_sidecar_fields_leave_the_snapshot_bytes_unchanged() {
         "/../../fixtures/rust-basic"
     ));
     let make = |mode| {
-        let adapter = adapter::run(
-            || {
-                let mut cmd = Command::new("sh");
-                cmd.arg(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../fixtures/fake-adapter/adapter.sh"
-                ))
-                .args(["--mode", mode]);
-                cmd
-            },
-            root,
-            tmp.path(),
-        )
-        .unwrap();
+        let adapter = support::fake(mode).unwrap().run(root, tmp.path()).unwrap();
         let snapshot = sidecar::build(adapter, &FsSource::new(root).unwrap(), "fixture").unwrap();
         assert_eq!(snapshot.syntax.len(), 1);
         assert_eq!(snapshot.syntax[0].visibility.as_deref(), Some("pub"));
@@ -666,5 +639,52 @@ fn outline_extent_uses_the_row_body_as_fallback_in_utf8_bytes() {
             .unwrap()
             .body,
         Some(Range::new(0, 0, 1, 6))
+    );
+}
+
+#[test]
+fn nameless_call_keeps_nested_and_compiler_calls_and_uses_its_whole_range() {
+    let fact = json!({"anchor":owner(),"body":[0,0,2,7],"outline":[
+        {"k":"call","range":[1,0,1,10],"children":[
+            {"k":"call","range":[1,2,1,10],"callee":[1,2,1,5]}]},
+        {"k":"call","range":[2,0,2,7],"callee":[2,0,2,2]}]});
+    let mut evidence = observation();
+    evidence["callee"] = json!({"file":"x","line":3,"col":8});
+    let got = run(&[fact], &[evidence]);
+    let mut gaps: Vec<_> = got
+        .gaps
+        .iter()
+        .filter(|g| g.gap == GapKind::OpenCall)
+        .map(|g| (g.src.as_str(), g.range))
+        .collect();
+    gaps.sort();
+    assert_eq!(
+        gaps,
+        [
+            ("adapter:fake/syntax", Some(Range::new(1, 0, 1, 12))),
+            ("adapter:fake/syntax", Some(Range::new(2, 0, 2, 2)))
+        ]
+    );
+    let mut calls: Vec<_> = got
+        .relations
+        .iter()
+        .filter(|r| r.rel == Rel::Call)
+        .map(|r| (r.src.as_str(), r.to.as_str(), r.resolution))
+        .collect();
+    calls.sort();
+    assert_eq!(
+        calls,
+        [
+            (
+                "adapter:fake/calls",
+                "cargo:test:empty().",
+                Some(Resolution::Direct)
+            ),
+            (
+                "adapter:fake/syntax",
+                "cargo:test:Interface#foo().",
+                Some(Resolution::Declared)
+            )
+        ]
     );
 }

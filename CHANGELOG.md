@@ -6,6 +6,43 @@ change may break compatibility, and an entry here says so when it does.
 
 ## Unreleased
 
+### Snapshot schema 0.2
+
+Breaks 0.1. A reader written for 0.1 must refuse a 0.2 snapshot until it is upgraded. An
+upgraded reader has to:
+
+- know the gap `skipped-file` (`file`, `layer`, `code`), whose provenance may name the base
+  layer of an adapter, as in `adapter:rust/base`;
+- accept a `call` node of an outline without `callee`, and read the `range` of an `open-call`
+  gap as the whole call node when the node had no callee token.
+
+### Adapter contract 0.2
+
+Breaks 0.1. A 0.2 engine refuses an adapter that declares 0.1; an adapter has to declare
+`0.2`. New for adapters, all optional:
+
+- `markers` in the manifest: file names whose presence in a project root lets the engine
+  choose the adapter when the user names none;
+- `skipped` on a layer of `result.json`: files the layer could not process;
+- a `call` node may leave out `callee` when the callee is not a name. An adapter must no
+  longer put anything but a name token there.
+
+### gosanja 0.2.0
+
+- `gosanja index --root <dir> --out <dir>` finds the installed adapters, executables named
+  `gosanja-adapter-<name>`, and runs the one whose marker file is in the root.
+- `gosanja adapter list` shows the installed adapters and whether the tools they require are
+  on `PATH`.
+- `--adapter` and `adapter describe` take an adapter name or a path. **Changed:** a bare word
+  is now an adapter name and is no longer run as a program found on `PATH`; to run a program,
+  give its path.
+- When an adapter's base layer fails, the error names the adapter's first diagnostic code.
+- The adapter cache directory may not lie in the output directory.
+- Rust API: `AdapterManifest` and `LayerResult` have new fields that a struct literal must
+  give; `GapKind` has a new variant that an exhaustive `match` must handle;
+  `adapter::describe` takes an `Invocation` and returns a `Described`, and running the adapter
+  is `Described::run`.
+
 ### Snapshot schema 0.1
 
 First version. A snapshot is a directory of `manifest.json`, `files.jsonl`, `entities.jsonl`,

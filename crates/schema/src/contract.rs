@@ -8,7 +8,7 @@ use crate::position::{PositionEncoding, Range};
 use crate::snapshot::{BuildContext, Mechanism, OutlineNode, Resolution, Tool};
 
 /// Adapter contract version this crate reads and writes.
-pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 1);
+pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 2);
 
 /// File name of the result an adapter writes into its output directory.
 pub const RESULT_FILE: &str = "result.json";
@@ -46,6 +46,9 @@ pub struct AdapterManifest {
     /// External tools needed at run time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Vec<Requirement>>,
+    /// File names whose presence in a project root makes the adapter a candidate for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markers: Option<Vec<String>>,
 }
 
 /// An external tool an adapter needs.
@@ -80,6 +83,18 @@ pub struct LayerResult {
     /// What went wrong, or what was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<Vec<Diagnostic>>,
+    /// Files the layer was meant to cover and could not process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<Vec<SkippedFile>>,
+}
+
+/// A file a layer could not process.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct SkippedFile {
+    /// Path relative to the scope root.
+    pub file: String,
+    /// Why, as a diagnostic code.
+    pub code: String,
 }
 
 /// Whether a layer was produced.

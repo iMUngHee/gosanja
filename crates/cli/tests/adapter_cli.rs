@@ -12,7 +12,9 @@ use std::{
 use tempfile::tempdir;
 
 fn binary() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_gosanja"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_gosanja"));
+    Command::env_remove(&mut cmd, "GOSANJA_FAKE_MODE");
+    cmd
 }
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
@@ -64,7 +66,7 @@ fn listing(root: &Path) -> BTreeMap<PathBuf, (u32, Vec<u8>)> {
 }
 
 #[test]
-fn standalone_describe_and_exactly_one_index_source() {
+fn standalone_describe_and_conflicting_index_sources() {
     let program = fixture().join("fake-adapter/adapter.sh");
     let result = binary()
         .args(["adapter", "describe"])
@@ -74,7 +76,7 @@ fn standalone_describe_and_exactly_one_index_source() {
     check(&result, 0);
     let value: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(value["name"], "fake");
-    assert_eq!(value["contract"], "0.1");
+    assert_eq!(value["contract"], "0.2");
     let mut cmd = binary();
     cmd.args(["adapter", "describe"]).arg(program);
     Command::env(&mut cmd, "GOSANJA_FAKE_MODE", "incompatible");
@@ -91,11 +93,49 @@ fn standalone_describe_and_exactly_one_index_source() {
             "--out",
             "o",
         ],
-        vec!["index", "--root", ".", "--out", "o"],
         vec!["adapter", "describe"],
     ] {
         check(&binary().args(args).output().unwrap(), 2);
     }
+}
+
+#[test]
+fn no_index_source_with_no_installed_adapters_is_a_refusal() {
+    use std::os::unix::fs::symlink;
+    // The binary is hard-linked, not copied, and so has to stay on the target directory's file
+    // system: executing a fresh copy fails with "text file busy" while a test child forked on
+    // another thread still holds the copy's write descriptor.
+    let temp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let command = temp.path().join("gosanja");
+    fs::hard_link(env!("CARGO_BIN_EXE_gosanja"), &command).unwrap();
+    let path = temp.path().join("path");
+    fs::create_dir(&path).unwrap();
+    for tool in ["cp", "dirname", "cat"] {
+        let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .filter(|p| p.is_absolute())
+            .map(|p| p.join(tool))
+            .find(|p| p.is_file() && fs::metadata(p).unwrap().permissions().mode() & 0o111 != 0)
+            .unwrap();
+        symlink(found, path.join(tool)).unwrap();
+    }
+    let root = temp.path().join("project");
+    fs::create_dir(&root).unwrap();
+    let out = temp.path().join("snapshot");
+    let mut cmd = Command::new(command);
+    Command::env_clear(&mut cmd);
+    Command::env(&mut cmd, "PATH", &path);
+    Command::env(&mut cmd, "HOME", temp.path());
+    Command::env(&mut cmd, "XDG_CACHE_HOME", temp.path().join("cache"));
+    Command::env(&mut cmd, "GOSANJA_ADAPTER_PATH", &path);
+    let result = cmd
+        .args(["index", "--root"])
+        .arg(root)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    check(&result, 2);
+    assert!(!out.exists());
 }
 
 #[test]
@@ -108,6 +148,7 @@ fn fatal_outcomes_leave_the_complete_previous_snapshot() {
     let previous = listing(&out);
     for (mode, status) in [
         ("incompatible", 2),
+        ("old-contract", 2),
         ("nonzero", 3),
         ("no-result", 3),
         ("not-json", 3),
@@ -250,4 +291,77 @@ fn invalid_cache_paths_report_why_preparation_failed() {
     check(&result, 3);
     assert!(String::from_utf8_lossy(&result.stderr).contains(&expected));
     assert_eq!(listing(&root), before);
+}
+
+#[test]
+fn base_failure_names_only_the_first_diagnostic_as_the_reason() {
+    let temp = tempdir().unwrap();
+    for (mode, code, message) in [
+        ("failed-base-message", true, true),
+        ("failed-base-code", true, false),
+        ("failed-base", false, false),
+    ] {
+        let result = cli(
+            mode,
+            &fixture().join("rust-basic"),
+            &temp.path().join("out"),
+            &temp.path().join("cache"),
+        );
+        check(&result, 3);
+        let err = String::from_utf8(result.stderr).unwrap();
+        assert!(err.contains("base layer failed"), "{err}");
+        assert_eq!(err.contains("base layer failed: lockfile-missing"), code);
+        assert_eq!(err.contains("missing project lockfile"), message);
+        assert!(!err.contains("base layer failed: other-code"));
+        if !code {
+            assert!(!err.contains("base layer failed:"));
+        }
+    }
+}
+
+#[test]
+fn skipped_files_survive_in_order_only_on_retained_layers() {
+    let temp = tempdir().unwrap();
+    let root = fixture().join("rust-basic");
+    let cache = temp.path().join("cache");
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    let skip = |file, layer, code| json!({"gap":"skipped-file","file":file,"layer":layer,"code":code,"src":format!("adapter:fake/{layer}")});
+    for (mode, out) in [("skipped", &first), ("skipped-reverse", &second)] {
+        check(&cli(mode, &root, out, &cache), 0);
+        let rows: Vec<Value> = fs::read_to_string(out.join("gaps.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str::<Value>(s).unwrap())
+            .filter(|v| v["gap"] == "skipped-file")
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                skip("absent.rs", "calls", "unreadable"),
+                skip("src/views.rs", "base", "unreadable"),
+                skip("src/views.rs", "syntax", "parse-error"),
+                skip("src/views.rs", "syntax", "unreadable")
+            ]
+        );
+        check(
+            &binary()
+                .arg("validate")
+                .arg(out)
+                .arg("--root")
+                .arg(&root)
+                .output()
+                .unwrap(),
+            0,
+        );
+    }
+    assert_eq!(listing(&first), listing(&second));
+    for mode in ["skip-failed", "skip-duplicate", "skip-extent"] {
+        check(&cli(mode, &root, &first, &cache), 0);
+        let gaps = fs::read_to_string(first.join("gaps.jsonl")).unwrap();
+        assert!(gaps.contains("failed-layer"), "{mode}: {gaps}");
+        assert!(!gaps.contains("skipped-file"), "{mode}: {gaps}");
+        assert!(!gaps.contains("unknown-value"));
+    }
+    check(&cli("skip-invalid", &root, &first, &cache), 3);
 }

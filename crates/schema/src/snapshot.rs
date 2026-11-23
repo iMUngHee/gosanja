@@ -10,7 +10,7 @@ use crate::position::{Range, Site};
 pub const FORMAT: &str = "gosanja-snapshot";
 
 /// Snapshot schema version this crate reads and writes.
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 1);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 2);
 
 /// `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -492,6 +492,8 @@ pub enum GapKind {
     UnknownBuildContext,
     /// Rows were skipped under the compatibility rules.
     UnknownValue,
+    /// A layer reported a file it could not process.
+    SkippedFile,
     /// A value from a newer minor.
     #[serde(other)]
     Unrecognised,
