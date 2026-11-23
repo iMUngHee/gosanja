@@ -188,7 +188,8 @@ meanings given in [snapshot.md](snapshot.md#syntaxjsonl). These rules bind the a
 - Nodes are nested by containment and listed in source order.
 - Ranges are well-formed: a range does not end before it starts, a child node lies within its
   parent, and a `callee` lies within the `range` of its node.
-- An outline covers the body of its own definition. It does not descend into a nested
+- An outline covers the body of its own definition, and none of its nodes lies outside that
+  body. It does not descend into a nested
   definition that the base layer knows as a definition of its own, because references there
   belong to that definition; a nested closure, which has no definition, is part of the outline.
 
@@ -243,6 +244,11 @@ depend on the order of the rows.
 5. **Positions.** A remaining row with a position that cannot be converted, or a call site
    whose file cannot be read inside the root, is dropped and counted in
    `position-out-of-range`.
+6. **Extent**, `syntax.jsonl` only. Every node of a remaining row's outline must lie within
+   the body of the row's definition: the row's own `body` when it gives one, otherwise the body
+   the base layer gives. A row with a node outside it would attach facts to the wrong
+   definition, so the layer is discarded (`row-invalid`). A definition with no body from either
+   source is not checked.
 
 A discarded layer contributes nothing but its one `failed-layer` gap: no rows, no bodies, no
 file rows, and none of the gaps that an earlier phase recorded for it.

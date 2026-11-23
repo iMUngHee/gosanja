@@ -22,6 +22,10 @@ Every file is always present. The conventions for paths, ranges and versions are
   serialised row. Fields are written in the order listed here. Numbers are integers.
 - **Closed references.** Every `to`, `parent`, `member_of` and `key` used in another file names
   a row of `entities.jsonl` or, for `to` only, of `externals.jsonl`.
+- **A still tree.** A snapshot describes a tree that did not change while it was read. Each
+  file is resolved, checked to lie inside the root and opened by its resolved name. A tree that
+  is modified during a run, for example a link swapped between the check and the open, is
+  outside what a snapshot guarantees.
 - **No guesses.** A fact that an input did not establish is absent, and when the engine can tell
   that something is missing it says so in `gaps.jsonl`. The engine cannot notice an item that no
   input mentions.
@@ -277,8 +281,10 @@ coordinates, and each site appears once.
 
 ### implements
 
-`from` implements or overrides `to`, as the index's relationships state it. `sites` holds the
-name range of `from`.
+`from` implements or overrides `to`, as the index's relationships state it. `from` is the
+definition in the document whose symbol information states the relationship, and `sites` holds
+the name range of that definition only. When the symbol is a collision group, `from` is the
+member defined in that document; a member whose document says nothing gets no row.
 
 ## syntax.jsonl
 
