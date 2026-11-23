@@ -217,6 +217,25 @@ mod tests {
     }
 
     #[test]
+    fn messages_name_both_versions_and_the_bad_input() {
+        let invalid = "1.x".parse::<Version>().expect_err("not a version");
+        assert_eq!(
+            invalid.to_string(),
+            "version must be major.minor, got \"1.x\""
+        );
+        let major = accept(v("1.0"), v("2.3")).expect_err("majors differ");
+        assert_eq!(
+            major.to_string(),
+            "written with version 2.3, this reader implements 1.0"
+        );
+        let unstable = accept(v("0.1"), v("0.2")).expect_err("0.x minors differ");
+        assert_eq!(
+            unstable.to_string(),
+            "written with version 0.2, this reader implements 0.1; 0.x versions are only compatible with themselves"
+        );
+    }
+
+    #[test]
     fn refusal_names_the_kind() {
         assert!(matches!(
             accept(v("0.1"), v("0.2")),

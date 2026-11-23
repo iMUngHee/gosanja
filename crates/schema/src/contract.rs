@@ -28,19 +28,6 @@ pub enum LayerName {
     Unknown,
 }
 
-impl LayerName {
-    /// Name of the file that holds the layer in the output directory.
-    #[must_use]
-    pub const fn file_name(self) -> Option<&'static str> {
-        match self {
-            Self::Base => Some("index.scip"),
-            Self::Syntax => Some("syntax.jsonl"),
-            Self::Calls => Some("calls.jsonl"),
-            Self::Unknown => None,
-        }
-    }
-}
-
 /// What `describe` prints.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdapterManifest {

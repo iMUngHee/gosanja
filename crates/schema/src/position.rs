@@ -98,6 +98,7 @@ mod tests {
             r#"["src/views.rs",2,7,2,13]"#
         );
         assert_eq!(site.range(), range);
+        assert_eq!(site.file(), "src/views.rs");
     }
 
     #[test]
