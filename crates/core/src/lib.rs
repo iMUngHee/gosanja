@@ -8,6 +8,7 @@ pub mod anchor;
 pub mod graph;
 pub mod identity;
 pub mod publish;
+pub mod schemas;
 pub mod scip_stream;
 pub mod sidecar;
 pub mod validate;

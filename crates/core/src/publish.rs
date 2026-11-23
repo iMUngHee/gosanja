@@ -81,14 +81,21 @@ fn publish_with(
     let name = absolute
         .file_name()
         .ok_or_else(|| PublishError::Refused("output must name a directory".into()))?;
-    // Check before walking the parent: even a not-yet-created descendant overlaps.
-    if absolute.starts_with(&root) {
-        return Err(PublishError::Refused("output overlaps source".into()));
-    }
     let parent = absolute
         .parent()
-        .ok_or_else(|| PublishError::Refused("output needs a parent".into()))?
-        .canonicalize()?;
+        .ok_or_else(|| PublishError::Refused("output needs a parent".into()))?;
+    let parent = parent.canonicalize().map_err(|err| match err.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => PublishError::Refused(format!(
+            "output parent {} must be an existing directory",
+            parent.display()
+        )),
+        _ => err.into(),
+    })?;
+    if !parent.is_dir() {
+        return Err(PublishError::Refused(
+            "output parent must be a directory".into(),
+        ));
+    }
     let out = parent.join(name);
     if out.starts_with(&root) || root.starts_with(&out) {
         return Err(PublishError::Refused("output overlaps source".into()));

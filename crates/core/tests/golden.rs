@@ -42,7 +42,7 @@ fn rust_basic_equals_the_specification_example() {
     assert_eq!(written, read_dir(&repo("spec/examples/rust-basic")));
 }
 
-/// Criterion 3: a `ref` from `render` to `empty` with a site on the line of the call.
+/// A `ref` from `render` to `empty` with a site on the line of the call.
 #[test]
 fn rust_basic_render_refers_to_empty_on_the_line_of_the_call() {
     let snapshot = build_fixture("rust-basic");
@@ -62,8 +62,8 @@ fn rust_basic_render_refers_to_empty_on_the_line_of_the_call() {
     );
 }
 
-/// Criterion 4, index-only part: both other indexers give bodies, so the recorded reference
-/// is a `ref` row between the two named entities.
+/// Both other indexers give bodies, so the index alone yields the recorded reference as a
+/// `ref` row between the two named entities, with no unattributed references.
 #[test]
 fn go_and_typescript_known_facts_come_from_the_index_alone() {
     for (fixture_name, file, caller, site) in [

@@ -221,6 +221,9 @@ version = "0.1.0"
 dependencies = [
  "gosanja-core",
  "gosanja-schema",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

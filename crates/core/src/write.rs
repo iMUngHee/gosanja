@@ -79,8 +79,17 @@ impl SourceReader for FsSource {
         }
     }
 
+    /// Opens the resolved path, and only after checking that it is below the root, so the file
+    /// read is the one that was checked. The tree is assumed not to change during a run.
     fn read(&self, path: &str) -> io::Result<Vec<u8>> {
-        fs::read(self.root.join(path))
+        let resolved = self.root.join(path).canonicalize()?;
+        if !resolved.starts_with(&self.root) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the path resolves outside the root",
+            ));
+        }
+        fs::read(resolved)
     }
 }
 
@@ -110,6 +119,8 @@ pub struct SnapshotFiles {
     pub syntax: Option<Vec<u8>>,
     /// `gaps.jsonl`.
     pub gaps: Option<Vec<u8>>,
+    /// Files that are there and could not be read, with the reason.
+    pub unreadable: Vec<(&'static str, String)>,
 }
 
 impl SnapshotFiles {
@@ -127,26 +138,36 @@ impl SnapshotFiles {
         ]
     }
 
-    /// Reads the seven files of the snapshot at `dir`; a missing file is `None`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an I/O error other than a missing file.
-    pub fn read(dir: &Path) -> io::Result<Self> {
-        let read = |name: &str| match fs::read(dir.join(name)) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e),
+    /// Reads the seven files of the snapshot at `dir`. A missing file is `None`; one that is
+    /// there and cannot be read is `None` too and is listed in `unreadable`.
+    #[must_use]
+    pub fn read(dir: &Path) -> Self {
+        let mut unreadable = Vec::new();
+        let mut read = |name: &'static str| match fs::read(dir.join(name)) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => {
+                unreadable.push((name, e.to_string()));
+                None
+            }
         };
-        Ok(Self {
-            manifest: read("manifest.json")?,
-            files: read("files.jsonl")?,
-            entities: read("entities.jsonl")?,
-            externals: read("externals.jsonl")?,
-            relations: read("relations.jsonl")?,
-            syntax: read("syntax.jsonl")?,
-            gaps: read("gaps.jsonl")?,
-        })
+        let manifest = read("manifest.json");
+        let files = read("files.jsonl");
+        let entities = read("entities.jsonl");
+        let externals = read("externals.jsonl");
+        let relations = read("relations.jsonl");
+        let syntax = read("syntax.jsonl");
+        let gaps = read("gaps.jsonl");
+        Self {
+            manifest,
+            files,
+            entities,
+            externals,
+            relations,
+            syntax,
+            gaps,
+            unreadable,
+        }
     }
 }
 
@@ -204,6 +225,7 @@ pub fn serialise(snapshot: &Snapshot) -> SnapshotFiles {
         relations: Some(relations.0),
         syntax: Some(syntax.0),
         gaps: Some(gaps.0),
+        unreadable: Vec::new(),
     }
 }
 
@@ -305,6 +327,12 @@ mod tests {
         #[cfg(unix)]
         assert_eq!(source.locate("link.rs"), Location::Outside);
         assert_eq!(source.read("src/a.rs").expect("reads"), b"x");
+        #[cfg(unix)]
+        assert_eq!(
+            source.read("link.rs").map_err(|e| e.kind()),
+            Err(io::ErrorKind::PermissionDenied),
+            "read opens only what resolves inside the root"
+        );
         let _missing = source.read("src/missing.rs").unwrap_err();
     }
 }

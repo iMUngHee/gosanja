@@ -404,6 +404,25 @@ mod tests {
     }
 
     #[test]
+    fn parameter_and_meta_descriptors_end_where_the_grammar_says() {
+        let s = global("s m p 1 f().(x)a:");
+        let parsed: Vec<_> = s
+            .descriptors
+            .iter()
+            .map(|d| (d.suffix, d.name.as_str(), d.end))
+            .collect();
+        assert_eq!(
+            parsed,
+            [
+                (Suffix::Method, "f", 12),
+                (Suffix::Parameter, "x", 15),
+                (Suffix::Meta, "a", 17),
+            ]
+        );
+        assert_eq!(s.parent(), Some("s m p 1 f().(x)"));
+    }
+
+    #[test]
     fn roles_follow_the_last_descriptor() {
         assert_eq!(role(Suffix::Term, true), Role::Member);
         assert_eq!(role(Suffix::Term, false), Role::Value);

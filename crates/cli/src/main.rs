@@ -4,17 +4,20 @@
 //! input failure.
 
 use std::ffi::OsString;
-use std::fs::File;
+use std::fs::{self, File};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
-use gosanja_core::graph;
 use gosanja_core::publish;
 use gosanja_core::validate;
 use gosanja_core::write::{self, FsSource, SnapshotFiles, SourceReader};
+use gosanja_core::{adapter, graph, sidecar};
 
 const USAGE: &str = "usage:
   gosanja index --scip <file> --root <dir> --out <dir>
+  gosanja index --adapter <program> --root <dir> --out <dir>
+  gosanja adapter describe <program>
   gosanja validate <snapshot> [--root <dir>]";
 
 const VALIDATION_FAILED: u8 = 1;
@@ -55,7 +58,24 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
         .split_first()
         .ok_or_else(|| usage("no command given"))?;
     match command.to_str() {
-        Some("index") => index(&Options::parse(rest, &["--scip", "--root", "--out"])?),
+        Some("index") => index(&Options::parse(
+            rest,
+            &["--scip", "--adapter", "--root", "--out"],
+        )?),
+        Some("adapter") => {
+            let [subcommand, program] = rest else {
+                return Err(usage("expected adapter describe <program>"));
+            };
+            if subcommand != "describe" {
+                return Err(usage("expected adapter describe <program>"));
+            }
+            let (manifest, _) = adapter::describe(Command::new(program))
+                .map_err(|e| fail(e.exit_code(), e.to_string()))?;
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, &manifest)
+                .map_err(|e| fail(INPUT_FAILED, e.to_string()))?;
+            writeln!(stdout).map_err(|e| fail(INPUT_FAILED, e.to_string()))
+        }
         Some("validate") => validate(&Options::parse(rest, &["--root"])?),
         _ => Err(usage(&format!(
             "unknown command {}",
@@ -113,9 +133,33 @@ fn index(options: &Options) -> Result<(), Failure> {
     if !options.positional.is_empty() {
         return Err(usage("index takes no positional argument"));
     }
-    let scip = options.require("--scip")?;
     let root = options.require("--root")?;
     let out = options.require("--out")?;
+    if let Some(program) = options.get("--adapter") {
+        if options.get("--scip").is_some() {
+            return Err(usage("give exactly one of --scip and --adapter"));
+        }
+        return publish::publish(root, out, |stage| {
+            let sources = FsSource::new(root)?;
+            let cache = adapter_cache(root)?;
+            let output =
+                adapter::run(|| Command::new(program), root, &cache).map_err(io::Error::other)?;
+            let snapshot =
+                sidecar::build(output, &sources, &project_name(root)).map_err(io::Error::other)?;
+            write::write_snapshot(stage, &snapshot)
+        })
+        .map_err(|e| {
+            let code = match &e {
+                publish::PublishError::Io(error) => error
+                    .get_ref()
+                    .and_then(|cause| cause.downcast_ref::<adapter::AdapterError>())
+                    .map_or(INPUT_FAILED, adapter::AdapterError::exit_code),
+                publish::PublishError::Refused(_) => REFUSED,
+            };
+            fail(code, e.to_string())
+        });
+    }
+    let scip = options.require("--scip")?;
     let sources = FsSource::new(root).map_err(|e| {
         fail(
             INPUT_FAILED,
@@ -130,6 +174,38 @@ fn index(options: &Options) -> Result<(), Failure> {
         .map_err(|e| fail(e.exit_code(), e.to_string()))
 }
 
+/// Resolves the cache before creating it so even a missing cache cannot modify the source.
+fn adapter_cache(root: &Path) -> io::Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let cache = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let cache = std::env::home_dir().map(|home| home.join("Library/Caches"));
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::home_dir().map(|home| home.join(".cache")));
+    let cache = cache
+        .filter(|p| {
+            p.is_absolute() && !p.components().any(|c| c == std::path::Component::ParentDir)
+        })
+        .ok_or_else(|| io::Error::other("cannot resolve user cache directory"))?;
+    let cache = cache.join("gosanja");
+    let root = root.canonicalize()?;
+    for prefix in cache.ancestors() {
+        match prefix.canonicalize() {
+            Ok(path) if path.starts_with(&root) => {
+                return Err(io::Error::other("user cache is inside the indexed root"));
+            }
+            Ok(_) => break,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e),
+        }
+    }
+    fs::create_dir_all(&cache)?;
+    Ok(cache)
+}
+
 /// The display name of a project: the last component of its root.
 fn project_name(root: &Path) -> String {
     root.canonicalize()
@@ -142,12 +218,8 @@ fn validate(options: &Options) -> Result<(), Failure> {
     let [snapshot] = options.positional.as_slice() else {
         return Err(usage("validate takes one snapshot directory"));
     };
-    let files = SnapshotFiles::read(snapshot).map_err(|e| {
-        fail(
-            INPUT_FAILED,
-            format!("cannot read {}: {e}", snapshot.display()),
-        )
-    })?;
+    // Unreadable files become diagnostics, reported only after the version check.
+    let files = SnapshotFiles::read(snapshot);
     let sources = match options.get("--root") {
         Some(root) => Some(FsSource::new(root).map_err(|e| {
             fail(

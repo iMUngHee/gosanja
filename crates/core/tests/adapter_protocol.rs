@@ -182,3 +182,42 @@ fn fresh_output_and_inspection_errors() {
         assert!(err.to_string().contains("overlap"));
     }
 }
+
+#[test]
+fn resolved_sibling_output_is_publishable() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("src");
+    fs::create_dir(&root).unwrap();
+    publish::publish(&root, &root.join("../out"), |stage| {
+        fs::write(stage.join("data"), "published")
+    })
+    .unwrap();
+    assert_eq!(
+        fs::read(temp.path().join("out/data")).unwrap(),
+        b"published"
+    );
+    #[cfg(unix)]
+    {
+        let inner = root.join("inner");
+        fs::create_dir(&inner).unwrap();
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(inner, &link).unwrap();
+        let err = publish::publish(&root, &link.join("../inside"), |_| panic!("source overlap"))
+            .unwrap_err();
+        assert_eq!(err.exit_code(), 2);
+    }
+}
+
+#[test]
+fn missing_output_parent_is_a_refusal_and_creates_nothing() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("src");
+    fs::create_dir(&root).unwrap();
+    let missing = temp.path().join("missing");
+    let err = publish::publish(&root, &missing.join("nested/out"), |_| {
+        panic!("missing parent")
+    })
+    .unwrap_err();
+    assert_eq!(err.exit_code(), 2);
+    assert!(!missing.exists());
+}

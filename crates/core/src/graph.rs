@@ -114,9 +114,12 @@ pub fn build_with(
                 name: info.name.clone(),
                 version: info.version.clone(),
             });
-            if input.tool_name.is_none() && !info.name.is_empty() {
-                input.tool_name = Some(info.name.clone());
-            }
+            let name = if info.name.is_empty() {
+                "unknown"
+            } else {
+                info.name.as_str()
+            };
+            input.src = format!("scip:{name}");
         }
         Item::Document(document) => input.document(&document, sources),
         Item::ExternalSymbol(info) => {
@@ -134,22 +137,53 @@ struct Occ {
     symbol: String,
     roles: i32,
     range: Range,
+    /// Only on definitions; an enclosing range elsewhere is ignored.
     enclosing: Option<Range>,
+    /// `scip:<tool>` of the metadata that preceded the document.
+    src: String,
 }
 
-#[derive(Debug, Default)]
+/// `from` implements or overrides `to`, as a document's symbol information states it.
+#[derive(Debug)]
+struct Implementation {
+    from: String,
+    to: String,
+    src: String,
+}
+
+#[derive(Debug)]
 struct Input {
     tools: BTreeSet<Tool>,
-    tool_name: Option<String>,
+    /// `scip:<tool>` of the most recent metadata.
+    src: String,
     files: BTreeMap<String, FileRow>,
     occurrences: Vec<Occ>,
+    implementations: Vec<Implementation>,
     /// Symbol to the `<language>:<kind>` strings any document gave it.
     kinds: BTreeMap<String, BTreeSet<String>>,
     /// Every symbol some input mentions.
     named: BTreeSet<String>,
-    invalid_paths: u64,
-    gaps: BTreeSet<(GapKind, String)>,
-    out_of_range: BTreeMap<String, u64>,
+    /// Documents with a path the convention forbids, by provenance.
+    invalid_paths: BTreeMap<String, u64>,
+    gaps: BTreeSet<(GapKind, String, String)>,
+    out_of_range: BTreeMap<String, (u64, String)>,
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self {
+            tools: BTreeSet::new(),
+            src: "scip:unknown".to_owned(),
+            files: BTreeMap::new(),
+            occurrences: Vec::new(),
+            implementations: Vec::new(),
+            kinds: BTreeMap::new(),
+            named: BTreeSet::new(),
+            invalid_paths: BTreeMap::new(),
+            gaps: BTreeSet::new(),
+            out_of_range: BTreeMap::new(),
+        }
+    }
 }
 
 impl Input {
@@ -157,20 +191,26 @@ impl Input {
     fn document(&mut self, document: &Document, sources: &dyn SourceReader) {
         let path = document.relative_path.as_str();
         if !is_valid_path(path) {
-            self.invalid_paths += 1;
+            *self.invalid_paths.entry(self.src.clone()).or_default() += 1;
             return;
         }
         let text = match sources.locate(path) {
             Location::Outside => {
-                self.gaps
-                    .insert((GapKind::DocumentOutsideRoot, path.to_owned()));
+                self.gaps.insert((
+                    GapKind::DocumentOutsideRoot,
+                    path.to_owned(),
+                    self.src.clone(),
+                ));
                 return;
             }
             Location::Inside => match sources.read(path) {
                 Ok(text) => text,
                 Err(_unavailable) => {
-                    self.gaps
-                        .insert((GapKind::SourceUnavailable, path.to_owned()));
+                    self.gaps.insert((
+                        GapKind::SourceUnavailable,
+                        path.to_owned(),
+                        self.src.clone(),
+                    ));
                     return;
                 }
             },
@@ -180,24 +220,35 @@ impl Input {
             Ok(ScipEncoding::UTF16CodeUnitOffsetFromLineStart) => PositionEncoding::Utf16,
             Ok(ScipEncoding::UTF32CodeUnitOffsetFromLineStart) => PositionEncoding::Utf32,
             Ok(ScipEncoding::UnspecifiedPositionEncoding) | Err(_) => {
-                self.gaps
-                    .insert((GapKind::UndecodableDocument, path.to_owned()));
+                self.gaps.insert((
+                    GapKind::UndecodableDocument,
+                    path.to_owned(),
+                    self.src.clone(),
+                ));
                 return;
             }
         };
         let lines = LineIndex::new(&text);
         let language = document.language.to_lowercase();
-        self.files
-            .entry(path.to_owned())
-            .or_insert_with(|| FileRow {
-                path: path.to_owned(),
-                language: (!language.is_empty()).then(|| language.clone()),
-                bytes: text.len() as u64,
-                lines: lines.count(),
-                sha256: hex(&Sha256::digest(&text)),
-            });
+        self.files.entry(path.to_owned()).or_insert_with(|| {
+            file_row(
+                path,
+                (!language.is_empty()).then(|| language.clone()),
+                &text,
+            )
+        });
         for info in &document.symbols {
             self.named.insert(info.symbol.clone());
+            for relationship in &info.relationships {
+                if relationship.is_implementation {
+                    self.named.insert(relationship.symbol.clone());
+                    self.implementations.push(Implementation {
+                        from: info.symbol.clone(),
+                        to: relationship.symbol.clone(),
+                        src: self.src.clone(),
+                    });
+                }
+            }
             if let Some(kind) = kind_name(&language, info.kind.enum_value()) {
                 self.kinds
                     .entry(info.symbol.clone())
@@ -210,22 +261,26 @@ impl Input {
                 continue;
             }
             self.named.insert(occurrence.symbol.clone());
-            match convert(occurrence, &lines, unit) {
-                Some((range, enclosing)) => self.occurrences.push(Occ {
+            if let Some((range, enclosing)) = convert(occurrence, &lines, unit) {
+                self.occurrences.push(Occ {
                     file: path.to_owned(),
                     symbol: occurrence.symbol.clone(),
                     roles: occurrence.symbol_roles,
                     range,
                     enclosing,
-                }),
-                None => *self.out_of_range.entry(path.to_owned()).or_default() += 1,
+                    src: self.src.clone(),
+                });
+            } else {
+                let (count, _) = self
+                    .out_of_range
+                    .entry(path.to_owned())
+                    .or_insert_with(|| (0, self.src.clone()));
+                *count += 1;
             }
         }
     }
 
     fn finish(self, project_name: &str, before_references: impl FnOnce(&mut Snapshot)) -> Snapshot {
-        let tool = self.tool_name.as_deref().unwrap_or("unknown");
-        let scip_src = format!("scip:{tool}");
         let mut out = Snapshot {
             project: Project {
                 name: project_name.to_owned(),
@@ -249,27 +304,30 @@ impl Input {
             gaps: Vec::new(),
             dropped_local_references: 0,
         };
-        self.document_gaps(&scip_src, &mut out.gaps);
-        let graph = Graph::new(&self.occurrences);
-        graph.entities(&self, &scip_src, &mut out);
+        self.document_gaps(&mut out.gaps);
+        let graph = Graph::new(&self.occurrences, &self.implementations);
+        graph.entities(&self, &mut out);
         before_references(&mut out);
         graph.references(&self, &mut out);
+        graph.implements(&mut out);
         out
     }
 
-    fn document_gaps(&self, scip_src: &str, gaps: &mut Vec<GapRow>) {
-        if self.invalid_paths > 0 {
-            let mut gap = GapRow::new(GapKind::DocumentOutsideRoot, scip_src);
-            gap.count = Some(self.invalid_paths);
+    /// One row stands for every document whose path the convention forbids; it takes the
+    /// first provenance in order.
+    fn document_gaps(&self, gaps: &mut Vec<GapRow>) {
+        if let Some(src) = self.invalid_paths.keys().next() {
+            let mut gap = GapRow::new(GapKind::DocumentOutsideRoot, src.clone());
+            gap.count = Some(self.invalid_paths.values().sum());
             gaps.push(gap);
         }
-        for (kind, file) in &self.gaps {
-            let mut gap = GapRow::new(*kind, scip_src);
+        for (kind, file, src) in &self.gaps {
+            let mut gap = GapRow::new(*kind, src.clone());
             gap.file = Some(file.clone());
             gaps.push(gap);
         }
-        for (file, count) in &self.out_of_range {
-            let mut gap = GapRow::new(GapKind::PositionOutOfRange, scip_src);
+        for (file, (count, src)) in &self.out_of_range {
+            let mut gap = GapRow::new(GapKind::PositionOutOfRange, src.clone());
             gap.file = Some(file.clone());
             gap.count = Some(*count);
             gaps.push(gap);
@@ -277,13 +335,27 @@ impl Input {
     }
 }
 
-/// A path as `spec/README.md` allows it: relative, `/`-separated, no empty, `.` or `..`
-/// segment, and no drive letter.
-fn is_valid_path(path: &str) -> bool {
-    !path.is_empty()
-        && !path.contains('\\')
-        && path.as_bytes().get(1) != Some(&b':')
-        && path.split('/').all(|seg| !matches!(seg, "" | "." | ".."))
+/// The `files.jsonl` row of a source file with the given text.
+#[must_use]
+pub fn file_row(path: &str, language: Option<String>, text: &[u8]) -> FileRow {
+    FileRow {
+        path: path.to_owned(),
+        language,
+        bytes: text.len() as u64,
+        lines: LineIndex::new(text).count(),
+        sha256: hex(&Sha256::digest(text)),
+    }
+}
+
+/// Whether `path` is a path as `spec/README.md` and `file.schema.json` allow it.
+///
+/// That is: relative, `/`-separated, no backslash, no empty, `.` or `..` segment, and not
+/// starting with a drive letter and a slash. A valid path may still lead outside the root
+/// through a link; [`SourceReader::locate`] decides that.
+#[must_use]
+pub fn is_valid_path(path: &str) -> bool {
+    let drive = matches!(path.as_bytes(), [letter, b':', b'/', ..] if letter.is_ascii_alphabetic());
+    !drive && !path.contains('\\') && path.split('/').all(|seg| !matches!(seg, "" | "." | ".."))
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
@@ -422,6 +494,9 @@ fn convert(
         }
         _ => legacy(&o.range)?,
     };
+    if !is_definition(o.symbol_roles) {
+        return Some((lines.range(unsigned(range)?, unit)?, None));
+    }
     let enclosing = match &o.typed_enclosing_range {
         Some(Typed_enclosing_range::SingleLineEnclosingRange(r)) => {
             Some([r.line, r.start_character, r.line, r.end_character])
@@ -463,8 +538,9 @@ fn ref_roles(bits: i32) -> Vec<RefRole> {
     roles
 }
 
-/// The definition sites of one symbol, by file and name range, with the body if any.
-type Observations = BTreeMap<(String, Range), Option<Range>>;
+/// The definition sites of one symbol, by file and name range, with the body if any and the
+/// provenance of the document.
+type Observations = BTreeMap<(String, Range), (Option<Range>, String)>;
 
 /// Symbols of the index, sorted into rows.
 #[derive(Debug)]
@@ -474,28 +550,38 @@ struct Graph<'a> {
     defs: BTreeMap<&'a str, Observations>,
     /// Symbols that are entity rows: definitions and their containers.
     rows: BTreeMap<&'a str, Symbol<'a>>,
-    externals: BTreeMap<&'a str, Symbol<'a>>,
+    /// Referenced symbols that are not rows, with the first provenance in order.
+    externals: BTreeMap<&'a str, (Symbol<'a>, &'a str)>,
     keys: BTreeMap<&'a str, String>,
+    implementations: &'a [Implementation],
 }
 
 impl<'a> Graph<'a> {
-    fn new(occurrences: &'a [Occ]) -> Self {
+    fn new(occurrences: &'a [Occ], implementations: &'a [Implementation]) -> Self {
         let mut parsed = BTreeMap::new();
-        for occ in occurrences {
-            if let Ok(Parsed::Global(symbol)) = identity::parse(&occ.symbol) {
-                parsed.entry(occ.symbol.as_str()).or_insert(symbol);
+        let mentioned = occurrences
+            .iter()
+            .map(|o| o.symbol.as_str())
+            .chain(implementations.iter().map(|i| i.to.as_str()));
+        for raw in mentioned {
+            if let Ok(Parsed::Global(symbol)) = identity::parse(raw) {
+                parsed.entry(raw).or_insert(symbol);
             }
         }
         let mut all_defs: BTreeMap<&str, Observations> = BTreeMap::new();
         for occ in occurrences.iter().filter(|o| is_definition(o.roles)) {
             if parsed.contains_key(occ.symbol.as_str()) {
-                let body = all_defs
+                let (body, src) = all_defs
                     .entry(occ.symbol.as_str())
                     .or_default()
                     .entry((occ.file.clone(), occ.range))
-                    .or_default();
-                // Repeated observations merge; the larger keeps a body over none.
+                    .or_insert_with(|| (None, occ.src.clone()));
+                // Repeated observations merge; the larger keeps a body over none, and the
+                // smaller provenance is kept so that input order does not matter.
                 *body = (*body).max(occ.enclosing);
+                if occ.src < *src {
+                    src.clone_from(&occ.src);
+                }
             }
         }
         // A parameter is a row only as a container, so its own definition makes none.
@@ -514,17 +600,27 @@ impl<'a> Graph<'a> {
             .into_iter()
             .filter(|(raw, _)| rows.contains_key(raw))
             .collect();
-        let mut externals = BTreeMap::new();
-        for occ in occurrences.iter().filter(|o| !is_definition(o.roles)) {
-            if let Some(symbol) = parsed.get(occ.symbol.as_str())
-                && !rows.contains_key(occ.symbol.as_str())
+        let mut externals: BTreeMap<&str, (Symbol<'_>, &str)> = BTreeMap::new();
+        let references = occurrences
+            .iter()
+            .filter(|o| !is_definition(o.roles))
+            .map(|o| (o.symbol.as_str(), o.src.as_str()))
+            .chain(
+                implementations
+                    .iter()
+                    .map(|i| (i.to.as_str(), i.src.as_str())),
+            );
+        for (raw, src) in references {
+            if let Some(symbol) = parsed.get(raw)
+                && !rows.contains_key(raw)
                 && !symbol.last().suffix.is_parameter()
             {
-                externals.insert(symbol.raw(), symbol.clone());
+                let entry = externals.entry(raw).or_insert((symbol.clone(), src));
+                entry.1 = entry.1.min(src);
             }
         }
         let mut keyed = rows.clone();
-        keyed.extend(externals.iter().map(|(raw, s)| (*raw, s.clone())));
+        keyed.extend(externals.iter().map(|(raw, (s, _))| (*raw, s.clone())));
         let keys = identity::assign_keys(&keyed);
         Self {
             parsed,
@@ -532,10 +628,11 @@ impl<'a> Graph<'a> {
             rows,
             externals,
             keys,
+            implementations,
         }
     }
 
-    fn entities(&self, input: &Input, scip_src: &str, out: &mut Snapshot) {
+    fn entities(&self, input: &Input, out: &mut Snapshot) {
         for (&raw, symbol) in &self.rows {
             let key = &self.keys[raw];
             let parent_symbol = symbol.parent();
@@ -552,41 +649,41 @@ impl<'a> Graph<'a> {
                 group: false,
                 member_of: None,
                 def: None,
-                src: scip_src.to_owned(),
+                src: CONTAINMENT.to_owned(),
             };
             let Some(observations) = self.defs.get(raw) else {
                 out.entities.push(EntityRow {
                     symbol: input.named.contains(raw).then(|| raw.to_owned()),
                     r#virtual: true,
-                    src: CONTAINMENT.to_owned(),
                     ..row
                 });
                 continue;
             };
-            let definition = |key: String,
-                              member_of: Option<String>,
-                              (file, name): &(String, Range),
-                              body: Option<Range>| EntityRow {
-                key,
-                member_of,
-                def: Some(Def {
-                    file: file.clone(),
-                    name: *name,
-                    body,
-                    body_src: body.map(|_| scip_src.to_owned()),
-                }),
-                ..row.clone()
-            };
+            let definition =
+                |key: String,
+                 member_of: Option<String>,
+                 (file, name): &(String, Range),
+                 (body, src): &(Option<Range>, String)| EntityRow {
+                    key,
+                    member_of,
+                    def: Some(Def {
+                        file: file.clone(),
+                        name: *name,
+                        body: *body,
+                        body_src: body.map(|_| src.clone()),
+                    }),
+                    src: src.clone(),
+                    ..row.clone()
+                };
             if let [(site, body)] = observations.iter().collect::<Vec<_>>()[..] {
-                out.entities
-                    .push(definition(key.clone(), None, site, *body));
+                out.entities.push(definition(key.clone(), None, site, body));
                 continue;
             }
             let mut gap_keys = vec![key.clone()];
             for (n, (site, body)) in observations.iter().enumerate() {
                 let member = format!("{key}~{}", n + 1);
                 out.entities
-                    .push(definition(member.clone(), Some(key.clone()), site, *body));
+                    .push(definition(member.clone(), Some(key.clone()), site, body));
                 gap_keys.push(member);
             }
             out.entities.push(EntityRow {
@@ -599,7 +696,7 @@ impl<'a> Graph<'a> {
             gap.keys = Some(gap_keys);
             out.gaps.push(gap);
         }
-        for (&raw, symbol) in &self.externals {
+        for (&raw, (symbol, src)) in &self.externals {
             out.externals.push(ExternalRow {
                 key: self.keys[raw].clone(),
                 symbol: raw.to_owned(),
@@ -608,7 +705,43 @@ impl<'a> Graph<'a> {
                     name: symbol.package.clone(),
                     version: symbol.version.clone(),
                 },
-                src: scip_src.to_owned(),
+                src: (*src).to_owned(),
+            });
+        }
+    }
+
+    /// `implements` rows from the index's relationships, for definitions only; `sites` holds
+    /// the name ranges of `from`.
+    fn implements(&self, out: &mut Snapshot) {
+        let mut rows: BTreeMap<(String, String, String), BTreeSet<Site>> = BTreeMap::new();
+        for imp in self.implementations {
+            let (Some(observations), Some(to)) =
+                (self.defs.get(imp.from.as_str()), self.target(&imp.to))
+            else {
+                continue;
+            };
+            let sites = rows
+                .entry((
+                    self.keys[imp.from.as_str()].clone(),
+                    to.clone(),
+                    imp.src.clone(),
+                ))
+                .or_default();
+            for (file, name) in observations.keys() {
+                sites.insert(Site::new(file.clone(), *name));
+            }
+        }
+        for ((from, to, src), sites) in rows {
+            out.relations.push(RelationRow {
+                from,
+                to,
+                rel: Rel::Implements,
+                roles: None,
+                mechanism: None,
+                resolution: None,
+                sites: Some(sites.into_iter().collect()),
+                evidence: None,
+                src,
             });
         }
     }
@@ -738,6 +871,22 @@ fn remaining_bodies(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_undecodable_index_says_so_and_keeps_its_cause() {
+        struct Nothing;
+        impl SourceReader for Nothing {
+            fn locate(&self, _: &str) -> Location {
+                Location::Outside
+            }
+            fn read(&self, _: &str) -> std::io::Result<Vec<u8>> {
+                Err(std::io::ErrorKind::NotFound.into())
+            }
+        }
+        let error = build(&mut &[0x0a, 0xff][..], &Nothing, "p").expect_err("truncated");
+        assert!(error.to_string().contains("cannot be decoded"), "{error}");
+        assert!(std::error::Error::source(&error).is_some());
+    }
 
     #[test]
     fn columns_convert_from_each_unit_to_utf8_bytes() {

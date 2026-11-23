@@ -4,7 +4,6 @@ use std::{
     io::{self, BufRead, BufReader},
     path::Path,
     process::{Command, Stdio},
-    sync::LazyLock,
 };
 
 use gosanja_schema::{
@@ -15,9 +14,11 @@ use gosanja_schema::{
     },
     snapshot::{BuildContext, FailedDetail, GapKind, GapRow, Layer, LayerState, Layers},
 };
-use jsonschema::{Registry, Validator};
+use jsonschema::Validator;
+
+use crate::schemas::{Schema, validator};
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tempfile::TempDir;
 
 /// Base index and optional layers for one invocation. The index stays open until consumed.
@@ -64,57 +65,6 @@ impl std::fmt::Display for AdapterError {
 }
 impl std::error::Error for AdapterError {}
 
-struct Schemas {
-    manifest: Validator,
-    result: Validator,
-    syntax: Validator,
-    calls: Validator,
-}
-static SCHEMAS: LazyLock<Schemas> = LazyLock::new(|| {
-    const BASE: &str = "https://gosanja.invalid/schema/";
-    macro_rules! schema {
-        ($name:literal) => {
-            (
-                $name,
-                include_str!(concat!("../../../spec/schema/", $name, ".schema.json")),
-            )
-        };
-    }
-    let mut registry = Registry::new();
-    for (name, text) in [
-        schema!("adapter-manifest"),
-        schema!("adapter-result"),
-        schema!("syntax-fact"),
-        schema!("call-evidence"),
-        schema!("relation"),
-        schema!("syntax"),
-        schema!("file"),
-        schema!("entity"),
-    ] {
-        registry = registry
-            .add(
-                format!("{BASE}{name}.schema.json"),
-                serde_json::from_str::<Value>(text).expect("bundled schema is JSON"),
-            )
-            .expect("bundled schema registers");
-    }
-    let registry = registry
-        .prepare()
-        .expect("bundled schema references resolve");
-    let validator = |name: &str| {
-        jsonschema::options()
-            .with_registry(&registry)
-            .build(&json!({"$ref":format!("{BASE}{name}.schema.json")}))
-            .expect("bundled schema compiles")
-    };
-    Schemas {
-        manifest: validator("adapter-manifest"),
-        result: validator("adapter-result"),
-        syntax: validator("syntax-fact"),
-        calls: validator("call-evidence"),
-    }
-});
-
 fn parse<T: DeserializeOwned>(schema: &Validator, value: Value) -> io::Result<T> {
     if let Err(error) = schema.validate(&value) {
         return Err(io::Error::new(
@@ -139,6 +89,7 @@ fn read_rows<T: DeserializeOwned>(
     mut reader: impl BufRead,
     schema: &Validator,
     acceptance: Acceptance,
+    valid: impl Fn(&T) -> bool,
 ) -> io::Result<(Vec<T>, u64)> {
     let mut rows = Vec::new();
     let mut skipped = 0;
@@ -163,7 +114,7 @@ fn read_rows<T: DeserializeOwned>(
             }
         }
         let row = serde_json::from_value(value)?;
-        match compat::classify_row(acceptance, well_formed, unknown) {
+        match compat::classify_row(acceptance, well_formed && valid(&row), unknown) {
             RowVerdict::Keep => rows.push(row),
             RowVerdict::Skip => skipped += 1,
             RowVerdict::Malformed => return Err(io::Error::other("invalid side-car row")),
@@ -179,7 +130,12 @@ pub fn read_syntax(
     reader: impl BufRead,
     acceptance: Acceptance,
 ) -> io::Result<(Vec<SyntaxFact>, u64)> {
-    read_rows(reader, &SCHEMAS.syntax, acceptance)
+    read_rows(
+        reader,
+        validator(Schema::SyntaxFact),
+        acceptance,
+        crate::sidecar::valid_ranges,
+    )
 }
 
 /// Reads compiler call observations and returns the count skipped under the compatibility policy.
@@ -190,7 +146,9 @@ pub fn read_calls(
     reader: impl BufRead,
     acceptance: Acceptance,
 ) -> io::Result<(Vec<CallEvidence>, u64)> {
-    read_rows(reader, &SCHEMAS.calls, acceptance)
+    read_rows(reader, validator(Schema::CallEvidence), acceptance, |_| {
+        true
+    })
 }
 
 struct OptionalLayer<'a> {
@@ -249,6 +207,27 @@ impl OptionalLayer<'_> {
     }
 }
 
+/// Reads and validates the manifest printed by an adapter and selects the reader policy.
+///
+/// # Errors
+/// Reports process or manifest errors and refuses incompatible contract versions.
+pub fn describe(mut command: Command) -> Result<(AdapterManifest, Acceptance), AdapterError> {
+    let describe = command.arg("describe").stderr(Stdio::inherit()).output()?;
+    if !describe.status.success() {
+        return Err(io::Error::other(format!("describe exited {}", describe.status)).into());
+    }
+    let value: Value = serde_json::from_slice(&describe.stdout).map_err(io::Error::from)?;
+    let version: Version = value["contract"]
+        .as_str()
+        .unwrap_or_default()
+        .parse()
+        .map_err(io::Error::other)?;
+    let acceptance =
+        compat::accept(CONTRACT_VERSION, version).map_err(AdapterError::Incompatible)?;
+    let manifest: AdapterManifest = parse(validator(Schema::AdapterManifest), value)?;
+    Ok((manifest, acceptance))
+}
+
 /// Runs describe and index in sequence, with a fresh command for each invocation.
 ///
 /// # Errors
@@ -264,22 +243,7 @@ pub fn run(
     if parent.starts_with(&root) {
         return Err(io::Error::other("adapter output would be inside source tree").into());
     }
-    let describe = command()
-        .arg("describe")
-        .stderr(Stdio::inherit())
-        .output()?;
-    if !describe.status.success() {
-        return Err(io::Error::other(format!("describe exited {}", describe.status)).into());
-    }
-    let value: Value = serde_json::from_slice(&describe.stdout).map_err(io::Error::from)?;
-    let version: Version = value["contract"]
-        .as_str()
-        .unwrap_or_default()
-        .parse()
-        .map_err(io::Error::other)?;
-    let acceptance =
-        compat::accept(CONTRACT_VERSION, version).map_err(AdapterError::Incompatible)?;
-    let manifest: AdapterManifest = parse(&SCHEMAS.manifest, value)?;
+    let (manifest, acceptance) = describe(command())?;
     let dir = tempfile::tempdir_in(parent)?;
     let status = command()
         .arg("index")
@@ -297,7 +261,7 @@ pub fn run(
     if let Some(layers) = value.get_mut("layers").and_then(Value::as_object_mut) {
         layers.retain(|k, _| matches!(k.as_str(), "base" | "syntax" | "calls"));
     }
-    let result: AdapterResult = parse(&SCHEMAS.result, value)?;
+    let result: AdapterResult = parse(validator(Schema::AdapterResult), value)?;
     if result.contract != manifest.contract {
         return Err(io::Error::other("result contract differs from describe").into());
     }
@@ -356,6 +320,8 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]

@@ -19,6 +19,7 @@ fn newer_minor_skips_only_unknown_enum_strings() {
         unknown.replace("\"x\"", "\"../x\""),
         unknown.replace("\"future\"", "3"),
         unknown.replace("[0,0,0,1]", "[0,1]"),
+        unknown.replace("[0,0,0,1]", "[0,3,0,1]"),
     ] {
         read_syntax(Cursor::new(format!("{known}\n{invalid}\n")), policy).unwrap_err();
     }
@@ -263,12 +264,16 @@ fn bad_rows_are_counted_without_losing_other_rows() {
     let mut bad_site = row.clone();
     bad_site["site"] = json!({"file":"x","line":1,"col":1});
     let mut bad = fact();
-    bad["outline"][0]["children"][1]["callee"] = json!([1, 1, 1, 2]);
+    bad["outline"][0]["children"][2]["callee"] = json!([1, 1, 1, 2]);
     let got = run(
         &[bad, json!({"anchor":{"file":"x","line":0,"name":"absent"}})],
         &[row, unknown, unresolved, bad_site],
     );
     assert_eq!(got.relations.len(), 1);
+    assert_eq!(
+        got.scope.layers.syntax,
+        gosanja_schema::snapshot::LayerState::Present
+    );
     assert_eq!(got.syntax.len(), 0);
     assert_eq!(
         got.entities
@@ -331,4 +336,185 @@ fn additional_sidecar_fields_leave_the_snapshot_bytes_unchanged() {
         serialise(&snapshot)
     };
     assert_eq!(make("good").named(), make("extra").named());
+}
+
+fn assert_discarded_syntax(snapshot: &Snapshot) {
+    use gosanja_schema::snapshot::{FailedDetail, LayerState};
+    assert_eq!(snapshot.scope.layers.syntax, LayerState::Failed);
+    assert_eq!(
+        gosanja_core::validate::validate(&serialise(snapshot), None).unwrap(),
+        Vec::<gosanja_core::validate::Diagnostic>::new()
+    );
+    assert_eq!(snapshot.syntax.len(), 0);
+    assert_eq!(snapshot.relations.len(), 0);
+    let owner = snapshot
+        .entities
+        .iter()
+        .find(|e| e.name == "owner")
+        .unwrap();
+    let def = owner.def.as_ref().unwrap();
+    assert_eq!((def.body, &def.body_src), (None, &None));
+    let gaps: Vec<_> = snapshot
+        .gaps
+        .iter()
+        .filter(|g| g.src == "adapter:fake/syntax")
+        .collect();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(
+        (gaps[0].gap, gaps[0].layer, gaps[0].detail),
+        (
+            GapKind::FailedLayer,
+            Some(Layer::Syntax),
+            Some(FailedDetail::RowInvalid)
+        )
+    );
+}
+
+#[test]
+fn duplicate_resolved_definition_discards_syntax_in_either_order() {
+    let first = fact();
+    let other = json!({"anchor":{"file":"x","line":0,"col":0},"body":[0,0,0,90]});
+    let missing = json!({"anchor":{"file":"x","line":2,"name":"no-match"}});
+    let a = run(&[missing.clone(), first.clone(), other.clone()], &[]);
+    let b = run(&[other, first, missing], &[]);
+    assert_discarded_syntax(&a);
+    assert_eq!(serialise(&a).named(), serialise(&b).named());
+}
+
+#[test]
+fn malformed_outline_geometry_discards_the_entire_syntax_layer() {
+    let wrong_callee = json!({"k":"call","range":[1,0,1,2],"callee":[1,2,1,5]});
+    let escaped_child =
+        json!({"k":"branch","range":[1,0,1,2],"children":[{"k":"opaque","range":[2,0,2,2]}]});
+    let backwards = json!({"k":"opaque","range":[1,5,1,2]});
+    for node in [wrong_callee, escaped_child, backwards] {
+        let row = json!({"anchor":{"file":"x","line":3,"name":"unmatched"},"outline":[node]});
+        let a = run(&[fact(), row.clone()], &[]);
+        let b = run(&[row, fact()], &[]);
+        assert_discarded_syntax(&a);
+        assert_eq!(serialise(&a).named(), serialise(&b).named());
+    }
+    let backwards = json!({"anchor":{"file":"x","line":3,"name":"empty"},"body":[3,5,3,2]});
+    assert_discarded_syntax(&run(&[fact(), backwards], &[]));
+}
+
+#[test]
+fn generated_call_site_uses_the_source_boundary_and_records_file_metadata() {
+    struct Checked(FsSource);
+    impl gosanja_core::write::SourceReader for Checked {
+        fn locate(&self, path: &str) -> gosanja_core::write::Location {
+            self.0.locate(path)
+        }
+        fn read(&self, path: &str) -> std::io::Result<Vec<u8>> {
+            assert_eq!(
+                self.locate(path),
+                gosanja_core::write::Location::Inside,
+                "outside file was opened"
+            );
+            self.0.read(path)
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("x"), SOURCE).unwrap();
+    fs::write(root.join("generated"), "🦀x\n").unwrap();
+    fs::write(root.join("bad-position"), "x").unwrap();
+    let paths = [
+        "generated",
+        "generated",
+        "missing",
+        "bad-position",
+        #[cfg(unix)]
+        "link",
+    ];
+    let outside = tmp.path().join("outside");
+    fs::write(&outside, "🦀x\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside, root.join("link")).unwrap();
+    let mut output = fixture(&root, tmp.path(), "good");
+    output.syntax.clear();
+    output.calls = paths
+        .iter()
+        .map(|path| {
+            let mut obs = observation();
+            obs["site"] = json!({"file":path,"line":0,"col":2});
+            serde_json::from_value(obs).unwrap()
+        })
+        .collect();
+    let got = sidecar::build(output, &Checked(FsSource::new(&root).unwrap()), "demo").unwrap();
+    assert_eq!(
+        gosanja_core::validate::validate(&serialise(&got), None).unwrap(),
+        Vec::<gosanja_core::validate::Diagnostic>::new()
+    );
+    let files: Vec<_> = got.files.iter().filter(|f| f.path != "x").collect();
+    assert_eq!(files.len(), 1);
+    let file = files[0];
+    assert_eq!(file.path, "generated");
+    assert_eq!(file.language, None);
+    assert_eq!((file.bytes, file.lines), (6, 1));
+    assert_eq!(
+        file.sha256,
+        "54a195bd5f68cdb94a24b902774a69804fbce0c7684c4e90ba9631a022297c1b"
+    );
+    let evidence = got
+        .relations
+        .iter()
+        .find(|r| r.rel == Rel::Call)
+        .unwrap()
+        .evidence
+        .as_ref()
+        .unwrap();
+    assert_eq!(evidence.len(), 2);
+    for e in evidence {
+        assert_eq!(e.file.as_deref(), Some("generated"));
+        assert_eq!(e.col, Some(4));
+    }
+    for path in &paths[2..] {
+        let gap = got
+            .gaps
+            .iter()
+            .find(|g| g.file.as_deref() == Some(*path) && g.gap == GapKind::PositionOutOfRange)
+            .unwrap();
+        assert_eq!(gap.count, Some(1));
+    }
+}
+
+#[test]
+fn discarding_duplicate_syntax_rows_removes_only_that_layers_skipped_count() {
+    use gosanja_schema::snapshot::GapRow;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("x"), SOURCE).unwrap();
+    let mut output = fixture(&root, tmp.path(), "good");
+    output.syntax = vec![serde_json::from_value(fact()).unwrap(); 2];
+    for (layer, src) in [
+        (Layer::Syntax, "adapter:fake/syntax"),
+        (Layer::Calls, "adapter:fake/calls"),
+    ] {
+        let mut gap = GapRow::new(GapKind::UnknownValue, src);
+        gap.count = Some(2);
+        gap.layer = Some(layer);
+        output.gaps.push(gap);
+    }
+    let mut got = sidecar::build(output, &FsSource::new(&root).unwrap(), "demo").unwrap();
+    assert_discarded_syntax(&got);
+    assert_eq!(
+        got.gaps
+            .iter()
+            .filter(|g| g.gap == GapKind::UnknownValue)
+            .map(|g| g.layer)
+            .collect::<Vec<_>>(),
+        [Some(Layer::Calls)]
+    );
+    // In-memory consumers can supply a position converter directly.
+    sidecar::derive_calls(
+        &mut got,
+        &[serde_json::from_value(observation()).unwrap()],
+        "fake",
+        &|_, _, col| Some(col),
+    );
+    assert_eq!(got.relations.len(), 1);
+    assert_eq!(got.relations[0].rel, Rel::Call);
 }

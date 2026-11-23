@@ -18,6 +18,7 @@ use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
 use crate::graph::LineIndex;
+use crate::schemas::{Schema, validator};
 use crate::write::{self, Location, SnapshotFiles, SourceReader};
 
 /// One way a snapshot departs from the specification.
@@ -63,6 +64,16 @@ pub struct ReadSnapshot {
     pub skipped: u64,
     /// Problems found while reading.
     pub diagnostics: Vec<Diagnostic>,
+    /// Keys of the rows skipped so far.
+    skipped_keys: BTreeSet<String>,
+}
+
+/// The first way `value` fails `schema`, if it does.
+fn first_error(schema: Schema, value: &serde_json::Value) -> Option<String> {
+    validator(schema)
+        .iter_errors(value)
+        .next()
+        .map(|e| format!("{e} at {}", e.instance_path()))
 }
 
 /// Reads a snapshot as a reader implementing schema version `reader`.
@@ -83,6 +94,11 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
                     Some(Ok(writer)) => acceptance = compat::accept(reader, writer)?,
                     _ => out.diag("manifest.json", None, "malformed-row", "no valid `schema`"),
                 }
+                if acceptance == Acceptance::Full
+                    && let Some(error) = first_error(Schema::SnapshotManifest, &value)
+                {
+                    out.diag("manifest.json", None, "schema", error);
+                }
                 match serde_json::from_value::<Manifest>(value) {
                     Ok(manifest) => out.manifest = Some(manifest),
                     Err(e) => out.diag("manifest.json", None, "malformed-row", e.to_string()),
@@ -90,26 +106,33 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
             }
         },
     }
+    for (name, error) in &files.unreadable {
+        out.diag(name, None, "unreadable", error.clone());
+    }
     out.files = out.table(
         "files.jsonl",
+        Schema::File,
         files.files.as_deref(),
         acceptance,
         |_: &FileRow| false,
     );
     out.entities = out.table(
         "entities.jsonl",
+        Schema::Entity,
         files.entities.as_deref(),
         acceptance,
         |r: &EntityRow| r.role == Some(Role::Unknown),
     );
     out.externals = out.table(
         "externals.jsonl",
+        Schema::External,
         files.externals.as_deref(),
         acceptance,
         |_: &ExternalRow| false,
     );
     out.relations = out.table(
         "relations.jsonl",
+        Schema::Relation,
         files.relations.as_deref(),
         acceptance,
         |r: &RelationRow| {
@@ -121,12 +144,14 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
     );
     out.syntax = out.table(
         "syntax.jsonl",
+        Schema::Syntax,
         files.syntax.as_deref(),
         acceptance,
         |r: &SyntaxRow| r.outline.as_deref().is_some_and(has_unknown_node),
     );
     out.gaps = out.table(
         "gaps.jsonl",
+        Schema::Gap,
         files.gaps.as_deref(),
         acceptance,
         |r: &GapRow| r.gap == GapKind::Unrecognised || r.layer == Some(Layer::Unknown),
@@ -160,12 +185,15 @@ impl ReadSnapshot {
     fn table<T: DeserializeOwned>(
         &mut self,
         name: &'static str,
+        schema: Schema,
         bytes: Option<&[u8]>,
         acceptance: Acceptance,
         unknown_value: impl Fn(&T) -> bool,
     ) -> Vec<(usize, T)> {
         let Some(bytes) = bytes else {
-            self.diag(name, None, "missing-file", "the file is absent");
+            if !self.diagnostics.iter().any(|d| d.file == name) {
+                self.diag(name, None, "missing-file", "the file is absent");
+            }
             return Vec::new();
         };
         let Ok(text) = std::str::from_utf8(bytes) else {
@@ -182,20 +210,37 @@ impl ReadSnapshot {
                 self.diag(name, at, "not-json-lines", "blank line");
                 continue;
             }
-            let parsed = serde_json::from_str::<T>(line);
+            let value = serde_json::from_str::<serde_json::Value>(line);
+            let parsed = value
+                .as_ref()
+                .map_err(ToString::to_string)
+                .and_then(|v| T::deserialize(v).map_err(|e| e.to_string()));
             let unknown = parsed.as_ref().is_ok_and(&unknown_value);
-            match compat::classify_row(acceptance, parsed.is_ok(), unknown) {
+            // A row skipped for an unknown value under a newer minor is not held to this
+            // version's schema (spec/README.md, rule 5).
+            let schema_error = match (&value, unknown) {
+                (Ok(v), false) => first_error(schema, v),
+                _ => None,
+            };
+            let well_formed = parsed.is_ok() && schema_error.is_none();
+            match compat::classify_row(acceptance, well_formed, unknown) {
                 RowVerdict::Keep => rows.extend(parsed.ok().map(|row| (i + 1, row))),
-                RowVerdict::Skip => self.skipped += 1,
+                RowVerdict::Skip => {
+                    self.skipped += 1;
+                    if let Ok(serde_json::Value::Object(row)) = &value
+                        && let Some(serde_json::Value::String(key)) = row.get("key")
+                    {
+                        self.skipped_keys.insert(key.clone());
+                    }
+                }
                 RowVerdict::Malformed => {
-                    let detail = match parsed {
-                        Err(e) => e.to_string(),
-                        Ok(_) => "a value this schema version does not define".to_owned(),
-                    };
-                    let code = if unknown {
-                        "unknown-value"
-                    } else {
-                        "malformed-row"
+                    let (code, detail) = match (parsed, schema_error) {
+                        (Err(e), _) => ("malformed-row", e),
+                        (Ok(_), Some(e)) => ("schema", e),
+                        (Ok(_), None) => (
+                            "unknown-value",
+                            "a value this schema version does not define".to_owned(),
+                        ),
                     };
                     self.diag(name, at, code, detail);
                 }
@@ -204,34 +249,35 @@ impl ReadSnapshot {
         rows
     }
 
-    /// Rule 4: a row that depends on a skipped row is skipped too, so no key dangles.
+    /// Rule 4: a row that depends on a skipped row is skipped too, so no key dangles. Only
+    /// keys that were actually skipped count; any other dangling key is left for the
+    /// validator to report.
     fn skip_dependents(&mut self) {
-        if self.skipped == 0 {
-            return;
-        }
         loop {
-            let keys: BTreeSet<String> = self.entities.iter().map(|(_, e)| e.key.clone()).collect();
+            let skipped = &mut self.skipped_keys;
             let before = self.entities.len();
             self.entities.retain(|(_, e)| {
-                e.parent.as_ref().is_none_or(|p| keys.contains(p))
-                    && e.member_of.as_ref().is_none_or(|g| keys.contains(g))
+                let depends = [&e.parent, &e.member_of]
+                    .into_iter()
+                    .flatten()
+                    .any(|k| skipped.contains(k));
+                if depends {
+                    skipped.insert(e.key.clone());
+                }
+                !depends
             });
             self.skipped += (before - self.entities.len()) as u64;
             if before == self.entities.len() {
                 break;
             }
         }
-        let entities: BTreeSet<String> = self.entities.iter().map(|(_, e)| e.key.clone()).collect();
-        let targets: BTreeSet<&String> = entities
-            .iter()
-            .chain(self.externals.iter().map(|(_, e)| &e.key))
-            .collect();
+        let skipped = &self.skipped_keys;
         let before = self.relations.len() + self.syntax.len() + self.gaps.len();
         self.relations
-            .retain(|(_, r)| entities.contains(&r.from) && targets.contains(&r.to));
-        self.syntax.retain(|(_, s)| entities.contains(&s.key));
+            .retain(|(_, r)| !skipped.contains(&r.from) && !skipped.contains(&r.to));
+        self.syntax.retain(|(_, row)| !skipped.contains(&row.key));
         self.gaps
-            .retain(|(_, g)| g.keys.iter().flatten().all(|k| targets.contains(k)));
+            .retain(|(_, g)| !g.keys.iter().flatten().any(|k| skipped.contains(k)));
         let after = self.relations.len() + self.syntax.len() + self.gaps.len();
         self.skipped += (before - after) as u64;
     }

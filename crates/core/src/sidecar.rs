@@ -1,14 +1,15 @@
 //! Joins adapter facts to definitions and derives calls backed by concrete observations.
 use crate::{
     anchor::{Anchors, Column},
-    graph::Snapshot,
+    graph::{self, LineIndex, Snapshot},
+    write::{Location, SourceReader},
 };
 use gosanja_schema::{
     contract::{Anchor, CallEvidence, SyntaxFact},
-    position::{Range, Site},
+    position::{PositionEncoding, Range, Site},
     snapshot::{
-        EntityRow, Evidence, GapKind, GapRow, Layer, Mechanism, OutlineKind, OutlineNode, Rel,
-        RelationRow, Resolution, SyntaxRow,
+        EntityRow, Evidence, FailedDetail, GapKind, GapRow, Layer, LayerState, Mechanism,
+        OutlineKind, OutlineNode, Rel, RelationRow, Resolution, SyntaxRow,
     },
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,6 +33,25 @@ fn position_gaps(
         gap.layer = Some(layer);
         gap
     })
+}
+
+pub(crate) fn valid_ranges(fact: &SyntaxFact) -> bool {
+    fn nodes_valid(nodes: &[OutlineNode], parent: Option<Range>) -> bool {
+        nodes.iter().all(|n| {
+            n.range.start() <= n.range.end()
+                && parent.is_none_or(|p| p.contains(n.range))
+                && n.callee
+                    .is_none_or(|c| c.start() <= c.end() && n.range.contains(c))
+                && n.children
+                    .as_deref()
+                    .is_none_or(|children| nodes_valid(children, Some(n.range)))
+        })
+    }
+    fact.body.is_none_or(|r| r.start() <= r.end())
+        && fact
+            .outline
+            .as_deref()
+            .is_none_or(|nodes| nodes_valid(nodes, None))
 }
 
 fn convert(range: Range, file: &str, col: &Column<'_>) -> Option<Range> {
@@ -63,10 +83,22 @@ pub fn apply_syntax(
 ) -> Vec<SyntaxRow> {
     let src = format!("adapter:{adapter}/syntax");
     let index = Anchors::new(entities);
+    let resolved: Vec<_> = facts
+        .iter()
+        .map(|fact| index.resolve(&fact.anchor, column))
+        .collect();
+    let mut seen = BTreeSet::new();
+    if !facts.iter().all(valid_ranges) || !resolved.iter().flatten().all(|i| seen.insert(*i)) {
+        let mut gap = GapRow::new(GapKind::FailedLayer, src);
+        gap.detail = Some(FailedDetail::RowInvalid);
+        gap.layer = Some(Layer::Syntax);
+        gaps.push(gap);
+        return Vec::new();
+    }
     let mut rows = Vec::new();
     let mut bad = BTreeMap::new();
-    for fact in facts {
-        let Some(i) = index.resolve(&fact.anchor, column) else {
+    for (fact, resolved) in facts.iter().zip(resolved) {
+        let Some(i) = resolved else {
             gaps.push(unanchored(&fact.anchor, Layer::Syntax, &src));
             continue;
         };
@@ -111,9 +143,19 @@ pub fn derive_calls(
     adapter: &str,
     column: &Column<'_>,
 ) {
+    derive_with_sources(snapshot, observations, adapter, column, None);
+}
+
+fn derive_with_sources(
+    snapshot: &mut Snapshot,
+    observations: &[CallEvidence],
+    adapter: &str,
+    column: &Column<'_>,
+    source: Option<(&dyn SourceReader, PositionEncoding)>,
+) {
     let mut calls = Calls::new();
     syntax_calls(snapshot, adapter, &mut calls);
-    compiler_calls(snapshot, observations, adapter, column, &mut calls);
+    compiler_calls(snapshot, observations, adapter, column, source, &mut calls);
     snapshot.relations.extend(calls.into_iter().map(
         |((from, to, mechanism, resolution, src), mut evidence)| {
             evidence.sort();
@@ -198,13 +240,14 @@ fn compiler_calls(
     observations: &[CallEvidence],
     adapter: &str,
     column: &Column<'_>,
+    source: Option<(&dyn SourceReader, PositionEncoding)>,
     calls: &mut Calls,
 ) {
     let src = format!("adapter:{adapter}/calls");
     let index = Anchors::new(&snapshot.entities);
     let builds: BTreeSet<_> = snapshot.scope.builds.iter().map(|b| &b.id).collect();
     let mut unknown = 0;
-    let mut bad = BTreeMap::new();
+    let mut sites = BTreeMap::new();
     for obs in observations {
         if !builds.contains(&obs.build) {
             unknown += 1;
@@ -222,32 +265,70 @@ fn compiler_calls(
                 .push(unanchored(&obs.callee, Layer::Calls, &src));
             continue;
         };
-        let mut evidence = Evidence {
-            file: None,
-            line: None,
-            col: None,
-            end: None,
-            build: Some(obs.build.clone()),
-        };
-        if let Some(site) = &obs.site {
-            let Some(byte) = column(&site.file, site.line, site.col.unwrap_or(0)) else {
-                *bad.entry(site.file.clone()).or_default() += 1;
+        sites
+            .entry(obs.site.as_ref().map(|s| s.file.as_str()))
+            .or_insert_with(Vec::new)
+            .push((from, to, obs));
+    }
+    let indexed: BTreeSet<_> = snapshot.files.iter().map(|f| f.path.clone()).collect();
+    let mut bad = BTreeMap::new();
+    for (file, observations) in sites {
+        // Only read a site after its build and both endpoints have been accepted.
+        let extra = if let Some((p, (reader, encoding))) =
+            file.filter(|p| !indexed.contains(*p)).zip(source)
+        {
+            let bytes = (graph::is_valid_path(p) && reader.locate(p) == Location::Inside)
+                .then(|| reader.read(p).ok())
+                .flatten();
+            let Some(bytes) = bytes else {
+                *bad.entry(p.to_owned()).or_default() += observations.len() as u64;
                 continue;
             };
-            evidence.file = Some(site.file.clone());
-            evidence.line = Some(site.line);
-            evidence.col = site.col.map(|_| byte);
+            Some((p, bytes, encoding))
+        } else {
+            None
+        };
+        let lines = extra
+            .as_ref()
+            .map(|(_, bytes, encoding)| (LineIndex::new(bytes), *encoding));
+        let mut used = false;
+        for (from, to, obs) in observations {
+            let mut evidence = Evidence {
+                file: None,
+                line: None,
+                col: None,
+                end: None,
+                build: Some(obs.build.clone()),
+            };
+            if let Some(site) = &obs.site {
+                let col = site.col.unwrap_or(0);
+                let byte = match &lines {
+                    Some((lines, encoding)) => lines.byte_column(site.line, col, *encoding),
+                    None => column(&site.file, site.line, col),
+                };
+                let Some(byte) = byte else {
+                    *bad.entry(site.file.clone()).or_default() += 1;
+                    continue;
+                };
+                evidence.file = Some(site.file.clone());
+                evidence.line = Some(site.line);
+                evidence.col = site.col.map(|_| byte);
+            }
+            calls
+                .entry((
+                    snapshot.entities[from].key.clone(),
+                    snapshot.entities[to].key.clone(),
+                    obs.mechanism,
+                    obs.resolution,
+                    src.clone(),
+                ))
+                .or_default()
+                .push(evidence);
+            used = true;
         }
-        calls
-            .entry((
-                snapshot.entities[from].key.clone(),
-                snapshot.entities[to].key.clone(),
-                obs.mechanism,
-                obs.resolution,
-                src.clone(),
-            ))
-            .or_default()
-            .push(evidence);
+        if used && let Some((file, bytes, _)) = extra {
+            snapshot.files.push(graph::file_row(file, None, &bytes));
+        }
     }
     if unknown > 0 {
         let mut gap = GapRow::new(GapKind::UnknownBuildContext, &src);
@@ -272,10 +353,10 @@ pub fn build(
         mut index,
         manifest,
         builds,
-        layers,
+        mut layers,
         syntax,
         calls,
-        gaps,
+        mut gaps,
         ..
     } = output;
     let mut needed = BTreeSet::new();
@@ -305,11 +386,25 @@ pub fn build(
             );
         });
     })?;
+    if snapshot
+        .gaps
+        .iter()
+        .any(|g| g.gap == GapKind::FailedLayer && g.layer == Some(Layer::Syntax))
+    {
+        layers.syntax = LayerState::Failed;
+        gaps.retain(|g| g.layer != Some(Layer::Syntax));
+    }
     snapshot.scope.layers = layers;
     snapshot.scope.builds = builds;
     snapshot.gaps.extend(gaps);
     reader.with_columns(manifest.position_encoding, |column| {
-        derive_calls(&mut snapshot, &calls, &manifest.name, column);
+        derive_with_sources(
+            &mut snapshot,
+            &calls,
+            &manifest.name,
+            column,
+            Some((sources, manifest.position_encoding)),
+        );
     });
     snapshot.scope.adapter = Some(AdapterInfo {
         name: manifest.name,

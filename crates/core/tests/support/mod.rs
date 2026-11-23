@@ -49,7 +49,7 @@ pub fn build_fixture(name: &str) -> Snapshot {
 /// The snapshot files at `dir`.
 #[must_use]
 pub fn read_dir(dir: &Path) -> SnapshotFiles {
-    SnapshotFiles::read(dir).expect("readable snapshot")
+    SnapshotFiles::read(dir)
 }
 
 /// One occurrence with legacy integer-array ranges; an empty `enclosing` means none.
@@ -204,10 +204,13 @@ impl<R: SourceReader> SourceReader for Recording<R> {
     }
 }
 
-/// Builds a snapshot from encoded index bytes.
+/// Builds a snapshot from encoded index bytes and checks that it passes the validator,
+/// normative schemas included.
 #[must_use]
 pub fn build(bytes: &[u8], sources: &dyn SourceReader) -> Snapshot {
-    graph::build(&mut &*bytes, sources, "test").expect("builds")
+    let snapshot = graph::build(&mut &*bytes, sources, "test").expect("builds");
+    assert_eq!(diagnostics(&snapshot), Vec::<String>::new());
+    snapshot
 }
 
 /// The serialised files of a snapshot, as text.
@@ -257,4 +260,23 @@ pub fn diagnostics(snapshot: &Snapshot) -> Vec<String> {
         .iter()
         .map(ToString::to_string)
         .collect()
+}
+
+/// Symbol information for `symbol` that implements each of `implemented`, plus one
+/// relationship that is a reference only and must not become a relation.
+#[must_use]
+pub fn implementing(symbol: &str, implemented: &[&str]) -> SymbolInformation {
+    let mut s = SymbolInformation::new();
+    symbol.clone_into(&mut s.symbol);
+    for target in implemented {
+        let mut r = scip::types::Relationship::new();
+        (*target).clone_into(&mut r.symbol);
+        r.is_implementation = true;
+        s.relationships.push(r);
+    }
+    let mut reference_only = scip::types::Relationship::new();
+    "s m p 1 OnlyReferenced#".clone_into(&mut reference_only.symbol);
+    reference_only.is_reference = true;
+    s.relationships.push(reference_only);
+    s
 }
