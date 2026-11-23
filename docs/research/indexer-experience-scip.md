@@ -8,172 +8,172 @@ multi-language merging, virtual documents) and testing practice for indexers.
 Collected by a web-research agent on 2026-11-23. Sources are given as raw URLs. A statement
 prefixed `Unverified:` was not confirmed on a page the researcher opened, and vendor or
 author claims are reported as claims. Sources that could not be opened are named in the
-report. The text is kept as the researcher wrote it, in Korean or English.
+report. The report was written in Korean and is given here in English translation.
 
 ## A. Case studies and postmortems
 
 **Meta Glean**
 - https://engineering.fb.com/2024/12/19/developer-tools/glean-open-source-code-indexing/ (2024-12-19)
-  - 전체 재인덱싱은 대형 모노레포에서 수 시간 뒤처지므로 변경량에 비례하는 비용을 목표로 합니다. C++은 변경 헤더를 포함하는 파일을 반복 탐색해 영향 범위를 계산합니다.
-  - 불변 DB를 겹겹이 쌓고 각 층이 사실을 추가하거나 숨깁니다.
-  - 스키마 교훈: 언어별 세부 사실은 그대로 저장하고, 언어 중립 계층은 파생 뷰로 추가합니다(세부와 최소공통분모 중 택일하지 않음). 접두 필드로 조회가 빠르게 합니다.
-  - 중요한 질의: 정의로 이동, 참조 찾기, 심볼 검색, 파일별 문서 심볼, 문서 생성, diff 분석, 죽은 코드 탐지, 테스트 선택, AI 어시스턴트용 RAG. 단순 이름 조회는 약 1ms. 인덱싱 주기는 글에 없습니다.
+  - Full reindexing falls hours behind in a large monorepo. Glean aims to make cost proportional to the change. For C++, it repeatedly follows files that include changed headers to determine which files are affected.
+  - Glean stacks immutable databases. Each layer adds or hides facts.
+  - The schema stores language-specific facts in detail and exposes a language-neutral derived view. This preserves detail alongside the common subset. Lookups on leading fields are fast.
+  - Important queries include go to definition, find references, symbol search, document symbols by file, documentation generation, diff analysis, dead code detection, test selection and RAG for AI assistants. A simple name lookup takes about 1ms. The article does not give an indexing interval.
 - https://glean.software/blog/incremental/ (2022-12-01, Simon Marlow)
-  - unit(파일 등) 단위로 사실의 소유권을 기록하고, 증분 DB가 기반 DB의 해당 unit을 가립니다. 소유권 데이터는 DB 크기의 약 7%, 일반 질의 오버헤드 10% 미만, 검색이 무거운 질의는 약 3배 느립니다. 한계: 증분 파생은 일부 질의 종류에서만 변경량에 비례합니다.
+  - Glean records which unit (such as a file) owns each fact. An incremental database hides the corresponding units in its base database. Ownership data accounts for about 7% of database size. Typical query overhead is below 10%, while search-heavy queries take about 3 times as long. Incremental derivation costs scale with the change for only some query types.
 - https://simonmar.github.io/posts/2025-05-22-Glean-Haskell.html (2025-05-22)
-  - Hackage 전체 기준 hiedb 1021초 대 Glean 470초, 크기 5.2GB 대 0.8GB. 참조 찾기 hiedb 2.3초, Glean 원시 질의 0.03초(이름 기준 사전 색인 여부 차이).
-  - 컴파일러 사실에서 얻기 어려운 것: 타입 시그니처 내 참조와 코드 참조의 구분, record selector 예외, 선언의 전체 AST 복원.
-  - Glean의 증분 인덱싱은 IDE용이 아니라 전체 저장소 인덱싱 가속 목적이라고 저자가 밝혔습니다.
-- https://github.com/facebookincubator/Glean/blob/main/glean/schema/source/scip.angle : 로컬 심볼은 문서 경로를 접두어로 붙여 전역 유일하게 만듭니다. 텍스트 인코딩은 메타데이터로만 보관하며 변환에 어떻게 쓰이는지는 발췌에서 확인되지 않았습니다.
+  - Across Hackage, hiedb took 1021 seconds and Glean took 470 seconds. Their databases occupied 5.2GB and 0.8GB respectively. Finding references took hiedb 2.3 seconds and the raw Glean query 0.03 seconds. The systems differ in whether they pre-index names.
+  - Compiler facts make it hard to distinguish references in type signatures from references in code, handle exceptions for record selectors or reconstruct a declaration's full AST.
+  - The author says Glean uses incremental indexing to speed up indexing an entire repository. IDE use was outside its purpose.
+- https://github.com/facebookincubator/Glean/blob/main/glean/schema/source/scip.angle : Glean prefixes local symbols with the document path to make them globally unique. It stores text encoding only as metadata. The excerpt did not establish how conversion uses it.
 
 **Google**
-- https://abseil.io/resources/swe-book/html/ch17.html : 질의 유형은 How 약 1/3(API 사용 예), What 약 1/4(탐색), Where와 Why 각 약 16%, Who/When 약 8%. 검색 인덱스는 증분(지연 10초 미만), Kythe 교차 참조는 하루 한 번 수 시간짜리 분산 빌드이며 두 인덱스의 시차가 반복되는 혼란의 원인. 사고 대응 중 오래된 교차 참조가 특히 해롭고 버전은 하나만 유지. 생성 코드는 저장소에 없으면 인덱싱하지 않음.
-- https://kythe.io/docs/schema/writing-an-indexer.html : 정방향 edge만 내보내기, 출력은 결정적이어야 함, 소스 위치를 VName에 넣지 않음(churn 방지), 바이트 오프셋(시작 포함, 끝 제외), 테스트 목표는 기능 관련 부분 그래프만 단언해 내부 선택 변경에 강하게.
-- https://kythe.io/docs/schema/indexing-generated-code.html : 생성 코드와 원본은 별도 노드로 두고 `generates` edge로 연결. 생성기가 원본 오프셋 매핑(.meta)을 내보내고 인덱서가 읽음. 소비자가 따라갈지 선택.
-- Kythe 사용 실태에 대한 경험 보고 논문은 찾지 못했습니다.
+- https://abseil.io/resources/swe-book/html/ch17.html : About 1/3 of queries ask How (API usage examples), about 1/4 ask What (exploration), about 16% each ask Where and Why, and about 8% ask Who/When. The search index updates incrementally with less than 10 seconds of lag. Kythe cross-references come from a distributed build that runs once a day and takes hours. The difference repeatedly confuses users. Stale cross-references are especially harmful during incident response, and only one version is retained. Generated code is indexed only if it is in the repository.
+- https://kythe.io/docs/schema/writing-an-indexer.html : Emit only forward edges and produce deterministic output. Keep source locations out of VNames to avoid churn. Use byte offsets with an inclusive start and exclusive end. Test goals should assert only the subgraph relevant to the feature so changes in internal choices do not break the tests.
+- https://kythe.io/docs/schema/indexing-generated-code.html : Generated code and its source have separate nodes linked by a `generates` edge. The generator emits a mapping to original offsets (.meta), which the indexer reads. Consumers decide whether to follow it.
+- The researcher did not find an experience report on Kythe in practice.
 
 **GitHub**
-- https://github.blog/open-source/introducing-stack-graphs/ (2021-12-09, 2024-07 갱신, Douglas Creager): 제약은 파일별 독립 분석(증분), 레포별 설정 없음, 다수 언어. 인덱스 시점에 파일별 그래프, 질의 시점에 경로 탐색. tree-sitter tags와 직접 비교하지 않았고 데이터플로나 제네릭 상속은 다루지 않음.
-- https://github.com/github/stack-graphs : 2025-09-09 아카이브. README는 "더 이상 GitHub가 지원·갱신하지 않으며 fork 권장"만 있고 사유와 후속 도구는 없음. Unverified: Lobsters 댓글의 추측(정확한 탐색 기능 중단, 언어 추가 비용이 큼 - TS만 약 6천 줄 DSL)은 공식 설명이 아닙니다.
-- Unverified: https://queue.acm.org/detail.cfm?id=3487022 는 403이라 열지 못했고 우회하지 않았습니다. 검색 요약상 tags 분석은 tree-sitter 기반이고 설정 없음이 목표. HN 댓글 요약상 GitHub 팀원이 C/C++처럼 근사 탐색 품질이 낮은 언어에는 빌드 기반 탐색을 나중에 지원하겠다고 말했습니다.
+- https://github.blog/open-source/introducing-stack-graphs/ (2021-12-09, updated 2024-07, Douglas Creager): The constraints were independent per-file analysis for incremental updates, no per-repository configuration and support for many languages. GitHub builds a graph per file at index time and searches for paths at query time. The article does not directly compare tree-sitter tags or cover dataflow or generic inheritance.
+- https://github.com/github/stack-graphs : Archived on 2025-09-09. The README says GitHub no longer supports or updates the project and encourages forks. It gives no reason or successor. Unverified: Lobsters commenters speculated about the end of precise navigation and the cost of adding languages (about 6 thousand DSL lines for TS alone). This was not an official explanation.
+- Unverified: https://queue.acm.org/detail.cfm?id=3487022 returned 403. The researcher did not bypass it. A search summary describes tree-sitter-based tags analysis with a goal of zero configuration. A summary of an HN comment attributes to a GitHub team member a plan to support build-based navigation later for languages such as C/C++, where approximate navigation works poorly.
 
-**Sourcegraph (앞 부분 요약 보충)**
-- https://sourcegraph.com/blog/announcing-scip (2022-06-08, Olafur Geirsson): LSIF는 스키마 없음, 숫자 ID 전역·순서 의존, 읽고 쓸 때 메모리 과다. 벤더 주장: gzip 기준 LSIF가 약 4배 큼, lsif-node를 scip-typescript로 바꿔 CI 10배 빨라짐(프로토콜 덕만은 아님), Meta 인용 "8배 작고 3배 빨리 처리". 약속한 증분 인덱싱과 언어 간 탐색은 이후 실현되지 않음.
-- https://raw.githubusercontent.com/scip-code/scip/main/docs/DESIGN.md : SCIP은 저장·질의용이 아니라 전송 포맷, 생산자 쪽 최적화. 단일 인접 리스트 그래프 인코딩은 병렬성과 메모리에 불리하다고 명시. 문자열 ID는 LSIF의 off-by-one 같은 버그 피해를 한정. 양방향 링크는 저장하지 않음.
-- https://sourcegraph.com/blog/announcing-scip-clang (2023-05-15, Varun Gandhi): Clang을 라이브러리로 사용, TU 하나가 죽어도 나머지 계속, 타입 체크 후 AST 순회 비용이 병렬 타입 체크 기준선 대비 30~50% 추가, 인덱스 크기는 LSIF의 10~20%. 테스트 방식과 생성 코드는 글에 없음.
-- https://sourcegraph.com/docs/code-search/code-navigation/writing_an_indexer : 권장 순서(스키마, 단일 파일 occurrence, `scip snapshot` 검증, 점진 추가). 해시 테이블 순회가 비결정적이면 snapshot이 거짓 diff를 냄. C++ protobuf 2GB 한계는 문서를 하나씩 디스크에 쓰는 우회. 크로스 레포는 임포트한 정확한 커밋이 인덱싱돼야 동작.
-- https://sourcegraph.com/docs/code-search/code-navigation/precise_code_navigation : 정확한 탐색이 안 되면 검색 기반으로 폴백, 자동 인덱싱은 executor 사용, 복잡한 빌드는 CI 권장. 규모 수치 없음. scip-python 블로그와 scip-ruby 설계 노트는 열지 못함.
+**Sourcegraph (additional details for the earlier summary)**
+- https://sourcegraph.com/blog/announcing-scip (2022-06-08, Olafur Geirsson): LSIF lacks a schema, uses global, order-dependent numeric IDs and consumes excessive memory on reads and writes. Vendor claims: gzipped LSIF is about 4 times as large, and replacing lsif-node with scip-typescript made CI 10 times as fast (only partly due to the protocol). Sourcegraph quotes Meta as reporting an index “8 times smaller” that processed 3 times as fast. The promised incremental indexing and cross-language navigation did not materialise.
+- https://raw.githubusercontent.com/scip-code/scip/main/docs/DESIGN.md : SCIP is a transport format optimised for producers. Storage and queries are outside its purpose. The design says a single adjacency-list graph encoding makes parallelism and memory use worse. String IDs limit the impact of bugs such as LSIF off-by-one errors. SCIP does not store links in both directions.
+- https://sourcegraph.com/blog/announcing-scip-clang (2023-05-15, Varun Gandhi): The indexer uses Clang as a library and continues with the remaining translation units if one crashes. Walking the AST after type checking adds 30–50% over the parallel type-checking baseline. The index occupies 10–20% of the size of LSIF. The article does not cover testing or generated code.
+- https://sourcegraph.com/docs/code-search/code-navigation/writing_an_indexer : The guide recommends starting with the schema, emitting occurrences for one file, checking them with `scip snapshot` and adding features incrementally. Nondeterministic hash table iteration produces spurious snapshot diffs. Writing one document at a time to disk works around the C++ protobuf 2GB limit. Cross-repository navigation requires an index of the exact imported commit.
+- https://sourcegraph.com/docs/code-search/code-navigation/precise_code_navigation : Search-based navigation takes over when precise navigation is unavailable. Automatic indexing uses an executor. The guide recommends CI for complex builds and gives no figures for scale. The researcher could not open the scip-python blog post or the scip-ruby design notes.
 
-**rust-analyzer와 IDE 인덱싱**
-- https://rust-analyzer.github.io/blog/2020/07/20/three-architectures-for-responsive-ide.html (2020-07-20, matklad): map-reduce(IntelliJ, stub), 헤더 활용(clangd), 쿼리 기반(salsa). 속도는 증분성이 아니라 지연 평가에서 나온다는 논지. 인덱스 export는 다루지 않으므로 "배치 export를 LSP 경로와 분리하는 이유"를 직접 설명한 matklad 글은 찾지 못했습니다.
-- https://matklad.github.io/2022/04/25/why-lsp.html : 배치 컴파일러는 처리량, 언어 서버는 지연 최적화. LSP는 직렬화 형식일 뿐 내부 모델로 쓰지 말 것. LSIF/SCIP 언급 없음.
-- https://rust-analyzer.github.io//blog/2021/11/21/ides-and-macros.html (2021-11-21): 매크로는 되돌릴 수 없는 변환이라 소스 매핑이 어려움. 최상위 이름을 추가하는 매크로는 이름 해석을 순차적으로 만듦. proc macro는 별도 프로세스, 비결정적 proc macro는 재파싱 가정을 깸.
-- https://plugins.jetbrains.com/docs/intellij/indexing-and-psi-stubs.html : stub은 외부에서 보이는 선언만 담은 PSI 부분 트리의 압축 바이너리. lexer와 light AST 선호. stub이 존재하는 이유 자체는 이 페이지에 없음.
+**rust-analyzer and IDE indexing**
+- https://rust-analyzer.github.io/blog/2020/07/20/three-architectures-for-responsive-ide.html (2020-07-20, matklad): The article describes map-reduce (IntelliJ stubs), reuse of headers (clangd) and query-based analysis (salsa). It attributes speed to lazy evaluation rather than incrementality. It does not cover index export. The researcher did not find a matklad article directly explaining why batch export runs separately from the LSP path.
+- https://matklad.github.io/2022/04/25/why-lsp.html : Batch compilers optimise throughput and language servers optimise latency. The author advises using LSP as a serialisation format and keeping a separate internal model. The article does not mention LSIF/SCIP.
+- https://rust-analyzer.github.io//blog/2021/11/21/ides-and-macros.html (2021-11-21): Macros are irreversible transformations, which makes source mapping difficult. Macros that introduce top-level names force name resolution to proceed sequentially. A separate process runs procedural macros. Nondeterministic procedural macros break reparsing assumptions.
+- https://plugins.jetbrains.com/docs/intellij/indexing-and-psi-stubs.html : A stub is a compressed binary representation of a PSI subtree containing only externally visible declarations. The guide favours the lexer and light AST. The page does not explain why stubs exist.
 
 **Sourcetrail**
-- https://github.com/CoatiSoftware/Sourcetrail : 2021-12-14 아카이브, README에 사유 없음. 중단 공지 블로그는 archive.org라 이 도구로 열 수 없었습니다.
-- Unverified: 2차 요약(Grokipedia)에 따르면 창업자들의 직장·거주 변경으로 협업이 어려웠고 여러 언어의 의존성과 빌드 시스템 유지가 부담이었다고 합니다. 원문 인용은 확인하지 못했습니다.
+- https://github.com/CoatiSoftware/Sourcetrail : Archived on 2021-12-14. The README gives no reason. The researcher could not open the discontinuation announcement with the available tool because the blog was on archive.org.
+- Unverified: A 2nd-hand account (Grokipedia) says changes in the founders' jobs and locations made collaboration difficult, and maintaining dependencies and build systems across languages became burdensome. The researcher did not verify the original wording.
 
-**사내 멀티 언어 그래프**
-- Unverified: Uber의 "AI Context Graph"(노드 2,400만, 엣지 8,000만, 노드 유형 86, 엣지 유형 117)는 X 게시물 요약만 봤고 원문을 열지 못했습니다. 코드 인덱서가 아니라 에이전트용 서비스·테이블 그래프로 보입니다. Stripe, Dropbox, Airbnb, Spotify의 솔직한 글은 찾지 못했습니다.
+**Internal multi-language graphs**
+- Unverified: The researcher saw only a summary of an X post about Uber's "AI Context Graph" (node and edge counts in units of ten thousand: 2,400 and 8,000 respectively, across 86 node types and 117 edge types) and could not open the original. It appears to be a graph of services and tables for agents rather than a code indexer. The researcher did not find candid accounts from Stripe, Dropbox, Airbnb or Spotify.
 
-**2025~2026 에이전트용 코드 그래프 도구**
-- https://github.com/ale-hop-ai/codeintel : tree-sitter 계층과 SCIP 계층을 span 포함 관계로 조인. 모든 사실에 `exact`/`name` 출처 부여. upstream `tags.scm`은 커버리지가 고르지 않아 직접 쿼리 작성(TS는 호출 참조 없음, Python은 메서드 캡처 없음). 앵커율: Rust 80%(빠진 9개는 모두 모듈), Go 96.2%, Python 97.0%, TS 95.1%. 컬럼이 어긋나면 추측하지 않고 앵커링 포기.
-- https://github.com/colbymchenry/codegraph/pull/2427 (PoC, 작성자 자체 측정, 주장): SCIP 병합으로 vscode 재현율 82/74에서 100/98, 정밀도 93/94에서 100/100. 비용은 vscode 빌드 2m06s에서 3m51s, 인덱스 1.77GB에서 1.98GB(scip-typescript 원본 1,103MB는 압축하면 176MB). 심볼 정체 불일치: SCIP은 오버로드를 첫 시그니처에 정의(미검증 엣지의 약 45%), rust-analyzer는 중첩 `fn imp`를 모두 같은 이름으로 만듦. 호출자 귀속을 SCIP enclosing range 대신 자체 노드 span으로 바꿔 중복 엣지 3,820개에서 0. 작성자는 Sonnet이 grep만으로도 많은 질문에 답했으니 이득은 에이전트 행동 변화보다 그래프 정확도라고 밝힘.
-- https://github.com/orgs/sheeptechnologies/discussions/4 (RFC, 2026-01, 주장): SCIP이 파일 증분이 아니라는 이유로 tree-sitter로 되돌리자는 제안. 수치는 대부분 프로젝션.
-- https://arxiv.org/abs/2607.25431 (CodeNib): 사전 계산 정의가 라이브 서버와 86% 일치. 사전 계산 인덱스는 갱신이 에러 없이 끝나도 틀릴 수 있다는 논지. 초록에는 SCIP/tree-sitter가 나오지 않습니다.
-- "tree-sitter에서 컴파일러 기반으로 이주했다"는 단일 회고 글은 찾지 못했습니다. 위 도구들은 tree-sitter를 버리지 않고 SCIP을 덮어씌웁니다.
+**Code graph tools for agents, 2025–2026**
+- https://github.com/ale-hop-ai/codeintel : The tool joins its tree-sitter and SCIP layers by span containment. It records `exact`/`name` provenance on every fact. Coverage in upstream `tags.scm` varies, so the project writes its own queries (TS lacks call references and Python lacks method captures). Anchor rates were Rust 80% (all 9 misses were modules), Go 96.2%, Python 97.0% and TS 95.1%. When columns disagree, the tool leaves the occurrence unanchored.
+- https://github.com/colbymchenry/codegraph/pull/2427 (PoC, author's own measurements and claims): Merging SCIP raised vscode recall from 82/74 to 100/98 and precision from 93/94 to 100/100. The vscode build went from 2m06s to 3m51s and the index from 1.77GB to 1.98GB (the 1,103MB raw scip-typescript output compresses to 176MB). Symbol identities disagree: SCIP defines overloads at the first signature (about 45% of unverified edges), and rust-analyzer gives all nested `fn imp` functions the same name. Attributing calls by the tool's own node spans instead of SCIP enclosing ranges reduced duplicate edges from 3,820 to 0. The author says Sonnet could already answer many questions with grep alone, so the gain was primarily in graph accuracy rather than a change in agent behaviour.
+- https://github.com/orgs/sheeptechnologies/discussions/4 (RFC, 2026-01, claim): The author proposes returning to tree-sitter because SCIP does not update incrementally by file. Most figures are projections.
+- https://arxiv.org/abs/2607.25431 (CodeNib): Precomputed definitions agreed with a live server 86% of the time. The authors argue that a precomputed index can be wrong even when its update finishes without error. The abstract does not mention SCIP/tree-sitter.
+- The researcher did not find a single retrospective describing a migration from tree-sitter to a compiler-based indexer. The tools above layer SCIP on top of tree-sitter.
 
-**라이선스·상표·이름 문제 사례**
-- Sourcegraph 재라이선스: https://www.devclass.com/development/2024/08/21/sourcegraph-makes-core-repository-private-co-founder-complains-open-source-means-extra-work-and-risk/1623688 (2024-08-21). 2018년 Apache로 시작, 2023-06 대부분을 엔터프라이즈 라이선스로 변경, 2024-08 핵심 저장소 비공개. 마지막 공개 스냅샷이 GitHub에 남음. 기사에 SCIP/인덱서 라이선스 언급 없음. 교훈: 한 회사가 후원하는 프로토콜과 인덱서는 라이선스·지배구조 위험이 있고, SCIP 쪽 대응이 독립 지배구조 전환(2026-03-25).
-- Sourcetrail: GPLv3(2019 공개), 2021-12 아카이브. 라이선스 충돌이 아니라 유지보수 문제.
-- 의존성 라이선스 충돌을 겪은 코드 인덱싱 프로젝트는 찾지 못했습니다. SCIP 이름이나 인덱서 이름의 공개 상표 분쟁도 찾지 못했습니다. https://sourcegraph.com/blog/the-future-of-scip 는 상표를 다루지 않고 발음만 "skip"이라고 밝힘. Unverified: 같은 약어의 무관한 프로젝트(정수 계획 솔버 등)는 일반 지식입니다.
+**Licensing, trademarks and naming**
+- Sourcegraph relicensing: https://www.devclass.com/development/2024/08/21/sourcegraph-makes-core-repository-private-co-founder-complains-open-source-means-extra-work-and-risk/1623688 (2024-08-21). The project started under Apache in 2018, moved most of its code to an enterprise licence in 2023-06 and made the core repository private in 2024-08. The last public snapshot remains on GitHub. The article does not discuss SCIP or indexer licensing. The lesson concerns licensing and governance risks for protocols and indexers sponsored by one company. SCIP responded by moving to independent governance (2026-03-25).
+- Sourcetrail: GPLv3 (released publicly in 2019), archived in 2021-12. Maintenance difficulties led to discontinuation, rather than a licence conflict.
+- The researcher did not find a code-indexing project that experienced a dependency licence conflict or a public trademark dispute over SCIP or an indexer's name. https://sourcegraph.com/blog/the-future-of-scip gives the pronunciation "skip" and does not address trademarks. Unverified: Unrelated projects share the acronym, including an integer programming solver (general knowledge).
 
 ## B. Producing and consuming SCIP
 
-**공식 자료**
-- 저장소는 https://github.com/scip-code/scip 로 이전(crates.io repository 값). sourcegraph/scip URL도 열리지만 그쪽 `docs/DESIGN.md` 경로는 404.
-- 스키마 주석 https://raw.githubusercontent.com/scip-code/scip/main/scip.proto :
-  - 새 생산자는 `typed_range` 설정, deprecated `range`는 쓰지 말 것(SHOULD NOT). 소비자는 typed 우선, `repeated int32` 폴백.
-  - `single_line_range`(한 줄이면 생산자 SHOULD)와 `multi_line_range`(소비자는 항상 수용 MUST), 둘 다 0 기반 반개구간 [start, end).
-  - `typed_enclosing_range`가 있으면 deprecated `enclosing_range`보다 우선.
-  - 위치 인코딩은 UTF-8(바이트)/UTF-16/UTF-32, `Unspecified`는 새 인덱서가 쓰면 안 됨.
-  - 로컬 심볼은 한 Document 안에서만 사용(MUST). `Relationship`은 is_reference, is_implementation, is_type_definition, is_definition이 있고 호출 엣지는 없음.
-  - `Index.metadata`는 스트림 맨 앞에 한 번만. `external_symbols`는 "별도 Index 메시지에 정의된" 심볼. `Document.text`는 선택, `language`는 문자열, `SymbolRole.Generated`는 비트 0x10.
-- `scip` CLI https://raw.githubusercontent.com/scip-code/scip/main/docs/CLI.md : `lint`(형식 점검, 인덱서 작성자용), `print [--json]`, `snapshot`(`--from`, `--to scip-snapshot`, `--strict`, `--comment-syntax`), `stats`, `test`(사람이 읽는 테스트 파일과 대조, `--check-documents`), `expt-convert`(SQLite 변환, 실험적). 별도 `convert`나 병합 명령은 없음.
-- https://raw.githubusercontent.com/scip-code/scip/main/docs/Development.md : 자체 테스트용 `reprolang`(작은 언어, tree-sitter 문법), 스냅샷은 `go test ./cmd/scip -update-snapshots`.
+**Official sources**
+- The repository moved to https://github.com/scip-code/scip (the repository value on crates.io). The sourcegraph/scip URL still opens, but its `docs/DESIGN.md` path returns 404.
+- Schema comments at https://raw.githubusercontent.com/scip-code/scip/main/scip.proto :
+  - New producers should set `typed_range` and SHOULD NOT use the deprecated `range`. Consumers prefer the typed field and fall back to `repeated int32`.
+  - Producers SHOULD use `single_line_range` for a single line. Consumers MUST always accept `multi_line_range`. Both use 0-based half-open intervals [start, end).
+  - When present, `typed_enclosing_range` takes precedence over the deprecated `enclosing_range`.
+  - Position encodings are UTF-8 (bytes), UTF-16 and UTF-32. New indexers must not use `Unspecified`.
+  - A local symbol MUST appear only within one Document. `Relationship` supports is_reference, is_implementation, is_type_definition and is_definition. It has no call edge.
+  - `Index.metadata` appears once at the start of the stream. `external_symbols` are symbols defined in a separate Index message. `Document.text` is optional, `language` is a string and `SymbolRole.Generated` is bit 0x10.
+- The `scip` CLI (https://raw.githubusercontent.com/scip-code/scip/main/docs/CLI.md) provides `lint` (format checks for indexer authors), `print [--json]`, `snapshot` (`--from`, `--to scip-snapshot`, `--strict`, `--comment-syntax`), `stats`, `test` (compares human-readable test files, `--check-documents`) and `expt-convert` (experimental SQLite conversion). It has no separate `convert` or merge command.
+- https://raw.githubusercontent.com/scip-code/scip/main/docs/Development.md : SCIP uses `reprolang`, a small language with a tree-sitter grammar, for its own tests. Regenerate snapshots with `go test ./cmd/scip -update-snapshots`.
 
-**Rust `scip` 크레이트** (https://docs.rs/scip/latest/scip/ , https://crates.io/api/v1/crates/scip)
-- 0.10.0(2026-09-03). 직전 0.9.0(2026-06-29), 0.8.x(2026-06), 0.7.x(2026-03~04). 라이선스 Apache-2.0.
-- protobuf 런타임은 rust-protobuf, `protobuf = "=3.7.2"` 고정(https://raw.githubusercontent.com/scip-code/scip/main/bindings/rust/Cargo.toml). prost가 아닙니다. 생성 코드는 저장소에 체크인, 빌드 의존성 없음.
-- https://raw.githubusercontent.com/scip-code/scip/main/bindings/rust/src/symbol.rs : `parse_symbol`, `format_symbol`, `format_symbol_with(SymbolFormatOptions)`, `is_local_symbol`, `is_global_symbol`, `try_parse_local_symbol`, `Symbol::new_local`. 이스케이프는 백틱.
-- docs.rs 페이지는 모듈이 `symbol`과 `types`뿐이고 typed range/인코딩 언급은 없다고만 확인. 보조 함수는 `write_message_to_file` 하나만 봤습니다.
-- Unverified: 0.10.0 생성 코드가 `typed_range`, `typed_enclosing_range`를 포함하는지 직접 확인하지 못했습니다(최신 proto에는 있음). `bindings/rust/src/generated`를 열거나 `cargo doc`으로 확인 필요.
-- 대안(.proto를 prost로 직접 컴파일)의 사례는 찾지 못했습니다. 큰 인덱스는 `Index.documents`(필드 2)를 와이어 태그 수준에서 직접 스트리밍하는 접근이 여러 도구에서 반복됩니다(Unverified: https://github.com/cristiangirlea/adanext-map/issues/11 등은 검색 요약만 봄). 문서 크기 한도 문제는 https://github.com/SquashMerge/trellis/issues/394 에서 확인.
+**Rust `scip` crate** (https://docs.rs/scip/latest/scip/ , https://crates.io/api/v1/crates/scip)
+- 0.10.0 (2026-09-03), preceded by 0.9.0 (2026-06-29), 0.8.x (2026-06) and 0.7.x (2026-03~04). The licence is Apache-2.0.
+- The protobuf runtime is rust-protobuf, pinned to `protobuf = "=3.7.2"` (https://raw.githubusercontent.com/scip-code/scip/main/bindings/rust/Cargo.toml). The crate does not use prost. Generated code is checked into the repository. There are no build dependencies.
+- https://raw.githubusercontent.com/scip-code/scip/main/bindings/rust/src/symbol.rs : The crate exposes `parse_symbol`, `format_symbol`, `format_symbol_with(SymbolFormatOptions)`, `is_local_symbol`, `is_global_symbol`, `try_parse_local_symbol` and `Symbol::new_local`. Backticks provide escaping.
+- The docs.rs page showed only the `symbol` and `types` modules and did not mention typed ranges or encoding. The only helper the researcher saw was `write_message_to_file`.
+- Unverified: The researcher did not directly check whether the 0.10.0 generated code includes `typed_range` and `typed_enclosing_range`. Both appear in the latest proto. Inspect `bindings/rust/src/generated` or run `cargo doc` to check.
+- The researcher found no example of compiling the .proto directly with prost. Several tools stream `Index.documents` (field 2) directly by wire tag for large indexes (Unverified: the researcher saw only search summaries for https://github.com/cristiangirlea/adanext-map/issues/11 and similar examples). https://github.com/SquashMerge/trellis/issues/394 confirms the document size limit issue.
 
-**상호 운용 함정**
-- 위치 인코딩: rust-analyzer는 UTF-8 (https://raw.githubusercontent.com/rust-lang/rust-analyzer/master/crates/rust-analyzer/src/cli/scip.rs). scip-typescript는 UTF-16 (`ProjectIndexer.ts`가 모든 문서에 UTF16 설정). https://github.com/Trivyn/moosedev/issues/60 에서 UTF-8만 기대한 소비자가 TS 인덱스 전체를 거부했고 경고만 남기고 끝나 낡은 노드 약 4,700개가 남았음(이후 PR로 해결). callix 대조에서도 컬럼 차이 911곳.
-- `enclosing_range`: rust-analyzer는 2025-11-28에 정의 쪽 추가(https://github.com/rust-lang/rust-analyzer/pull/21141), 같은 파일 안 정의 본문일 때만 채움. https://github.com/SquashMerge/trellis/issues/444 (소비자 보고): scip-typescript 0.4.0 인덱스에서 참조 76,133개 중 0개가 enclosing range를 가짐. scip-java, scip-python도 같음, rust-analyzer는 일부 참조에만. 호출 귀속에 enclosing range만 쓰면 JS에서 호출 엣지가 0이 되고 정확한 callee span 일치로 해결. Unverified: scip-go의 enclosing range 제공 여부는 직접 확인 못함.
-- 심볼 문자열: rust-analyzer 스킴은 `rust-analyzer cargo <crate> <version|.> ...`, disambiguator 항상 빈 값. 함수 안 중첩 struct 등은 이름 충돌로 중복 심볼 발생(알려진 버그 #18771, #18772, #21281, stderr 출력). scip-typescript는 이름 없는 중첩 `package.json`이 익명 패키지 `npm . .`이 되어 서로 다른 패키지의 `index.d.ts`가 같은 심볼이 됨(https://github.com/sourcegraph/scip-typescript/issues/525, 2026-11-02 열림, 11-03 PR #527로 닫힘). pnpm `.pnpm` 실경로가 패키지명 `.`이 되는 사례(https://github.com/manji-0/dagayn/issues/219, 0.5.2 기준 소비자 보고). `@types/*`는 런타임 패키지명이 아니라 `@types/<pkg>`로 심볼이 붙음(Unverified: codeintel #58 검색 요약만).
-- rust-analyzer 출력 특성: `relationships`는 항상 빔, 정의 역할 비트는 토큰 범위가 정의 범위와 정확히 같을 때만. 소비자 보고(주장): 모든 `signature_documentation` Document에 필드 6(position_encoding)이 들어 있어 엄격한 디코더가 거부(trellis #394). 실제 인덱스는 24MB, 문서 158개, occurrence 266,420개, 한 문서에 최대 32,293개.
-- 매크로·생성 코드: 같은 파일 안 `macro_rules!`만 확장된다는 주장이 callix 대조에 나옴. 매크로 생성 항목과 파일 간·proc 매크로 본문이 누락의 대부분(약 3,250곳 누락, 694곳 정의 누락). `scip.rs` 자체는 매크로 확장 항목 처리를 설명하지 않음. `use serde::de::Error;`에 참조가 안 나오는 SCIP-LSP 불일치가 열려 있음(https://github.com/rust-lang/rust-analyzer/issues/23565, 2026-10-27, 댓글 없음). 매크로 사용 SCIP 패닉 사례: https://github.com/rust-lang/rust-analyzer/pull/23369, 중복 심볼 오류 https://github.com/rust-lang/rust-analyzer/issues/21281 (열림, 사용자는 출력이 쓸 만하다고 평가).
-- scip-go: 빌드 태그는 `GOFLAGS=-tags`로 넘기면 해당 태그 파일만 인덱싱(소비자 쪽 글, 검색 요약). Windows에서 빌드 캐시의 테스트 main이 문서로 들어가 변환기가 인덱스 전체를 거부한 사례가 0.2.10에서 수정. README(https://raw.githubusercontent.com/sourcegraph/scip-go/main/README.md)의 한계: go.mod 없는 프로젝트, 표준 라이브러리 탐색 실패 가능성, Go Packages Driver 경로의 크로스 레포 불가.
-- 인덱스 크기: protobuf 2GB 한계와 문서 단위 쓰기 우회는 writing_an_indexer 문서에 있음.
+**Interoperability pitfalls**
+- Position encoding: rust-analyzer uses UTF-8 (https://raw.githubusercontent.com/rust-lang/rust-analyzer/master/crates/rust-analyzer/src/cli/scip.rs). scip-typescript uses UTF-16 (`ProjectIndexer.ts` sets UTF16 on every document). A consumer that expected only UTF-8 rejected an entire TS index, logged a warning and left about 4,700 stale nodes in place (https://github.com/Trivyn/moosedev/issues/60). A later PR fixed it. The callix comparison also found 911 column discrepancies.
+- `enclosing_range`: rust-analyzer added it for definitions on 2025-11-28 (https://github.com/rust-lang/rust-analyzer/pull/21141) and populates it only for a definition whose body is in the same file. A consumer reported that 0 of 76,133 references in a scip-typescript 0.4.0 index had an enclosing range (https://github.com/SquashMerge/trellis/issues/444). The same held for scip-java and scip-python, while rust-analyzer supplied ranges for only some references. Relying solely on enclosing ranges to attribute calls produced 0 JS call edges. Matching the exact callee span resolved the issue. Unverified: The researcher did not directly check whether scip-go supplies enclosing ranges.
+- Symbol strings: rust-analyzer uses the scheme `rust-analyzer cargo <crate> <version|.> ...` with an empty disambiguator. Name collisions produce duplicate symbols for items such as structs nested inside functions (known bugs #18771, #18772 and #21281, reported on stderr). In scip-typescript, an unnamed nested `package.json` produced the anonymous package `npm . .`, giving `index.d.ts` in different packages the same symbol (https://github.com/sourcegraph/scip-typescript/issues/525, opened 2026-11-02, closed by PR #527 on 11-03). A consumer using 0.5.2 reported a pnpm `.pnpm` real path that yielded the package name `.` (https://github.com/manji-0/dagayn/issues/219). Symbols for `@types/*` use `@types/<pkg>` instead of the runtime package name (Unverified: search summary for codeintel #58 only).
+- rust-analyzer output: `relationships` is always empty. The definition role bit is set only when the token range exactly matches the definition range. A consumer claims that every `signature_documentation` Document contained field 6 (position_encoding), which a strict decoder rejected (trellis #394). The actual index occupied 24MB and contained 158 documents and 266,420 occurrences, with up to 32,293 in one document.
+- Macros and generated code: the callix comparison claims that only same-file `macro_rules!` macros expand. Macro-generated items and the bodies of cross-file and procedural macros account for most omissions (about 3,250 missing locations and 694 missing definitions). `scip.rs` does not explain how it handles items from macro expansion. An open issue reports a SCIP-LSP discrepancy in which `use serde::de::Error;` has no reference (https://github.com/rust-lang/rust-analyzer/issues/23565, 2026-10-27, no comments). A SCIP panic involving macros is recorded at https://github.com/rust-lang/rust-analyzer/pull/23369, and a duplicate symbol error at https://github.com/rust-lang/rust-analyzer/issues/21281 (open, the user considered the output usable).
+- scip-go: passing build tags through `GOFLAGS=-tags` indexes only files for those tags (search summary of a consumer account). On Windows a test main from the build cache appeared as a document, causing a converter to reject the entire index. Version 0.2.10 fixed this. The README (https://raw.githubusercontent.com/sourcegraph/scip-go/main/README.md) lists limitations for projects without go.mod, possible failures navigating the standard library and lack of cross-repository support through the Go Packages Driver.
+- Index size: the writing_an_indexer guide describes the protobuf 2GB limit and the workaround of writing one document at a time.
 
-**SCIP 옆에 별도 데이터를 두는 경우** (모두 비표준, SCIP 심볼 문자열을 키로 삼음)
-- https://github.com/liza-mas/scip-search/ : `scip.graph-export.v1` 별도 JSON. 인덱스 바이트의 sha256 지문과 프로젝트 루트를 기록하고 심볼 문자열은 그대로 보존. 비로컬 정의가 인덱스 간에 충돌하면 병합 실패. 호출 정보는 enclosing range가 없으면 "unavailable"로 보고하고 추측하지 않음.
-- https://github.com/ale-hop-ai/codeintel : span 포함 관계로 조인하고 불일치 시 앵커링 포기.
-- Unverified: codecite #243의 "심볼 문자열 약 100바이트를 occurrence마다 반복 저장하니 정수 키로 바꾸자"는 검색 요약만 봤음.
-- SCIP 파일 안에 커스텀 필드를 넣는 사례나 공식 확장 지점은 찾지 못했습니다.
+**Data stored alongside SCIP** (all examples are nonstandard and use SCIP symbol strings as keys)
+- https://github.com/liza-mas/scip-search/ : A separate JSON file uses `scip.graph-export.v1`. It records a sha256 fingerprint of the index bytes and the project root and preserves symbol strings verbatim. Conflicting non-local definitions across indexes cause the merge to fail. If the enclosing range is missing, the tool reports call information as "unavailable" rather than guessing.
+- https://github.com/ale-hop-ai/codeintel : The tool joins by span containment and leaves mismatches unanchored.
+- Unverified: The researcher saw only a search summary for codecite #243, which proposed integer keys because each occurrence repeats about 100 bytes of symbol string.
+- The researcher found no example of custom fields inside a SCIP file or an official extension point.
 
-**scip-typescript 커버리지 (질문 1)**
-- 옵션 (https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/src/CommandLineOptions.ts): `--yarn-workspaces`, `--pnpm-workspaces`, `--npm-workspaces`, `--infer-tsconfig`, `--no-global-caches`, `--max-file-byte-size`(기본 1mb), `[projects...]`.
-- `src/main.ts`: 워크스페이스 디렉터리마다 `-p <디렉터리>`로 그 `tsconfig.json`을 읽음(파일별 "가장 가까운 tsconfig 탐색"이 아니라 패키지 디렉터리 단위). tsconfig가 없으면 `--infer-tsconfig`일 때만 생성, 아니면 건너뜀. 프로젝트 레퍼런스는 자기 파일 전에 재귀적으로 먼저 인덱싱(사이클 방지). 프로젝트는 순차 처리(병렬화는 주의 필요하다는 주석). 출력은 하나의 `index.scip`에 `Index` 메시지가 연속 직렬화, 첫 메시지가 메타데이터. 문서가 없으면 출력을 지우고 오류 종료.
-- `ProjectIndexer.ts`: tsconfig `fileNames`에 있는 파일만 문서로 내보냄(import로 딸려 온 파일은 제외). `indexedFiles`로 겹치는 프로젝트의 중복 문서 방지. 모든 문서 UTF-16.
-- 크로스 패키지 심볼 연결: 패키지명을 프로젝트에 매핑하는 코드는 없고, `paths`와 워크스페이스 import 해석은 TypeScript 모듈 해석에 위임. 심볼의 패키지명/버전은 `Packages.ts`가 가장 가까운 `name` 있는 `package.json`에서 정함(Unverified: `Packages.ts` 자체는 열지 않았고 아래 이슈로만 확인).
-- 알려진 문제: 이름 없는 중첩 `package.json`(#525, #527), 프로젝트 루트 밖 경로 유출(https://github.com/sourcegraph/scip-typescript/pull/529, 2026-11-03 병합: 이름 있는 `package.json`을 찾을 때만 상위로 올라가고 못 찾으면 파일명만 남겨 체크아웃 위치 비의존), pnpm 실경로 `.`(dagayn #219), 워크스페이스 패키지 심볼이 정의 없이 이름만 나오는 현상(dagayn PR #227, 소비자 쪽 보고, 0.5.2 기준).
-- Unverified: `paths`와 프로젝트 레퍼런스 조합을 직접 다룬 scip-typescript 이슈는 찾지 못했습니다. 이 조합은 직접 재현 실험이 필요합니다.
-- Svelte: https://github.com/sourcegraph/scip-typescript/pull/509 (eseliger, 2026-10-20 열림, 2026-10-30 병합). `svelte2tsx`로 변환하고 소스맵으로 심볼·범위를 원본 `.svelte`로 되돌림. 작성자는 "완벽하지 않은 시작"이라 함. `svelte2tsx/svelte-shims-v4.d.ts`가 내부 구조에 의존한다는 리뷰 지적에 작성자는 Svelte 5까지 같았지만 유지 보장 못 한다고 답함. https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/src/Svelte.ts : 소스맵 지연 디코드(메모리, PR #526으로 약 600MB 절감), 식별자는 매핑 후 원문 텍스트가 이름과 일치하는지 검사, 매핑 없는 항목은 보정(`export let` props는 `$$render` 변수 범위 재사용, `$store`는 스토어 선언), `svelte2tsx`가 예외를 던지면 빈 소스 파일과 소스맵 없는 정보가 생겨 파일 단위 탐색만 가능.
-- 알려진 구멍: https://github.com/sourcegraph/scip-typescript/issues/547 (열림, 0.6.1). 변환 실패 컴포넌트가 import 없이 조용히 색인되고 종료 코드 0. 유지보수자는 그 문서를 빼는 게 맞다고 했고 실패 목록 최대 5개 출력을 제안.
-- README(https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/README.md): SvelteKit은 먼저 `npx svelte-kit sync` 실행. `$lib` 별칭은 코드에서 별도 처리 없이 TypeScript 설정을 따름(Unverified: sync가 생성하는 tsconfig의 `paths`로 풀린다는 것은 추정).
-- Vue와 Astro: scip-typescript 이슈나 PR을 찾지 못했고 Vue용 SCIP 인덱서나 문서화된 접근도 찾지 못했습니다. 검색에서는 Volar가 `.vue`를 가상 TS 파일과 역매핑으로 바꾼다는 설명(https://blog.vuejs.org/posts/volar-a-new-beginning)만 나왔고 직접 열지 않았습니다. Unverified: 같은 방식(가상 TS 생성과 소스맵 역매핑)을 Vue에 적용할 수 있다는 것은 추론.
+**scip-typescript coverage (question 1)**
+- Options (https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/src/CommandLineOptions.ts): `--yarn-workspaces`, `--pnpm-workspaces`, `--npm-workspaces`, `--infer-tsconfig`, `--no-global-caches`, `--max-file-byte-size` (default 1mb) and `[projects...]`.
+- `src/main.ts`: for each workspace directory, `-p <directory>` selects its `tsconfig.json`. Lookup is per package directory, without a nearest-tsconfig search for each file. If tsconfig is missing, the indexer generates it only with `--infer-tsconfig` and otherwise skips the project. It recursively indexes project references before the project's own files and guards against cycles. It processes projects sequentially (a comment advises caution with parallelism). It serialises successive `Index` messages into one `index.scip`, with metadata in the first message. If there are no documents, it removes the output and exits with an error.
+- `ProjectIndexer.ts`: only files in the tsconfig `fileNames` list become documents. Files brought in solely by imports are excluded. `indexedFiles` prevents duplicate documents across overlapping projects. Every document uses UTF-16.
+- Cross-package symbol resolution: there is no code mapping package names to projects. TypeScript module resolution handles `paths` and workspace imports. `Packages.ts` derives the symbol's package name and version from the nearest `package.json` with a `name` (Unverified: the researcher did not open `Packages.ts` and relied on the issues below).
+- Known issues include unnamed nested `package.json` files (#525, #527) and paths leaking from outside the project root (https://github.com/sourcegraph/scip-typescript/pull/529, merged 2026-11-03). The fix walks upwards only to find a named `package.json` and retains only the filename if none is found, making the result independent of checkout location. Other issues include pnpm real paths yielding `.` (dagayn #219) and workspace package symbols appearing by name without a definition (dagayn PR #227, consumer report for 0.5.2).
+- Unverified: The researcher found no scip-typescript issue directly addressing `paths` in combination with project references. This combination needs a reproduction trial.
+- Svelte: https://github.com/sourcegraph/scip-typescript/pull/509 (eseliger, opened 2026-10-20, merged 2026-10-30). The indexer converts files with `svelte2tsx` and maps symbols and ranges back to the original `.svelte` files through source maps. The author described this as an imperfect start. A reviewer pointed out that `svelte2tsx/svelte-shims-v4.d.ts` relies on internals. The author replied that these had stayed the same through Svelte 5 but gave no guarantee. https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/src/Svelte.ts : Source maps are decoded lazily to save memory (about 600MB saved in PR #526). For identifiers, the indexer checks that the mapped source text matches the name. It adjusts unmapped items: `export let` props reuse the `$$render` variable range, and `$store` maps to the store declaration. If `svelte2tsx` throws, the result is an empty source file and no source map, leaving only file-level navigation.
+- Known gap: https://github.com/sourcegraph/scip-typescript/issues/547 (open, 0.6.1). Components whose conversion fails are silently indexed without imports, with exit code 0. The maintainer said the indexer should omit those documents and proposed listing up to 5 failures.
+- The README (https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/README.md) directs SvelteKit users to run `npx svelte-kit sync` first. The `$lib` alias follows TypeScript configuration without special handling in the code (Unverified: resolution through the generated tsconfig's `paths` is an inference).
+- Vue and Astro: the researcher found no scip-typescript issue or PR, Vue SCIP indexer or documented approach for Vue. The search returned only a description of Volar converting `.vue` files to virtual TS files with reverse mapping (https://blog.vuejs.org/posts/volar-a-new-beginning), which the researcher did not open. Unverified: Applying the same approach to Vue (generate virtual TS and map back through source maps) is an inference.
 
-**다국어·다중 패키지 저장소의 인덱스 구성 (질문 2)**
-- 문서화된 방식은 언어나 프로젝트마다 인덱스를 따로 만들어 각각 올리는 것(https://sourcegraph.com/docs/code-navigation/how-to/index-other-languages: 인덱서 실행 후 `src code-intel upload -file=index.scip`). Unverified: 모듈이 여럿인 Go는 모듈 루트마다 scip-go를 돌리고 업로드 시 `-root`를 지정(https://sourcegraph.com/docs/code-navigation/how-to/index-a-go-repository 검색 요약). https://sourcegraph.com/docs/code-navigation/how-to/adding-scip-to-workflows 에는 `-root`, 겹치는 문서, 우선순위가 없음.
-- `scip` CLI와 스키마에는 병합 절차가 없습니다. scip.proto 파일 헤더에 "보완 정보를 여러 출처에서 병합 가능"이라는 문구만 있고, DESIGN.md는 병합을 연결(concatenation)로 가능하게 선택했다고 함. scip-typescript는 실제로 `Index`를 이어 붙여 한 파일로 내보내지만, 같은 파일에 `Index`가 여러 개일 때 소비자가 어떻게 해석할지는 스키마 주석에 없음.
-- 경로 정합: `Metadata.project_root`(URI 인코딩된 절대 경로)와 `Document.relative_path`(루트 기준, 필수·유일)가 기준. 한 인덱스에 여러 언어를 넣으려면 공통 루트를 골라야 하고, 서브디렉터리별로 만들면 루트가 달라 경로가 어긋남.
-- 심볼 정합: 심볼 문자열은 scheme, manager, package, version을 포함하므로 인덱서가 달라도 같은 엔티티가 일치할지는 인덱서 규약에 달림. 외부 정의는 `external_symbols`. Sourcegraph 크로스 레포는 임포트한 정확한 커밋이 인덱싱돼야 동작.
-- 비공식 병합 도구 사례: scip-search의 `aggregate`/`reroot`(심볼 문자열 보존, 외부 심볼은 문자열이 같으면 첫 기록 우선, 로컬 심볼은 문서 범위라 반복 허용, 비로컬 정의 충돌 시 실패, `reroot`는 루트만 변경). Glean은 로컬 심볼을 문서 경로 접두로 전역 유일화.
-- 결론: 공식 병합 규약은 없으므로 엔진이 인덱서별로 읽고 심볼을 내부에서 정규화해 합치는 것이 현실적.
+**Index organisation in multi-language, multi-package repositories (question 2)**
+- The documented approach builds and uploads a separate index for each language or project (https://sourcegraph.com/docs/code-navigation/how-to/index-other-languages: run the indexer, then `src code-intel upload -file=index.scip`). Unverified: For Go repositories with several modules, run scip-go at each module root and pass `-root` on upload (search summary for https://sourcegraph.com/docs/code-navigation/how-to/index-a-go-repository). https://sourcegraph.com/docs/code-navigation/how-to/adding-scip-to-workflows does not cover `-root`, overlapping documents or precedence.
+- The `scip` CLI and schema provide no merge procedure. The scip.proto file header says only that complementary information can be merged from several sources. DESIGN.md says the format was chosen to support merging by concatenation. scip-typescript concatenates `Index` messages in one output file, but the schema comments do not specify how consumers should interpret multiple `Index` messages in the same file.
+- Path alignment relies on `Metadata.project_root` (a URI-encoded absolute path) and `Document.relative_path` (required, unique and relative to the root). Combining languages in one index requires a common root. Indexes built in separate subdirectories have different roots, so their paths do not align.
+- Symbol alignment: a symbol string includes the scheme, manager, package and version. Whether different indexers assign the same symbol to an entity depends on their conventions. External definitions go in `external_symbols`. Sourcegraph cross-repository navigation requires an index of the exact imported commit.
+- Unofficial merge tools include scip-search's `aggregate`/`reroot`. They preserve symbol strings. For identical external symbol strings the first record wins. Document-scoped local symbols may repeat. Conflicting non-local definitions cause failure. `reroot` changes only the root. Glean prefixes local symbols with the document path to make them globally unique.
+- Without an official merge convention, a practical approach is for the engine to read each indexer's output separately, normalise symbols internally and then merge them.
 
-**생성·가상 문서의 위치 (질문 3)**
-- SCIP과 `scip` CLI에는 소스맵, 가상 문서, 언어 재지정을 위한 일급 개념이 없고 원본 좌표로 되돌리는 일은 전적으로 인덱서의 몫. scip-typescript Svelte는 원문 텍스트를 `originalText`로 따로 두고 소스맵으로 범위를 원본 `.svelte` 위치로 바꿔 내보냄.
-- 스키마에서 가장 가까운 필드: `Document.text`(선택, 기본 포함 기대 안 함), `Document.language`(문자열), `Document.position_encoding`, `SymbolRole.Generated`. 생성 코드에서 원본으로의 링크를 나타내는 필드는 없음(Kythe의 `generates`와 대비).
-- 열람한 `ProjectIndexer.ts`는 Svelte 문서에 `text`를 설정하지 않음. Unverified: `FileIndexer`가 쓰는지는 확인 못함.
-- 설계 의미: 가상 문서에서 나온 occurrence는 이미 원본 좌표여야 한다는 규약을 두고, 매핑이 불완전한 경우를 별도 사실로 표시해야 함(#547처럼 조용한 누락이 위험).
+**Positions in generated and virtual documents (question 3)**
+- Neither SCIP nor the `scip` CLI has a first-class representation for source maps, virtual documents or language overrides. The indexer is solely responsible for mapping back to original coordinates. For Svelte, scip-typescript keeps the original text separately as `originalText` and emits ranges mapped back to positions in the original `.svelte` file.
+- The closest schema fields are `Document.text` (optional, generally not expected by default), `Document.language` (string), `Document.position_encoding` and `SymbolRole.Generated`. There is no field linking generated code to its source as Kythe does with `generates`.
+- The inspected `ProjectIndexer.ts` does not set `text` for Svelte documents. Unverified: The researcher did not check whether `FileIndexer` writes it.
+- Design implication: require occurrences from virtual documents to use original coordinates, and record incomplete mappings as separate facts. Silent omissions such as #547 are a risk.
 
-**SCIP 라이선스 관련 사실**
-- 아래 "라이선스 노트"는 메시지 4에 있습니다.
+**SCIP licensing facts**
+- See "Licence notes" at the end of this report.
 
 ## C. Testing practice
 
-- 스냅샷(골든): 모든 SCIP 인덱서가 `scip snapshot` 형식(소스에 occurrence 주석 삽입)을 쓰고 입력은 `snapshots/input`, 출력은 `snapshots/output`에 둠. scip-dotnet은 `SCIP_UPDATE_SNAPSHOTS=true dotnet test`(https://github.com/sourcegraph/scip-dotnet, Verify 라이브러리 사용, 불일치 시 unified diff), scip-go는 `go test ./internal/index -update-snapshots`(README). Unverified: 공용 Go 헬퍼가 scip 저장소 `bindings/go/scip/testutil`에 있다는 것은 검색 요약만 봤고 열지 않음.
-- 기능별 작은 픽스처: scip 저장소의 `reprolang`과 `cmd/scip/tests/`가 가장 직접적인 모델(https://raw.githubusercontent.com/scip-code/scip/main/docs/Development.md). 새 의미를 추가할 때는 테스트 파일과 기능을 먼저 구현한 뒤 스냅샷을 재생성.
-- 인라인 단언: https://kythe.io/docs/schema/writing-an-indexer.html 의 verifier는 소스 주석에 목표를 쓰고 필요한 사실의 존재·부재를 단언. 스냅샷이 내부 선택에 민감한 약점을 줄임. 목표는 기능 관련 부분 그래프만 검사.
-- 단위형 검증: rust-analyzer의 `check_symbol`(`$0` 마커로 토큰을 찍고 심볼 문자열을 `assert_eq!`)과 테스트 목록(https://raw.githubusercontent.com/rust-lang/rust-analyzer/master/crates/rust-analyzer/src/cli/scip.rs). 대상별 테스트(proc-macro, bin, example, test, bench, build-script)와 알려진 오작동을 FIXME 테스트로 박아 두는 방식이 참고할 만함. 스냅샷 테스트는 없음.
-- 인덱서 간 차분 비교: https://github.com/Callix-Tools/callix/issues/13 (소비자 쪽 comparator, 작성자 본인 분류, 독립 검증 아님). 정의 위치로 심볼을 맞춘 뒤 참조마다 match/wrong/external/missing으로 분류하고 재현율·정밀도를 냄.
-  - scip-go: gin, hugo에서 정밀도 1.000, 재현율 0.53~0.63(수정 후 0.96~0.99).
-  - rust-analyzer: ripgrep, axum에서 정밀도 1.000, 재현율 0.36~0.51(수정 후 0.75~0.81). 매크로 생성 항목이 누락의 주원인, `.await`가 `Future::poll` 호출로 인덱싱되는 문제도 있음.
-  - scip-typescript: zod에서 정밀도 0.992, 재현율 0.314(수정 후 0.917). 객체 리터럴 키는 정의로 취급.
-- 자기 인덱싱·코퍼스 실행: 자기 인덱싱 사례는 이 조사에서 직접 확인하지 못했습니다. 코퍼스 실행 실례는 위 callix(gin, hugo, ripgrep, axum, zod)와 codegraph PoC(vscode, Playwright, Django, cobra, ripgrep). rust-analyzer SCIP 패닉은 wasmtime, curve25519-dalek 같은 실제 크레이트에서 드러남(#21281, PR #23369).
-- 소비자 쪽 교훈: trellis는 합성 SCIP로만 테스트하다 실제 rust-analyzer 출력에서 디코더가 깨졌고(issue #394), 호출 바인딩 0건 버그도 `facts > 0`만 단언한 종단 테스트가 놓침(issue #444).
-- 빠진 것: 일반적인 퍼저·프로퍼티 테스트 사례는 찾지 못했습니다.
+- Snapshot (golden) tests: all SCIP indexers use the `scip snapshot` format, which annotates source with occurrences. Inputs live in `snapshots/input` and outputs in `snapshots/output`. scip-dotnet uses `SCIP_UPDATE_SNAPSHOTS=true dotnet test` (https://github.com/sourcegraph/scip-dotnet, using the Verify library, with a unified diff on mismatch). scip-go uses `go test ./internal/index -update-snapshots` (README). Unverified: The researcher saw only a search summary locating shared Go helpers at `bindings/go/scip/testutil` in the scip repository and did not open the source.
+- Small feature fixtures: `reprolang` and `cmd/scip/tests/` in the scip repository provide the most direct model (https://raw.githubusercontent.com/scip-code/scip/main/docs/Development.md). For new semantics, implement the test file and feature first, then regenerate snapshots.
+- Inline assertions: the verifier at https://kythe.io/docs/schema/writing-an-indexer.html reads goals from source comments and checks for the presence or absence of required facts. This reduces sensitivity to internal choices in snapshots. Goals check only the subgraph relevant to the feature.
+- Unit-level checks: rust-analyzer's `check_symbol` uses a `$0` marker to select a token and checks the symbol string with `assert_eq!`. Its test list (https://raw.githubusercontent.com/rust-lang/rust-analyzer/master/crates/rust-analyzer/src/cli/scip.rs) illustrates tests per target (proc-macro, bin, example, test, bench, build-script) and FIXME tests that record known incorrect behaviour. There are no snapshot tests.
+- Differential comparisons between indexers: https://github.com/Callix-Tools/callix/issues/13 describes a consumer-side comparator. The author classified the results without independent verification. It aligns symbols by definition location, classifies each reference as match/wrong/external/missing and reports recall and precision.
+  - scip-go: precision 1.000 on gin and hugo, recall 0.53–0.63 (0.96–0.99 after fixes).
+  - rust-analyzer: precision 1.000 on ripgrep and axum, recall 0.36–0.51 (0.75–0.81 after fixes). Macro-generated items accounted for most omissions. The indexer also recorded `.await` as a call to `Future::poll`.
+  - scip-typescript: precision 0.992 on zod, recall 0.314 (0.917 after fixes). Object literal keys count as definitions.
+- Self-indexing and corpus runs: the researcher did not directly verify an example of self-indexing. Corpus runs include callix (gin, hugo, ripgrep, axum, zod) and the codegraph PoC (vscode, Playwright, Django, cobra, ripgrep). Real crates such as wasmtime and curve25519-dalek exposed rust-analyzer SCIP panics (#21281, PR #23369).
+- Consumer experience: trellis tested only with synthetic SCIP before its decoder failed on real rust-analyzer output (issue #394). An end-to-end test that asserted only `facts > 0` also missed a bug that produced 0 call bindings (issue #444).
+- The researcher did not find examples of general-purpose fuzzing or property tests.
 
-**열지 못한 소스 (우회하지 않음)**
+**Sources the researcher could not open (no bypass attempted)**
 - https://queue.acm.org/detail.cfm?id=3487022 : 403
-- https://web.archive.org/web/20211115131149/https://www.sourcetrail.com/blog/discontinue_sourcetrail/ : 도구에서 차단
-- https://drops.dagstuhl.de/storage/01oasics/oasics-vol109-evcs2023/OASIcs.EVCS.2023.8/OASIcs.EVCS.2023.8.pdf : PDF 텍스트 추출 불가
+- https://web.archive.org/web/20211115131149/https://www.sourcetrail.com/blog/discontinue_sourcetrail/ : the tool blocked access
+- https://drops.dagstuhl.de/storage/01oasics/oasics-vol109-evcs2023/OASIcs.EVCS.2023.8/OASIcs.EVCS.2023.8.pdf : the tool could not extract PDF text
 - https://github.com/sourcegraph/scip-typescript/blob/main/docs/Development.md : 404
 
 ## Lessons and licence notes
 
-**교훈 (설계에 미치는 영향 순)**
-1. SCIP만으로는 호출 그래프를 만들 수 없다고 전제하고 호출 증거는 별도 계층으로 설계. 참조 occurrence와 enclosing range 조합은 인덱서마다 다르고(TS는 참조에 없음) rust-analyzer는 일부 호출에서 누락.
-2. 부가 데이터는 SCIP 심볼 문자열을 불투명 키로 삼는 사이드카에 둘 것(모든 사례가 이렇게 함). 매칭이 안 되면 추측하지 말고 "unavailable"로 표시(scip-search, codeintel).
-3. 모든 사실에 출처와 정확도 등급(compiler/heuristic)을 붙일 것. 조용한 저하가 가장 흔한 실패(moosedev의 TS 인덱스 무시, 호출 0건, #547의 변환 실패 컴포넌트).
-4. 위치는 소비 시점에 문서별 인코딩을 읽어 내부 단일 기준(예: UTF-8 바이트)으로 변환. 인덱서가 UTF-8과 UTF-16으로 갈림.
-5. 심볼 정체는 인덱서별로 불안정(오버로드는 첫 시그니처, 중첩 함수 충돌, 익명 패키지 `npm . .`, 중복 심볼). 정규화 계층과 충돌 감지를 두고 한 인덱스 내 중복은 오류가 아니라 경고로.
-6. 스트리밍 디코드(와이어 태그로 `documents`를 하나씩)를 처음부터 넣을 것. rust-analyzer 인덱스가 이미 24MB, 한 문서에 occurrence 수만 개. `scip` 크레이트(rust-protobuf 고정)로 전체 `Index`를 읽는 것을 기본으로 삼지 말 것.
-7. 증분은 SCIP이 해결해 주지 않음. Google(교차 참조 하루 한 번, 검색 인덱스와 시차가 혼란의 원인)과 Glean(unit 단위 소유권)의 경험상 "파일 단위 소유권 + 영향 범위 재계산"이 필요.
-8. 매크로·생성 코드·빌드 태그·가상 문서(Svelte/Vue)는 인덱서마다 정책이 다르므로 "누락"이 정상 출력. 누락 위치를 별도 사실로 기록. Kythe의 별도 노드 + `generates` edge가 참고할 만함. 가상 문서 역매핑은 SCIP에 규약이 없고 인덱서 몫.
-9. 인덱서 출력과 별개로 자체 차분 테스트를 만들 것(같은 코퍼스에서 인덱서 대 LSP 또는 컴파일러 백엔드, 정밀도와 재현율을 따로). 합성 입력만으로는 부족.
-10. 테스트는 (a) 기능별 작은 픽스처의 스냅샷, (b) 인라인 단언(Kythe verifier식), (c) 실제 크레이트 코퍼스의 세 층으로. 출력은 결정적이어야 함.
-11. 다국어 병합에는 공식 규약이 없으므로 인덱서별로 읽고 내부에서 심볼을 정규화해 합치는 계층을 설계. 공통 `project_root` 선택과 로컬 심볼의 문서 범위 처리를 명시.
-12. 실험으로 확인할 것: (a) `scip` 0.10.0 생성 코드의 typed range 필드 존재와 rust-analyzer의 옛 범위 필드 처리, (b) 대상 코퍼스에서 rust-analyzer 정의 `enclosing_range` 적용 비율(참조에는 없음), (c) TS 모노레포(pnpm, 패키지별 `paths`, 프로젝트 레퍼런스)에서 심볼 패키지명과 크로스 패키지 해석, (d) Go 빌드 태그·테스트 파일이 심볼 중복을 만드는지, (e) SvelteKit `$lib`가 `svelte-kit sync` 후 scip-typescript에서 풀리는지.
-피할 것: tree-sitter만으로 정확한 호출 그래프를 약속하는 설계, stack graphs식 언어별 규칙 DSL 직접 유지(아카이브 사유는 미확인, 커뮤니티는 규칙 유지 비용 지목), 사전 계산 인덱스가 라이브 서버와 일치한다는 가정(CodeNib 일치율 86%).
+**Lessons in order of impact on the design**
+1. Design a separate layer for call evidence on the assumption that SCIP alone cannot supply a call graph. The combination of reference occurrences and enclosing ranges varies by indexer. TS omits the range on references, and rust-analyzer omits it on some calls.
+2. Put additional data in a sidecar keyed by opaque SCIP symbol strings, as all the examples do. Mark unmatched data as "unavailable" rather than guessing (scip-search, codeintel).
+3. Attach provenance and an accuracy class (compiler/heuristic) to every fact. Silent degradation is the most common failure: moosedev ignored a TS index, calls fell to 0, and #547 indexed components whose conversion failed.
+4. On ingestion, read each document's position encoding and convert positions to one internal representation, such as UTF-8 bytes. Indexers differ between UTF-8 and UTF-16.
+5. Symbol identity is unstable across indexers: overloads map to the first signature, nested functions collide, anonymous packages use `npm . .` and duplicate symbols occur. Add normalisation and collision detection. Treat duplicates within an index as warnings.
+6. Support streaming decoding from the outset, using wire tags to read `documents` one at a time. A rust-analyzer index already occupies 24MB and a single document can contain tens of thousands of occurrences. Avoid making a full `Index` read through the `scip` crate (pinned to rust-protobuf) the default.
+7. SCIP does not handle incremental updates. Google's experience (daily cross-references lagging the search index confused users) and Glean's unit-level ownership point to file-level ownership and recomputation of the affected set.
+8. Indexers have different policies for macros, generated code, build tags and virtual documents (Svelte/Vue), so omissions are normal output. Record omitted locations as separate facts. Kythe's separate nodes and `generates` edge offer a model. SCIP has no convention for reverse mapping virtual documents, leaving that work to the indexer.
+9. Build independent differential tests for indexer output. Compare the indexer with an LSP or compiler backend on the same corpus and report precision and recall separately. Synthetic inputs alone are insufficient.
+10. Test at three levels: (a) snapshots of small per-feature fixtures, (b) inline assertions in the style of the Kythe verifier and (c) a corpus of real crates. Output must be deterministic.
+11. With no official convention for multi-language merging, design a layer that reads each indexer's output and normalises symbols before merging. Specify how to choose the common `project_root` and handle document-scoped local symbols.
+12. Check experimentally (a) whether the `scip` 0.10.0 generated code has typed range fields and how it handles rust-analyzer's old range fields, (b) the fraction of rust-analyzer definitions with `enclosing_range` in the target corpus (absent on references), (c) symbol package names and cross-package resolution in a TS monorepo with pnpm, per-package `paths` and project references, (d) whether Go build tags and test files produce duplicate symbols and (e) whether scip-typescript resolves SvelteKit's `$lib` after `svelte-kit sync`.
+Avoid promising a precise call graph from tree-sitter alone, maintaining a per-language rules DSL in the style of stack graphs (the reason for archival is unconfirmed, though the community cites rule maintenance costs), or assuming a precomputed index agrees with a live server (CodeNib reported 86% agreement).
 
-**라이선스 노트** (법률 자문이 아님. 확인한 사실과 일반 관행을 구분함)
-- `scip.proto`와 저장소: https://raw.githubusercontent.com/scip-code/scip/main/LICENSE 는 Apache-2.0, 저작권자는 명시되지 않음. https://scip-code.org/governance.html 은 "© 2026 The SCIP Authors | Apache-2.0", CLA 없음(기여자가 해당 라이선스로 제출할 권리를 확인하는 방식), DCO와 상표 소유는 페이지에 없음. 후원 주도형 지배구조에서 Sourcegraph가 위원을 임명할 수 있고 운영위원은 Meta, Uber, Sourcegraph 소속(https://sourcegraph.com/blog/the-future-of-scip, 2026-03-25).
-- Rust `scip` 크레이트: docs.rs에 Apache-2.0. `protobuf = "=3.7.2"` 의존이며 crates.io 데이터상 3.x는 MIT, 최신 4.x는 BSD-3-Clause(별도 크레이트 세대이므로 섞지 않도록 주의). `cargo deny`로 의존 트리 확인 권장. Unverified: 3.7.2의 LICENSE 파일 자체는 열지 않음.
-- 서브프로세스 인덱서: rust-analyzer는 MIT와 Apache-2.0 이중(https://raw.githubusercontent.com/rust-lang/rust-analyzer/master/README.md). scip-typescript(https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/LICENSE)와 scip-go(https://github.com/scip-code/scip-go/blob/main/LICENSE, 이전 URL은 sourcegraph/scip-go)는 Apache-2.0. 별도 프로세스로만 실행하면 일반적으로 엔진 라이선스에 전염되지 않음(일반 지식 기반, 출처 미확인). 인덱서 바이너리를 같이 배포할 때만 각 라이선스의 고지 의무가 생김. 번들 배포 요구사항은 이 조사에서 확인하지 않음.
-- `scip.proto` 또는 생성 바인딩 벤더링(일반 지식 기반, 출처 미확인): Apache-2.0 파일은 자기 라이선스를 유지하므로 해당 파일에 라이선스·저작권 고지를 남기고 수정했다면 변경 사실을 표시. Apache-2.0 텍스트 사본을 포함하고 원 저장소에 NOTICE 파일이 있으면 그 내용도 유지. 이 저장소에 NOTICE가 있는지는 확인하지 못함. MIT 또는 MIT/Apache-2.0 이중 프로젝트에 포함하는 것은 허용 범위지만 해당 파일은 Apache-2.0으로 표시해 두는 편이 깔끔. 헤더는 저장소 것을 그대로 따를 것("The SCIP Authors" 표기, CLA 부재). 가장 단순한 길은 vendoring 대신 `scip` 크레이트를 의존성으로 쓰는 것.
+**Licence notes** (not legal advice. The notes distinguish verified facts from general practice.)
+- `scip.proto` and the repository: https://raw.githubusercontent.com/scip-code/scip/main/LICENSE gives Apache-2.0 and does not name a copyright holder. https://scip-code.org/governance.html says "© 2026 The SCIP Authors | Apache-2.0". There is no CLA. Contributors confirm their right to submit under the licence. The page does not discuss the DCO or trademark ownership. Under sponsor-led governance, Sourcegraph can appoint committee members. Steering committee members are affiliated with Meta, Uber and Sourcegraph (https://sourcegraph.com/blog/the-future-of-scip, 2026-03-25).
+- Rust `scip` crate: docs.rs lists Apache-2.0. The crate depends on `protobuf = "=3.7.2"`. According to crates.io, 3.x is MIT and the latest 4.x is BSD-3-Clause. These are separate crate generations. The researcher recommends checking the dependency tree with `cargo deny`. Unverified: The researcher did not open the LICENSE file for 3.7.2.
+- Subprocess indexers: rust-analyzer is dual-licensed under MIT and Apache-2.0 (https://raw.githubusercontent.com/rust-lang/rust-analyzer/master/README.md). scip-typescript (https://raw.githubusercontent.com/sourcegraph/scip-typescript/main/LICENSE) and scip-go (https://github.com/scip-code/scip-go/blob/main/LICENSE, formerly at sourcegraph/scip-go) use Apache-2.0. Running an indexer solely as a separate process generally does not extend its licence to the engine (general knowledge, source unverified). Each licence's notice obligations arise only when distributing the indexer binary alongside the engine. The researcher did not check bundled distribution requirements.
+- Vendoring `scip.proto` or generated bindings (general knowledge, source unverified): Apache-2.0 files retain their licence. Keep the licence and copyright notices and mark any modifications. Include a copy of the Apache-2.0 text and preserve the contents of any upstream NOTICE file. The researcher did not establish whether this repository has a NOTICE file. An MIT or dual MIT/Apache-2.0 project can include these files, but should mark them as Apache-2.0. Follow the repository's headers ("The SCIP Authors", no CLA). The simplest option is to depend on the `scip` crate instead of vendoring.

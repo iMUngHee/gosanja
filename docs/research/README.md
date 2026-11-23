@@ -6,8 +6,9 @@ records, not decisions. Decisions belong in the architecture document once it ex
 
 ## How to read these
 
-- Each file is a report as its researcher wrote it, in Korean or English, with raw source
-  URLs. Only process notes and names from a private codebase were removed.
+- Each file is a report as its researcher wrote it, with raw source URLs. Six of them were
+  written in Korean and are given here in English translation. Only process notes and names
+  from a private codebase were removed.
 - A statement prefixed `Unverified:` was not confirmed on a page the researcher opened.
   Treat it as a lead, not a fact.
 - Several publisher sites (ACM, Springer, ScienceDirect, HAL) refused access, so some

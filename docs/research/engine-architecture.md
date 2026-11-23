@@ -10,7 +10,7 @@ versus native parsers, and templated languages through a transform plus source m
 Collected by a web-research agent on 2026-11-23. Sources are given as raw URLs. A statement
 prefixed `Unverified:` was not confirmed on a page the researcher opened, and vendor or
 author claims are reported as claims. Sources that could not be opened are named in the
-report. The text is kept as the researcher wrote it, in Korean or English.
+report. The text is kept as the researcher wrote it.
 
 ## Report
 
