@@ -1,13 +1,17 @@
-# Code Mapper
+# gosanja
 
-Code Mapper is a Rust code-indexing engine in the research and design stage. Start at `docs/research/README.md` for the evidence behind proposals. Architecture decisions belong in the architecture document once it exists.
+gosanja is a Rust engine that builds a deterministic map of a codebase from compiler facts: definitions, containment, references and calls, each with its source position and origin. No language model takes part in the analysis. Start at `docs/ARCHITECTURE.md` for how it is cut, `docs/CONVENTIONS.md` for the rules a change has to keep, and `docs/research/README.md` for the evidence behind the design.
 
 ## Editing and verification
 
+- The gate is `scripts/check.sh`: format check, clippy with `-D warnings`, tests, doctests and `cargo deny`. Run it before calling a change done. The tests read the indexes checked in under `fixtures/` and need no indexer.
+- For an indexing change, add or use a small fixture with an expected fact and check the engine's output against it. A change in what a snapshot contains shows up in `fixtures/*/expected`; say why each difference is right. Try the engine with `cargo run -p gosanja -- index --scip fixtures/rust-basic/index.scip --root fixtures/rust-basic --out <dir outside the repository>` and `cargo run -p gosanja -- validate <dir> --root fixtures/rust-basic`.
+- `spec/` is normative. A change to a document, its JSON Schema, the goldens and `CHANGELOG.md` go in one commit; the rules are in `spec/README.md`.
+- The core (`crates/core`) knows no language and recovers nothing from source text. Language knowledge belongs in adapters, which are separate programs behind `spec/adapter-contract.md`.
+- Never copy code, names or paths from a private project into a fixture, a test or a document.
 - For changes under `docs/research/`, follow `.ai/rules/research.md`.
 - Edit shared agent guidance in `.ai/PROJECT.md`. The root `AGENTS.md` points to it and `CLAUDE.md` imports the root file. Check the wiring with `cmp .ai/PROJECT.md AGENTS.md` and `cmp .ai/rules/research.md .claude/rules/research.md`.
-- When the Rust workspace is introduced, take formatter, lint and test commands from its actual toolchain and manifests. For an indexing change, use a small fixture with an expected extracted fact and check the engine's output against it. Record the fixture, command and observed result before relying on a claimed capability.
 
 ## Versioning
 
-Choose the release unit when the first distributable crate or binary exists. Use its Cargo manifest as the version source; if packages ship together, use the workspace package version. At that point define the public interface whose compatibility governs version bumps.
+Three versions move independently. The release is the workspace package version in the root `Cargo.toml` (semver) and governs the command line and the Rust API. The snapshot schema and the adapter contract are `major.minor` versions recorded in every manifest and specified under `spec/`; their compatibility rules and change classes are in `spec/README.md`. A change to either interface is recorded in `CHANGELOG.md` with what a reader or an adapter author has to do.

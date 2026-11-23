@@ -683,7 +683,6 @@ fn another_minor_or_major_is_refused_before_reading() {
         );
     }
 }
-// Review findings.
 
 #[test]
 fn an_enclosing_range_on_a_reference_is_never_converted() {
