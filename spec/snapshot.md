@@ -131,12 +131,13 @@ none is an absolute path, and `id`, `target` and `profile` contain no `/` or `\`
 
 ## files.jsonl
 
-One row per source file that was indexed. Sorted by `path`.
+One row per source file that a fact refers to: every indexed document, and any other file that
+a call's evidence names. Sorted by `path`.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `path` | path | relative to the project root |
-| `language` | string, optional | as the index names it, lower case |
+| `language` | string, optional | as the index names it, lower case; absent for a file no document describes |
 | `bytes` | integer | length of the file |
 | `lines` | integer | number of lines |
 | `sha256` | 64 hex digits | digest of the file's bytes |
@@ -372,8 +373,11 @@ single gap: location (`document-outside-root`), availability (`source-unavailabl
 
 These rules bind a program that writes a snapshot to a path.
 
-- The output path is refused when, after resolving links, it is the indexed root, lies inside
-  it or contains it.
+- The decision is made on resolved paths: links and `..` are resolved first, so `src/../out`
+  is judged as `out`.
+- The output path is refused when it is the indexed root, lies inside it or contains it.
+- The parent directory of the output path must exist; otherwise the path is refused. Nothing
+  is created above the snapshot directory itself.
 - An output path that does not exist, or is an empty directory, is used.
 - An existing non-empty directory is replaced only when it is a snapshot: its `manifest.json`
   parses and has `format` equal to `gosanja-snapshot`. Any other non-empty directory is refused

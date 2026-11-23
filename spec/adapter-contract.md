@@ -162,7 +162,7 @@ is `unanchored`.
 
 ## syntax.jsonl
 
-One row per definition the adapter describes.
+One row per definition the adapter describes, and at most one row for any definition.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -186,9 +186,16 @@ meanings given in [snapshot.md](snapshot.md#syntaxjsonl). Three rules bind the a
 - What the adapter cannot read, it marks with an `opaque` node covering the region. Leaving the
   region out would claim that it holds nothing.
 - Nodes are nested by containment and listed in source order.
+- Ranges are well-formed: a range does not end before it starts, a child node lies within its
+  parent, and a `callee` lies within the `range` of its node.
 - An outline covers the body of its own definition. It does not descend into a nested
   definition that the base layer knows as a definition of its own, because references there
   belong to that definition; a nested closure, which has no definition, is part of the outline.
+
+A layer in which two rows resolve to the same definition, or in which a row breaks the range
+rules above, is malformed. It is discarded as a whole, like a layer with a row that fails its
+schema (`failed-layer`, detail `row-invalid`), so that the result cannot depend on the order of
+the rows.
 
 ## calls.jsonl
 
@@ -204,6 +211,11 @@ One row per observation of a call.
 | `build` | string | `id` of a build context in `result.json` |
 
 - A row needs no matching reference and no site: compiler-generated calls have neither.
+- A `site` may be in any file under `--root`, including one the base layer does not mention,
+  such as generated code. The engine reads that file through the same boundary as every other
+  source, to check and convert the position, and lists it in `files.jsonl`. A site whose file
+  is outside the root, missing or unreadable makes the row unusable: it is dropped and counted
+  in `position-out-of-range`.
 - Each row stays one observation. The engine groups rows into one relation only when caller,
   callee, mechanism and resolution are all equal, and keeps one evidence entry per row.
 - The engine handles a row in this order and stops at the first problem: `build` not listed in
