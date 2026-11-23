@@ -19,6 +19,7 @@ records, not decisions. Decisions belong in the architecture document once it ex
 
 | File | Date | What it answers |
 | --- | --- | --- |
+| [scip-indexer-differences.md](scip-indexer-differences.md) | 2026-11-23 | What rust-analyzer, scip-go and scip-typescript write for three small fixtures: position encodings, range forms, enclosing ranges, symbol shapes, message counts, absolute paths and repeatability, and whether the pinned `scip` 0.10.0 bindings decode typed ranges |
 | [engine-architecture.md](engine-architecture.md) | 2026-11-23 | How Kythe, Glean, CodeQL, Joern, SCIP, Sourcetrail and others split language-specific extraction from a common core; adapter boundaries; tree-sitter versus native parsers; templated languages through transform plus source map; 15 papers |
 | [call-relations.md](call-relations.md) | 2026-11-23 | Call-graph literature (CHA, RTA, VTA, soundness studies), routes for Rust, Go and TypeScript, and a vocabulary for certain versus possible call edges |
 | [structural-diff-identity.md](structural-diff-identity.md) | 2026-11-23 | Matching entities across versions, stability of symbol-naming schemes, API-surface diff tools, architecture drift, incremental indexing |
@@ -81,7 +82,8 @@ what was read versus assumed is marked there.
 ## To check by experiment before relying on it
 
 1. Reference recall of `rust-analyzer scip` on a corpus with known answers.
-2. Whether scip-go and scip-typescript give enclosing ranges on definitions.
+2. Whether scip-go and scip-typescript give enclosing ranges on definitions. Measured on
+   small fixtures in scip-indexer-differences.md: both do for functions.
 3. Cross-package symbol linking in a pnpm monorepo with per-package `paths`, and whether
    SvelteKit's `$lib` resolves after `svelte-kit sync`.
 4. The three gaps of the LLVM IR route listed above.

@@ -1,0 +1,34 @@
+# Fixtures
+
+Small projects written for this repository. Each has a checked-in `index.scip` and one
+known source-level fact that a test asserts. Edge cases such as other position encodings,
+colliding symbols and corrupt input are built in the tests from `scip` types and are not
+stored here. What each indexer writes for these fixtures is recorded in
+[`docs/research/scip-indexer-differences.md`](../docs/research/scip-indexer-differences.md).
+
+| Fixture | Known fact (zero-based, end exclusive, in the document's unit) | Checked-in index produced by |
+| --- | --- | --- |
+| `rust-basic` | `render` is defined at `src/views.rs` [2,7,13] with body [2,0,8,1]; the reference to `empty` at [4,8,13] lies in that body | `rust-analyzer 0.3.3049-standalone`, rustc 1.100.0 |
+| `go-basic` | `greet` is defined at `main.go` [2,5,10]; the reference to it at [7,5,10] lies in `main`'s body [6,0,8,1] | `scip-go` 0.2.10 built with Go 1.27.3 |
+| `ts-basic` | `greet` is defined at `src/index.ts` [0,16,21]; the reference to it at [5,9,14] lies in `run`'s body [4,0,6,1] (UTF-16 columns) | `@sourcegraph/scip-typescript` 0.6.2 on Node 26.13.1 with TypeScript 6.0.3 |
+
+## Regenerating the indexes
+
+The tests read the checked-in indexes and need none of the indexers. To rebuild them, put
+the indexers on `PATH` or name them in `RUST_ANALYZER`, `SCIP_GO` and `SCIP_TYPESCRIPT`,
+then run:
+
+```sh
+fixtures/regenerate.sh              # every fixture
+fixtures/regenerate.sh rust-basic   # one fixture
+```
+
+Indexers write the directory they ran in into the index metadata, so the script copies each
+fixture to the fixed path `/tmp/gosanja-fixtures/<fixture>`, indexes it there and copies only
+`index.scip` back. Nothing is built inside the repository. It prints each indexer's
+version; update the table above when you commit new indexes.
+
+rust-analyzer and scip-typescript give the same bytes on every run. scip-go 0.2.10 does not:
+the order of `Document.symbols` changes between runs, so a regenerated `go-basic/index.scip`
+can differ from the checked-in one without any change in its facts. The index is kept as
+the indexer wrote it, and tests must not depend on that order.
