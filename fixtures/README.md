@@ -9,6 +9,8 @@ stored here. What each indexer writes for these fixtures is recorded in
 | Fixture | Known fact (zero-based, end exclusive, in the document's unit) | Checked-in index produced by |
 | --- | --- | --- |
 | `rust-basic` | `render` is defined at `src/views.rs` [2,7,13] with body [2,0,8,1]; the reference to `empty` at [4,8,13] lies in that body | `rust-analyzer 0.3.3049-standalone`, rustc 1.100.0 |
+| `rust-flow` | a workspace of two path-linked crates; `flow` is defined at `app/src/main.rs` [16,9,13] and holds every construct of the syntax layer's outline; its hand-derived outline and the item facts of both crates are the literals of `crates/adapter-rust/tests/syntax_cases.rs` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
+| `rust-recall` | every identifier token in `src/lib.rs` that names a definition of the crate, other than that definition's own name, is a row of `expected-refs.tsv`: file, line, start byte column, then the file, line and column of the name token it names | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
 | `go-basic` | `greet` is defined at `main.go` [2,5,10]; the reference to it at [7,5,10] lies in `main`'s body [6,0,8,1] | `scip-go` 0.2.10 built with Go 1.27.3 |
 | `ts-basic` | `greet` is defined at `src/index.ts` [0,16,21]; the reference to it at [5,9,14] lies in `run`'s body [4,0,6,1] (UTF-16 columns) | `@sourcegraph/scip-typescript` 0.6.2 on Node 26.13.1 with TypeScript 6.0.3 |
 
@@ -21,6 +23,7 @@ then run:
 ```sh
 fixtures/regenerate.sh              # every fixture
 fixtures/regenerate.sh rust-basic   # one fixture
+fixtures/regenerate.sh rust-flow rust-recall
 ```
 
 Indexers write the directory they ran in into the index metadata, so the script copies each

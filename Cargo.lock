@@ -227,6 +227,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gosanja-adapter-rust"
+version = "0.2.0"
+dependencies = [
+ "gosanja-core",
+ "gosanja-schema",
+ "proc-macro2",
+ "protobuf",
+ "quote",
+ "scip",
+ "serde_json",
+ "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
 name = "gosanja-core"
 version = "0.2.0"
 dependencies = [

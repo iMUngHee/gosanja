@@ -1,0 +1,7 @@
+[package]
+name = "flow-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+flow-kit = { path = "../kit" }

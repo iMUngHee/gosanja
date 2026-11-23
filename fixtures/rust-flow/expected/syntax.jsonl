@@ -1,0 +1,34 @@
+{"key":"cargo:flow-app:INNER_VALUE.","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:Shell#","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:crate/","outline":[{"k":"opaque","detail":"marker!","range":[6,0,6,10]},{"k":"opaque","detail":"marker!","range":[10,4,10,14]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:flow().","qualifiers":["async"],"outline":[{"k":"opaque","detail":"item!","range":[19,4,19,12]},{"k":"branch","detail":"let-else","range":[20,4,20,43],"children":[{"k":"arm","detail":"else","range":[20,27,20,42],"children":[{"k":"exit","detail":"return","range":[20,29,20,40]}]}]},{"k":"branch","detail":"if","range":[21,4,21,44],"children":[{"k":"arm","detail":"else","range":[21,21,21,44],"children":[{"k":"branch","detail":"if","range":[21,21,21,44]}]}]},{"k":"branch","detail":"match","range":[22,4,22,41],"children":[{"k":"arm","range":[22,14,22,31]},{"k":"arm","range":[22,32,22,39]}]},{"k":"loop","detail":"loop","range":[23,4,23,19],"children":[{"k":"exit","detail":"break","range":[23,11,23,16]}]},{"k":"loop","detail":"while","range":[24,4,24,29],"children":[{"k":"exit","detail":"continue","range":[24,18,24,26]}]},{"k":"loop","detail":"while","range":[25,4,25,46],"children":[{"k":"exit","detail":"break","range":[25,38,25,43]}]},{"k":"loop","detail":"for","range":[26,4,26,19]},{"k":"exit","detail":"?","range":[27,12,27,16]},{"k":"closure","detail":"closure","range":[28,12,28,24],"children":[{"k":"call","range":[28,16,28,24],"callee":[28,16,28,21]}]},{"k":"await","range":[29,12,29,29],"children":[{"k":"closure","detail":"async","range":[29,12,29,23]}]},{"k":"await","range":[30,12,30,34],"children":[{"k":"closure","detail":"async","range":[30,12,30,28]}]},{"k":"call","range":[31,19,31,36],"callee":[31,29,31,33]},{"k":"call","range":[32,4,32,15],"callee":[32,7,32,12]},{"k":"call","range":[33,4,33,22],"callee":[33,4,33,9]},{"k":"call","range":[34,4,34,13],"children":[{"k":"call","range":[34,4,34,10],"callee":[34,4,34,8]}]},{"k":"call","range":[35,4,35,13]},{"k":"opaque","detail":"stringify!","range":[36,12,36,25]},{"k":"opaque","detail":"assert!","range":[37,4,37,17]},{"k":"opaque","detail":"flow_kit::int!","range":[37,26,37,42]},{"k":"branch","detail":"match","range":[37,45,37,86],"children":[{"k":"arm","range":[37,55,37,77],"children":[{"k":"opaque","detail":"flow_kit::one!","range":[37,55,37,71]}]},{"k":"arm","range":[37,78,37,84]}]},{"k":"call","range":[38,4,38,14],"callee":[38,4,38,8],"children":[{"k":"call","range":[38,9,38,13],"callee":[38,9,38,10]}]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:item!","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:main().","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:marker!","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:nested().","outline":[{"k":"call","range":[17,18,17,26],"callee":[17,18,17,23]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-app:outer().","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Adjust#","visibility":"pub","outline":[{"k":"opaque","detail":"slot!","range":[16,4,16,12]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Adjust#Output#","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Adjust#START.","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Adjust#required().","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Bits#","visibility":"pub","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Count#","visibility":"pub","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Flag#","visibility":"pub","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:LIMIT.","visibility":"pub","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:Op#","visibility":"pub","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:TOTAL.","visibility":"pub","qualifiers":["mut"],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:`r#type`().","visibility":"pub","qualifiers":["const","unsafe"],"outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:a/","visibility":"pub","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:a/restricted().","visibility":"pub(in crate::a)","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:a/shared().","visibility":"pub(crate)","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:crate/","outline":[{"k":"opaque","detail":"slot!","range":[3,0,3,8]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:foreign_abi().","visibility":"pub","qualifiers":["extern \"C\""],"outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:impl#[Op][Adjust]Output#","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:impl#[Op][Adjust]START.","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:impl#[Op][Adjust]required().","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:impl#[Op]apply().","visibility":"pub","outline":[{"k":"call","range":[20,41,20,52]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:int!","attributes":["#[macro_export]"],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:make().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:one!","attributes":["#[macro_export]"],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:slot!","src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:step().","visibility":"pub","attributes":["#[inline]","#[must_use = \"use the next count\"]"],"outline":[],"src":"adapter:rust/syntax"}

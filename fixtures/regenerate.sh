@@ -1,7 +1,7 @@
 #!/bin/sh
 # Rebuilds the checked-in index.scip of each fixture.
 #
-# Usage: fixtures/regenerate.sh [rust-basic] [go-basic] [ts-basic]
+# Usage: fixtures/regenerate.sh [rust-basic] [rust-flow] [rust-recall] [go-basic] [ts-basic]
 # With no argument every fixture is rebuilt. Indexers record the absolute
 # directory they ran in, so each fixture is copied to the fixed path
 # /tmp/gosanja-fixtures/<fixture> and indexed there; only index.scip comes
@@ -38,10 +38,10 @@ index() {
     echo "$fixture: $("$1" --version)"
 }
 
-[ "$#" -gt 0 ] || set -- rust-basic go-basic ts-basic
+[ "$#" -gt 0 ] || set -- rust-basic rust-flow rust-recall go-basic ts-basic
 for fixture in "$@"; do
     case $fixture in
-    rust-basic) index rust-basic "$rust_analyzer" scip . ;;
+    rust-basic | rust-flow | rust-recall) index "$fixture" "$rust_analyzer" scip . ;;
     go-basic) index go-basic "$scip_go" index --module-version v1.0.0 ;;
     ts-basic) index ts-basic "$scip_typescript" index --no-progress-bar ;;
     *)
