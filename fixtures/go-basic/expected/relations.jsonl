@@ -1,0 +1,1 @@
+{"from":"gomod:example.com/go-basic:`example.com/go-basic`/main().","to":"gomod:example.com/go-basic:`example.com/go-basic`/greet().","rel":"ref","roles":["read"],"sites":[["main.go",7,5,7,10]],"src":"core:reference-in-body"}

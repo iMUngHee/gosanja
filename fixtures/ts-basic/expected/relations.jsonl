@@ -1,0 +1,1 @@
+{"from":"npm:ts-basic:src/`index.ts`/run().","to":"npm:ts-basic:src/`index.ts`/greet().","rel":"ref","roles":[],"sites":[["src/index.ts",5,9,5,14]],"src":"core:reference-in-body"}
