@@ -62,7 +62,11 @@ names none; an adapter without markers is used only when it is named.
 
 - `--root` is the scope to analyse, an absolute path. The adapter must not create, change or
   delete anything under it, and must make the tools it runs do the same, for example by
-  redirecting a build directory.
+  redirecting a build directory. This rule covers what the adapter and its tools do of their
+  own accord. Two things are outside it: code of the analysed project that its own build
+  runs, such as a build script or a compile-time plug-in, and a destination that the
+  project's or the user's own configuration gives a tool. An adapter may run such code and
+  leave such configuration in force, and its documentation says which.
 - `--out` is an existing empty directory, an absolute path outside `--root`. The adapter writes
   its files there and nowhere else. It may create a subdirectory for its own temporary files.
 - One run handles the whole scope. The engine does not run an adapter once per file.

@@ -27,6 +27,11 @@ Breaks 0.1. A 0.2 engine refuses an adapter that declares 0.1; an adapter has to
 - a `call` node may leave out `callee` when the callee is not a name. An adapter must no
   longer put anything but a name token there.
 
+The rule that an adapter and its tools write nothing under the root now states its scope:
+it does not cover code of the analysed project that the project's own build runs, nor a
+destination that the project's or the user's configuration gives a tool. An adapter
+documents which of these it runs or leaves in force.
+
 ### gosanja 0.2.0
 
 - `gosanja index --root <dir> --out <dir>` finds the installed adapters, executables named
