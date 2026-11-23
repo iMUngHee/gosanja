@@ -5,8 +5,9 @@ from an adapter: a separate program that knows one language ecosystem and speaks
 [adapter contract](../spec/adapter-contract.md). Adapters are installed next to the engine,
 not built into it, so a language can be added without rebuilding the engine.
 
-No language adapter ships yet. Adapters for Rust, Go and TypeScript are planned; this page
-describes how the engine finds and uses whatever is installed.
+One adapter is in this repository, [for Rust](adapters/rust.md). Adapters for Go and
+TypeScript are planned. This page describes how the engine finds and uses whatever is
+installed.
 
 ## What an installed adapter is
 

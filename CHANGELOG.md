@@ -36,6 +36,9 @@ documents which of these it runs or leaves in force.
 
 - `gosanja index --root <dir> --out <dir>` finds the installed adapters, executables named
   `gosanja-adapter-<name>`, and runs the one whose marker file is in the root.
+- `gosanja-adapter-rust`, the first language adapter: a base layer from `rust-analyzer scip`
+  and a syntax layer read with `syn`. What it needs, reports and cannot see is in
+  [docs/adapters/rust.md](docs/adapters/rust.md).
 - `gosanja adapter list` shows the installed adapters and whether the tools they require are
   on `PATH`.
 - `--adapter` and `adapter describe` take an adapter name or a path. **Changed:** a bare word

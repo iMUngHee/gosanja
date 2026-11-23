@@ -64,6 +64,7 @@ See [research/structural-diff-identity.md](research/structural-diff-identity.md)
 | `gosanja-schema` | `crates/schema` | Types of both interfaces and the version compatibility rules. Shared with adapters written in Rust. |
 | `gosanja-core` | `crates/core` | Decoding, keys, the graph, side-car joins, writing, validation, running adapters. Knows no language. |
 | `gosanja` | `crates/cli` | The command line. Reads files, finds installed adapters (`discover`), calls the core, sets exit codes. |
+| `gosanja-adapter-rust` | `crates/adapter-rust` | The Rust adapter, a separate program: runs `rust-analyzer scip` for the base layer and reads source with `syn` for the syntax layer. Depends on `gosanja-schema` only. |
 
 Core modules:
 
@@ -88,7 +89,8 @@ Dependencies point one way: `cli` → `core` → `schema`.
 - No viewer. A viewer is a consumer of the snapshot.
 - No source text in a snapshot, only paths, sizes and digests.
 - No incremental indexing. Every row is tied to a file, which keeps that possible later.
-- No language adapters in this crate set yet, and no comparison of two snapshots.
+- No calls layer in the Rust adapter yet, no adapter for another language, and no comparison
+  of two snapshots.
 - No defence against a tree that changes while it is being indexed. A path is resolved, checked
   to lie inside the root and then opened by its resolved name; a link swapped in between those
   steps is not detected. Index a tree that is not being written to.
