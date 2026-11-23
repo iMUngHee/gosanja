@@ -177,7 +177,7 @@ One row per definition the adapter describes, and at most one row for any defini
 decide which definition a reference belongs to.
 
 An outline node has `k`, `detail?`, `range`, `callee?` and `children?`, with the kinds and
-meanings given in [snapshot.md](snapshot.md#syntaxjsonl). Three rules bind the adapter:
+meanings given in [snapshot.md](snapshot.md#syntaxjsonl). These rules bind the adapter:
 
 - A `call` node gives `callee`, the range of the callee's name token alone: `foo` in
   `foo(bar)`, `m` in `x.m()`. The engine creates a call only when a reference of the base layer
@@ -195,7 +195,8 @@ meanings given in [snapshot.md](snapshot.md#syntaxjsonl). Three rules bind the a
 A layer in which two rows resolve to the same definition, or in which a row breaks the range
 rules above, is malformed. It is discarded as a whole, like a layer with a row that fails its
 schema (`failed-layer`, detail `row-invalid`), so that the result cannot depend on the order of
-the rows.
+the rows. The order in which these checks apply is given under
+[How a layer is read](#how-a-layer-is-read).
 
 ## calls.jsonl
 
@@ -213,15 +214,38 @@ One row per observation of a call.
 - A row needs no matching reference and no site: compiler-generated calls have neither.
 - A `site` may be in any file under `--root`, including one the base layer does not mention,
   such as generated code. The engine reads that file through the same boundary as every other
-  source, to check and convert the position, and lists it in `files.jsonl`. A site whose file
-  is outside the root, missing or unreadable makes the row unusable: it is dropped and counted
-  in `position-out-of-range`.
+  source, to check and convert the position. The file is listed in `files.jsonl` only when the
+  row ends up in the snapshot.
+- A site's `file` is a path like any other. An absolute path, or one with a `..` segment, fails
+  the row's schema, which makes the layer malformed. A well-formed path that leads outside the
+  root through a link, or names a missing or unreadable file, makes only that row unusable: it
+  is dropped and counted in `position-out-of-range`.
 - Each row stays one observation. The engine groups rows into one relation only when caller,
   callee, mechanism and resolution are all equal, and keeps one evidence entry per row.
 - The engine handles a row in this order and stops at the first problem: `build` not listed in
   `result.json` (the row is dropped and counted in `unknown-build-context`); `caller` or
   `callee` not resolved (`unanchored`). A row with both problems is counted once, under
   `unknown-build-context`.
+
+## How a layer is read
+
+The engine reads an optional layer in phases, each over all rows, so that the outcome does not
+depend on the order of the rows.
+
+1. **Shape.** Every row must pass its schema and, in `syntax.jsonl`, the range rules. One
+   failing row discards the layer (`row-invalid`).
+2. **Build contexts**, `calls.jsonl` only. A row naming a build context that `result.json`
+   does not list is dropped and counted in `unknown-build-context`.
+3. **Anchors.** A row with an anchor that does not resolve is dropped and recorded as
+   `unanchored`.
+4. **One row per definition**, `syntax.jsonl` only. If two of the remaining rows resolve to
+   the same definition, the layer is discarded (`row-invalid`).
+5. **Positions.** A remaining row with a position that cannot be converted, or a call site
+   whose file cannot be read inside the root, is dropped and counted in
+   `position-out-of-range`.
+
+A discarded layer contributes nothing but its one `failed-layer` gap: no rows, no bodies, no
+file rows, and none of the gaps that an earlier phase recorded for it.
 
 ## Worked examples
 

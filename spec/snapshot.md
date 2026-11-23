@@ -131,8 +131,8 @@ none is an absolute path, and `id`, `target` and `profile` contain no `/` or `\`
 
 ## files.jsonl
 
-One row per source file that a fact refers to: every indexed document, and any other file that
-a call's evidence names. Sorted by `path`.
+One row per source file that a fact refers to: every indexed document, and any other file named
+by call evidence that is in the snapshot. Sorted by `path`.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -342,7 +342,7 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `undecodable-document` | a document's position encoding is unspecified | `file` |
 | `document-outside-root` | a document's path is absolute or resolves outside the root; the file is never opened | `file` when the index gave a valid relative path that escapes through a link; otherwise one row for all such documents with `count` |
 | `source-unavailable` | a document's file is missing or unreadable | `file` |
-| `position-out-of-range` | positions fall outside their line or inside a multi-byte character; the occurrences, or the side-car rows that hold them, are dropped | `file`, `count`, and `layer` for a side-car |
+| `position-out-of-range` | positions fall outside their line or inside a multi-byte character, or a call site names a file that cannot be read inside the root; the occurrences, or the side-car rows that hold them, are dropped | `file`, `count`, and `layer` for a side-car |
 | `unattributed-references` | references in a file lie in no body | `file`, `count` |
 | `overlapping-bodies` | two bodies overlap without nesting; neither owns references; one row per pair | `file`, `keys`: the two entities |
 | `missing-layer` | the adapter does not offer an optional layer | `layer` |

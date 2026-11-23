@@ -21,114 +21,443 @@
         "unknown-value"
       ]
     },
-    "file": {"$ref": "file.schema.json#/$defs/path"},
-    "range": {"$ref": "file.schema.json#/$defs/range"},
-    "count": {"type": "integer", "minimum": 0},
-    "keys": {"type": "array", "items": {"$ref": "entity.schema.json#/$defs/key"}},
-    "layer": {"$ref": "adapter-manifest.schema.json#/$defs/layer"},
-    "anchor": {"$ref": "syntax-fact.schema.json#/$defs/anchor"},
-    "code": {"$ref": "adapter-result.schema.json#/$defs/code"},
-    "detail": {"enum": ["reported-failed", "no-status", "file-missing", "row-invalid"]},
-    "src": {"$ref": "entity.schema.json#/$defs/provenance"}
+    "file": {
+      "$ref": "file.schema.json#/$defs/path"
+    },
+    "range": {
+      "$ref": "file.schema.json#/$defs/range"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "keys": {
+      "type": "array",
+      "items": {
+        "$ref": "entity.schema.json#/$defs/key"
+      }
+    },
+    "layer": {
+      "$ref": "adapter-manifest.schema.json#/$defs/layer"
+    },
+    "anchor": {
+      "$ref": "syntax-fact.schema.json#/$defs/anchor"
+    },
+    "code": {
+      "$ref": "adapter-result.schema.json#/$defs/code"
+    },
+    "detail": {
+      "enum": [
+        "reported-failed",
+        "no-status",
+        "file-missing",
+        "row-invalid"
+      ]
+    },
+    "src": {
+      "$ref": "entity.schema.json#/$defs/provenance"
+    }
   },
-  "required": ["gap", "src"],
+  "required": [
+    "gap",
+    "src"
+  ],
   "allOf": [
     {
       "if": {
-        "properties": {"gap": {"const": "symbol-collision"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "symbol-collision"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["keys"]}
+      "then": {
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "minItems": 3,
+            "uniqueItems": true
+          },
+          "src": {
+            "const": "core:identity"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "undecodable-document"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "undecodable-document"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["file"]}
+      "then": {
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^scip:"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "source-unavailable"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "document-outside-root"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["file"]}
+      "then": {
+        "oneOf": [
+          {
+            "required": [
+              "file"
+            ]
+          },
+          {
+            "required": [
+              "count"
+            ]
+          }
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^scip:"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "position-out-of-range"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "source-unavailable"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["file", "count"]}
+      "then": {
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^scip:"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "unattributed-references"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "position-out-of-range"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["file", "count"]}
+      "then": {
+        "required": [
+          "file",
+          "count"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "src": {
+                "pattern": "^scip:"
+              },
+              "layer": false
+            }
+          },
+          {
+            "required": [
+              "layer"
+            ],
+            "properties": {
+              "src": {
+                "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+              }
+            }
+          }
+        ]
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "overlapping-bodies"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "unattributed-references"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["file", "keys"]}
+      "then": {
+        "required": [
+          "file",
+          "count"
+        ],
+        "properties": {
+          "src": {
+            "const": "core:reference-in-body"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "missing-layer"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "overlapping-bodies"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["layer"]}
+      "then": {
+        "required": [
+          "file",
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "minItems": 2,
+            "maxItems": 2,
+            "uniqueItems": true
+          },
+          "src": {
+            "const": "core:reference-in-body"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "failed-layer"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "missing-layer"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["layer", "detail"]}
+      "then": {
+        "required": [
+          "layer"
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "unanchored"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "failed-layer"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["layer", "anchor"]}
+      "then": {
+        "required": [
+          "layer",
+          "detail"
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "open-call"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "unanchored"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["file", "range"]}
+      "then": {
+        "required": [
+          "layer",
+          "anchor"
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "opaque-region"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "open-call"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["file", "range", "keys"]}
+      "then": {
+        "required": [
+          "file",
+          "range"
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/syntax$"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "unknown-build-context"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "opaque-region"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["layer", "count"]}
+      "then": {
+        "required": [
+          "file",
+          "range",
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "minItems": 1,
+            "maxItems": 1
+          },
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/syntax$"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "unknown-value"}},
-        "required": ["gap"]
+        "properties": {
+          "gap": {
+            "const": "unknown-build-context"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"required": ["layer", "count"]}
+      "then": {
+        "required": [
+          "layer",
+          "count"
+        ],
+        "properties": {
+          "layer": {
+            "const": "calls"
+          },
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/calls$"
+          }
+        }
+      }
     },
     {
       "if": {
-        "properties": {"gap": {"const": "document-outside-root"}}
+        "properties": {
+          "gap": {
+            "const": "unknown-value"
+          }
+        },
+        "required": [
+          "gap"
+        ]
       },
-      "then": {"oneOf": [{"required": ["file"]}, {"required": ["count"]}]}
+      "then": {
+        "required": [
+          "layer",
+          "count"
+        ],
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/syntax$"
+          }
+        },
+        "required": [
+          "layer"
+        ]
+      },
+      "then": {
+        "properties": {
+          "layer": {
+            "const": "syntax"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/calls$"
+          }
+        },
+        "required": [
+          "layer"
+        ]
+      },
+      "then": {
+        "properties": {
+          "layer": {
+            "const": "calls"
+          }
+        }
+      }
     }
   ]
 }

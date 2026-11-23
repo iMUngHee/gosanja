@@ -31,7 +31,7 @@
       "if": {"required": ["group"]},
       "then": {
         "required": ["symbol"],
-        "properties": {"def": false, "member_of": false, "virtual": false}
+        "properties": {"kind": false, "def": false, "member_of": false, "virtual": false}
       },
       "else": {"required": ["role"]}
     },

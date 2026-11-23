@@ -571,6 +571,16 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
         "adapter-result",
         &json!({"contract": "0.1", "layers": {}, "builds": [{"id": "a/b"}]}),
     );
+    // A group row carries no kind.
+    schemas.assert_invalid("entity", &json!({"key": "cargo:d:f().", "symbol": "s cargo d 1 f().", "name": "f", "group": true, "kind": "rust:function", "src": "core:identity"}));
+    // A gap's provenance and fields follow its kind.
+    schemas.assert_invalid("gap", &json!({"gap": "position-out-of-range", "file": "a.rs", "count": 1, "src": "adapter:x/syntax"}));
+    schemas.assert_invalid("gap", &json!({"gap": "position-out-of-range", "file": "a.rs", "count": 1, "layer": "calls", "src": "adapter:x/syntax"}));
+    schemas.assert_invalid("gap", &json!({"gap": "position-out-of-range", "file": "a.rs", "count": 1, "layer": "syntax", "src": "scip:x"}));
+    schemas.assert_invalid("gap", &json!({"gap": "overlapping-bodies", "file": "a.rs", "keys": ["cargo:d:f()."], "src": "core:reference-in-body"}));
+    schemas.assert_invalid("gap", &json!({"gap": "overlapping-bodies", "file": "a.rs", "keys": ["cargo:d:f().", "cargo:d:f()."], "src": "core:reference-in-body"}));
+    schemas.assert_invalid("gap", &json!({"gap": "overlapping-bodies", "file": "a.rs", "keys": ["cargo:d:f().", "cargo:d:g()."], "src": "scip:x"}));
+    schemas.assert_invalid("gap", &json!({"gap": "symbol-collision", "keys": ["cargo:d:f().", "cargo:d:f().~1", "cargo:d:f().~2"], "src": "scip:x"}));
     // Closed enumerations are closed.
     schemas.assert_invalid(
         "gap",
