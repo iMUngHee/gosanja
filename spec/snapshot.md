@@ -174,7 +174,7 @@ A row is exactly one of four variants:
 | --- | --- | --- | --- |
 | definition | none of the marks below | `symbol`, `role`, `def` | |
 | member of a collision group | `member_of` | `symbol`, `role`, `def` | |
-| collision group | `group: true` | `symbol` | `def`, `member_of`, `virtual` |
+| collision group | `group: true` | `symbol` | `kind`, `def`, `member_of`, `virtual` |
 | virtual container | `virtual: true` | `role` | `def`, `member_of`, `group` |
 
 `role` follows the last descriptor of the symbol:
@@ -213,7 +213,7 @@ Only forward relations are stored. Sorted by (`from`, `rel`, `to`, `mechanism`, 
 | `from` | key | an entity |
 | `to` | key | an entity, a group or an external |
 | `rel` | enum | `ref`, `call` or `implements` |
-| `roles` | array, `ref` only | subset of `import`, `write`, `read`, `generated`, `test`, `forward-definition`, sorted |
+| `roles` | array, `ref` only | subset of `import`, `write`, `read`, `generated`, `test`, `forward-definition`, sorted by name |
 | `mechanism` | enum, `call` only | see below |
 | `resolution` | enum, `call` only | see below |
 | `sites` | array, `ref` and `implements` | `[file, startLine, startCol, endLine, endCol]`, sorted, each once |
@@ -343,7 +343,7 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `source-unavailable` | a document's file is missing or unreadable | `file` |
 | `position-out-of-range` | positions fall outside their line or inside a multi-byte character; the occurrences, or the side-car rows that hold them, are dropped | `file`, `count`, and `layer` for a side-car |
 | `unattributed-references` | references in a file lie in no body | `file`, `count` |
-| `overlapping-bodies` | two bodies overlap without nesting; neither owns references | `file`, `keys` |
+| `overlapping-bodies` | two bodies overlap without nesting; neither owns references; one row per pair | `file`, `keys`: the two entities |
 | `missing-layer` | the adapter does not offer an optional layer | `layer` |
 | `failed-layer` | an optional layer failed, was reported without a status, or was malformed | `layer`, `code`, `detail` |
 | `unanchored` | an anchor matched no definition or several | `layer`, `anchor` |
