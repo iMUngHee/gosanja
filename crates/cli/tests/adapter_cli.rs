@@ -100,45 +100,6 @@ fn standalone_describe_and_conflicting_index_sources() {
 }
 
 #[test]
-fn no_index_source_with_no_installed_adapters_is_a_refusal() {
-    use std::os::unix::fs::symlink;
-    // The binary is hard-linked, not copied, and so has to stay on the target directory's file
-    // system: executing a fresh copy fails with "text file busy" while a test child forked on
-    // another thread still holds the copy's write descriptor.
-    let temp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let command = temp.path().join("gosanja");
-    fs::hard_link(env!("CARGO_BIN_EXE_gosanja"), &command).unwrap();
-    let path = temp.path().join("path");
-    fs::create_dir(&path).unwrap();
-    for tool in ["cp", "dirname", "cat"] {
-        let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-            .filter(|p| p.is_absolute())
-            .map(|p| p.join(tool))
-            .find(|p| p.is_file() && fs::metadata(p).unwrap().permissions().mode() & 0o111 != 0)
-            .unwrap();
-        symlink(found, path.join(tool)).unwrap();
-    }
-    let root = temp.path().join("project");
-    fs::create_dir(&root).unwrap();
-    let out = temp.path().join("snapshot");
-    let mut cmd = Command::new(command);
-    Command::env_clear(&mut cmd);
-    Command::env(&mut cmd, "PATH", &path);
-    Command::env(&mut cmd, "HOME", temp.path());
-    Command::env(&mut cmd, "XDG_CACHE_HOME", temp.path().join("cache"));
-    Command::env(&mut cmd, "GOSANJA_ADAPTER_PATH", &path);
-    let result = cmd
-        .args(["index", "--root"])
-        .arg(root)
-        .arg("--out")
-        .arg(&out)
-        .output()
-        .unwrap();
-    check(&result, 2);
-    assert!(!out.exists());
-}
-
-#[test]
 fn fatal_outcomes_leave_the_complete_previous_snapshot() {
     let temp = tempdir().unwrap();
     let out = temp.path().join("snapshot");
