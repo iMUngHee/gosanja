@@ -535,3 +535,30 @@ fn everything_that_depends_on_a_skipped_row_is_skipped_and_counted() {
     // The entity itself, two relations, one syntax row and one gap.
     assert_eq!(read.skipped, 5);
 }
+
+/// An unknown `layer` on a gap from an adapter's syntax layer also fails the conditional
+/// `const` that ties that provenance to the syntax layer; both errors sit on the field that
+/// holds the unknown value, so the row is skipped. An error on any other field makes it
+/// malformed.
+#[test]
+fn errors_on_the_field_holding_an_unknown_value_belong_to_that_value() {
+    let skipped = read(
+        &newer(&[(
+            "gaps.jsonl",
+            r#"{"gap":"missing-layer","layer":"future","src":"adapter:x/syntax"}"#,
+        )]),
+        0,
+    );
+    assert_eq!(codes(&skipped.diagnostics), []);
+    assert_eq!((skipped.gaps.len(), skipped.skipped), (0, 2));
+
+    let malformed = read(
+        &newer(&[(
+            "gaps.jsonl",
+            r#"{"gap":"missing-layer","layer":"future","code":"not a code","src":"adapter:x/syntax"}"#,
+        )]),
+        0,
+    );
+    assert_eq!(codes(&malformed.diagnostics), [("gaps.jsonl", "schema")]);
+    assert_eq!(malformed.skipped, 1);
+}

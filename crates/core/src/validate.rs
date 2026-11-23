@@ -18,7 +18,7 @@ use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
 use crate::graph::LineIndex;
-use crate::schemas::{Schema, validator};
+use crate::schemas::{self, Fit, Schema, validator};
 use crate::write::{self, Location, SnapshotFiles, SourceReader};
 
 /// One way a snapshot departs from the specification.
@@ -70,25 +70,9 @@ pub struct ReadSnapshot {
 
 /// The first way `value` fails `schema`, if it does.
 fn first_error(schema: Schema, value: &serde_json::Value) -> Option<String> {
-    first_error_where(schema, value, |_| true)
-}
-
-/// The first way `value` fails `schema` other than an enumeration that does not hold the
-/// value, which is how an unknown value from a newer minor fails (spec/README.md, rule 5).
-fn first_error_besides_enum(schema: Schema, value: &serde_json::Value) -> Option<String> {
-    first_error_where(schema, value, |kind| {
-        !matches!(kind, jsonschema::error::ValidationErrorKind::Enum { .. })
-    })
-}
-
-fn first_error_where(
-    schema: Schema,
-    value: &serde_json::Value,
-    counts: impl Fn(&jsonschema::error::ValidationErrorKind) -> bool,
-) -> Option<String> {
     validator(schema)
         .iter_errors(value)
-        .find(|e| counts(e.kind()))
+        .next()
         .map(|e| format!("{e} at {}", e.instance_path()))
 }
 
@@ -261,10 +245,14 @@ impl ReadSnapshot {
             let unknown = parsed.as_ref().is_ok_and(&unknown_value);
             // A row whose only schema failure is its unknown value is skipped under a newer
             // minor; any other failure makes it malformed (spec/README.md, rule 5).
-            let schema_error = match (&value, unknown) {
-                (Ok(v), false) => first_error(schema, v),
-                (Ok(v), true) => first_error_besides_enum(schema, v),
-                (Err(_), _) => None,
+            let schema_error = match &value {
+                Err(_) => None,
+                Ok(v) => match schemas::fit(schema, v) {
+                    Fit::Valid => None,
+                    Fit::UnknownValueOnly if unknown => None,
+                    Fit::UnknownValueOnly => first_error(schema, v),
+                    Fit::Invalid(error) => Some(error),
+                },
             };
             let well_formed = parsed.is_ok() && schema_error.is_none();
             match compat::classify_row(acceptance, well_formed, unknown) {

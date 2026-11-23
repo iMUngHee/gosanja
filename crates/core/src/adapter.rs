@@ -16,7 +16,7 @@ use gosanja_schema::{
 };
 use jsonschema::Validator;
 
-use crate::schemas::{Schema, validator};
+use crate::schemas::{self, Fit, Schema, validator};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -87,7 +87,7 @@ fn regular(path: &Path) -> io::Result<File> {
 
 fn read_rows<T: DeserializeOwned>(
     mut reader: impl BufRead,
-    schema: &Validator,
+    schema: Schema,
     acceptance: Acceptance,
     valid: impl Fn(&T) -> bool,
 ) -> io::Result<(Vec<T>, u64)> {
@@ -103,16 +103,9 @@ fn read_rows<T: DeserializeOwned>(
             return Err(io::Error::other("expected an LF-terminated JSONL row"));
         }
         let value: Value = serde_json::from_str(&line)?;
-        let mut unknown = false;
-        let mut well_formed = true;
-        for error in schema.iter_errors(&value) {
-            if error.kind().keyword() == "enum" && error.instance().is_string() {
-                unknown = true;
-            } else {
-                well_formed = false;
-                break;
-            }
-        }
+        let fit = schemas::fit(schema, &value);
+        let unknown = fit == Fit::UnknownValueOnly;
+        let well_formed = !matches!(fit, Fit::Invalid(_));
         let row = serde_json::from_value(value)?;
         match compat::classify_row(acceptance, well_formed && valid(&row), unknown) {
             RowVerdict::Keep => rows.push(row),
@@ -132,7 +125,7 @@ pub fn read_syntax(
 ) -> io::Result<(Vec<SyntaxFact>, u64)> {
     read_rows(
         reader,
-        validator(Schema::SyntaxFact),
+        Schema::SyntaxFact,
         acceptance,
         crate::sidecar::valid_ranges,
     )
@@ -146,9 +139,7 @@ pub fn read_calls(
     reader: impl BufRead,
     acceptance: Acceptance,
 ) -> io::Result<(Vec<CallEvidence>, u64)> {
-    read_rows(reader, validator(Schema::CallEvidence), acceptance, |_| {
-        true
-    })
+    read_rows(reader, Schema::CallEvidence, acceptance, |_| true)
 }
 
 struct OptionalLayer<'a> {

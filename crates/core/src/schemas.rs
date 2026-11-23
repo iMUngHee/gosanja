@@ -97,6 +97,46 @@ pub fn validator(schema: Schema) -> &'static Validator {
         .expect("every schema is bundled")
 }
 
+/// How a row fits a schema, as a reader needs to know under `spec/README.md` rule 5.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fit {
+    /// The row passes.
+    Valid,
+    /// Every error sits on a field whose string value no enumeration of the schema holds, so
+    /// the row fails only because of values from a newer minor. An error the unknown value
+    /// causes elsewhere in the schema, such as a conditional `const` on that same field,
+    /// sits on that field too.
+    UnknownValueOnly,
+    /// Some error sits on another field; the first such error, with its location.
+    Invalid(String),
+}
+
+/// Classifies `value` against `schema`.
+#[must_use]
+pub fn fit(schema: Schema, value: &Value) -> Fit {
+    let errors: Vec<_> = validator(schema).iter_errors(value).collect();
+    if errors.is_empty() {
+        return Fit::Valid;
+    }
+    let unknown: Vec<String> = errors
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind(),
+                jsonschema::error::ValidationErrorKind::Enum { .. }
+            ) && e.instance().is_string()
+        })
+        .map(|e| e.instance_path().to_string())
+        .collect();
+    match errors
+        .iter()
+        .find(|e| !unknown.contains(&e.instance_path().to_string()))
+    {
+        None => Fit::UnknownValueOnly,
+        Some(e) => Fit::Invalid(format!("{e} at {}", e.instance_path())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +151,31 @@ mod tests {
         assert!(!validator(Schema::File).is_valid(&json!({"path":"/abs","bytes":1})));
         let gap = json!({"gap":"symbol-collision","src":"core:identity"});
         assert!(!validator(Schema::Gap).is_valid(&gap), "keys are required");
+    }
+
+    #[test]
+    fn errors_on_an_unknown_value_belong_to_it_and_others_do_not() {
+        let gap = |extra: Value| {
+            let mut row = json!({"gap":"missing-layer","layer":"syntax","src":"adapter:x/syntax"});
+            if let (Value::Object(row), Value::Object(extra)) = (&mut row, extra) {
+                row.extend(extra);
+            }
+            fit(Schema::Gap, &row)
+        };
+        assert_eq!(gap(json!({})), Fit::Valid);
+        assert_eq!(gap(json!({"layer":"future"})), Fit::UnknownValueOnly);
+        assert!(
+            matches!(gap(json!({"layer":"calls"})), Fit::Invalid(_)),
+            "a known value"
+        );
+        assert!(
+            matches!(gap(json!({"layer":7})), Fit::Invalid(_)),
+            "not a string"
+        );
+        let both = gap(json!({"layer":"future","count":-1}));
+        assert!(
+            matches!(&both, Fit::Invalid(e) if e.contains("/count")),
+            "{both:?}"
+        );
     }
 }
