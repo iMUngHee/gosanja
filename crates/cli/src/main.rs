@@ -218,11 +218,12 @@ fn validate(options: &Options) -> Result<(), Failure> {
     let [snapshot] = options.positional.as_slice() else {
         return Err(usage("validate takes one snapshot directory"));
     };
-    // The version is decided from the manifest before the root is resolved; unreadable
-    // tables become diagnostics, reported after that.
-    let files = SnapshotFiles::read(snapshot);
+    // The version is decided from the manifest alone, before any table is opened and before
+    // the root is resolved; unreadable tables become diagnostics, reported after that.
+    let mut files = SnapshotFiles::read_manifest(snapshot);
     validate::check_version(&files)
         .map_err(|refusal| fail(REFUSED, format!("{}: {refusal}", snapshot.display())))?;
+    files.read_tables(snapshot);
     let sources = match options.get("--root") {
         Some(root) => Some(FsSource::new(root).map_err(|e| {
             fail(

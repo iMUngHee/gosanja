@@ -121,7 +121,7 @@ pub fn apply_syntax(
         let entity = &entities[i];
         let base_body = entity.def.as_ref().and_then(|def| def.body);
         // Child ranges already lie within their parents, so checking roots covers the tree.
-        if let Some(extent) = body.or(base_body)
+        if let Some(extent) = base_body.or(body)
             && outline
                 .iter()
                 .flatten()

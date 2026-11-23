@@ -723,22 +723,25 @@ impl<'a> Graph<'a> {
             else {
                 continue;
             };
-            // `from` is the definition in the stating document; in a collision group, the
-            // member defined there, numbered as `entities` numbers members.
+            // `from` is the definition in the stating document. In a collision group it is
+            // the member defined there, numbered as `entities` numbers members; when that
+            // document defines the symbol more than once, the statement cannot be tied to one
+            // member, so `from` is the group itself.
             let key = &self.keys[imp.from.as_str()];
-            let grouped = observations.len() > 1;
-            for (n, (file, name)) in observations.keys().enumerate() {
-                if *file != imp.file {
-                    continue;
-                }
-                let from = if grouped {
-                    format!("{key}~{}", n + 1)
-                } else {
-                    key.clone()
-                };
-                rows.entry((from, to.clone(), imp.src.clone()))
-                    .or_default()
-                    .insert(Site::new(file.clone(), *name));
+            let here: Vec<(usize, &Range)> = observations
+                .keys()
+                .enumerate()
+                .filter(|(_, (file, _))| *file == imp.file)
+                .map(|(n, (_, name))| (n, name))
+                .collect();
+            let from = match here[..] {
+                [] => continue,
+                [(n, _)] if observations.len() > 1 => format!("{key}~{}", n + 1),
+                _ => key.clone(),
+            };
+            let sites = rows.entry((from, to.clone(), imp.src.clone())).or_default();
+            for (_, name) in here {
+                sites.insert(Site::new(imp.file.clone(), *name));
             }
         }
         for ((from, to, src), sites) in rows {

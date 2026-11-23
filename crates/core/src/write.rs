@@ -138,35 +138,49 @@ impl SnapshotFiles {
         ]
     }
 
-    /// Reads the seven files of the snapshot at `dir`. A missing file is `None`; one that is
-    /// there and cannot be read is `None` too and is listed in `unreadable`.
+    /// Reads the seven files of the snapshot at `dir`: [`Self::read_manifest`], then
+    /// [`Self::read_tables`].
     #[must_use]
     pub fn read(dir: &Path) -> Self {
-        let mut unreadable = Vec::new();
-        let mut read = |name: &'static str| match fs::read(dir.join(name)) {
-            Ok(bytes) => Some(bytes),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-            Err(e) => {
-                unreadable.push((name, e.to_string()));
-                None
-            }
-        };
-        let manifest = read("manifest.json");
-        let files = read("files.jsonl");
-        let entities = read("entities.jsonl");
-        let externals = read("externals.jsonl");
-        let relations = read("relations.jsonl");
-        let syntax = read("syntax.jsonl");
-        let gaps = read("gaps.jsonl");
-        Self {
-            manifest,
-            files,
-            entities,
-            externals,
-            relations,
-            syntax,
-            gaps,
-            unreadable,
+        let mut files = Self::read_manifest(dir);
+        files.read_tables(dir);
+        files
+    }
+
+    /// Reads only `manifest.json` of the snapshot at `dir`, so that a reader can judge the
+    /// version before it opens any table. A missing file is `None`; one that is there and
+    /// cannot be read is `None` too and is listed in `unreadable`.
+    #[must_use]
+    pub fn read_manifest(dir: &Path) -> Self {
+        let mut files = Self::default();
+        files.manifest = read_file(dir, "manifest.json", &mut files.unreadable);
+        files
+    }
+
+    /// Reads the six tables of the snapshot at `dir`, as [`Self::read_manifest`] reads the
+    /// manifest.
+    pub fn read_tables(&mut self, dir: &Path) {
+        let unreadable = &mut self.unreadable;
+        self.files = read_file(dir, "files.jsonl", unreadable);
+        self.entities = read_file(dir, "entities.jsonl", unreadable);
+        self.externals = read_file(dir, "externals.jsonl", unreadable);
+        self.relations = read_file(dir, "relations.jsonl", unreadable);
+        self.syntax = read_file(dir, "syntax.jsonl", unreadable);
+        self.gaps = read_file(dir, "gaps.jsonl", unreadable);
+    }
+}
+
+fn read_file(
+    dir: &Path,
+    name: &'static str,
+    unreadable: &mut Vec<(&'static str, String)>,
+) -> Option<Vec<u8>> {
+    match fs::read(dir.join(name)) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => {
+            unreadable.push((name, e.to_string()));
+            None
         }
     }
 }

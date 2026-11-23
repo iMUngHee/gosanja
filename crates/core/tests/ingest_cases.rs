@@ -890,3 +890,33 @@ fn implements_sites_come_from_the_document_that_states_it() {
         )]
     );
 }
+
+#[test]
+fn a_statement_in_a_document_defining_the_symbol_twice_comes_from_the_group() {
+    let sources = MemSource::with(&[("a.rs", &blank()), ("b.rs", &blank())]);
+    let mut stating = doc(
+        "a.rs",
+        vec![
+            occ("s m p 1 T#", DEF, &[1, 0, 1], &[]),
+            occ("s m p 1 T#", DEF, &[5, 0, 1], &[]),
+            occ("s m p 1 I#", DEF, &[8, 0, 1], &[]),
+        ],
+    );
+    stating.symbols = vec![support::implementing("s m p 1 T#", &["s m p 1 I#"])];
+    let silent = doc("b.rs", vec![occ("s m p 1 T#", DEF, &[2, 0, 1], &[])]);
+    let snapshot = both_orders(&[stating, silent], &sources);
+    let rows: Vec<_> = snapshot
+        .relations
+        .iter()
+        .filter(|r| r.rel == Rel::Implements)
+        .map(|r| (r.from.as_str(), r.to.as_str(), r.sites.clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [(
+            "m:p:T#",
+            "m:p:I#",
+            Some(vec![site("a.rs", 1, 0, 1, 1), site("a.rs", 5, 0, 5, 1)])
+        )]
+    );
+}

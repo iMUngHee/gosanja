@@ -572,7 +572,46 @@ fn outline_extent_uses_the_definition_body_after_position_conversion() {
 }
 
 #[test]
-fn outline_extent_prefers_the_row_body_then_the_base_body_in_utf8_bytes() {
+fn wider_adapter_body_cannot_attach_greets_opaque_region_to_main() {
+    use gosanja_schema::snapshot::{FailedDetail, LayerState};
+    let root = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/go-basic"
+    ));
+    let temp = tempfile::tempdir().unwrap();
+    let mut output = fixture(root, temp.path(), "good");
+    output.index = fs::File::open(root.join("index.scip")).unwrap();
+    output.syntax = vec![
+        serde_json::from_value(json!({
+            "anchor":{"file":"main.go","line":6,"name":"main"},
+            "body":[0,0,8,1],
+            "outline":[{"k":"opaque","range":[2,0,2,3]}]
+        }))
+        .unwrap(),
+    ];
+    let got = sidecar::build(output, &FsSource::new(root).unwrap(), "go-basic").unwrap();
+    assert!(got.entities.iter().any(|e| {
+        e.name == "main"
+            && e.def
+                .as_ref()
+                .is_some_and(|d| d.body == Some(Range::new(6, 0, 8, 1)))
+    }));
+    assert_eq!(got.scope.layers.syntax, LayerState::Failed);
+    assert_eq!(got.syntax.len(), 0);
+    let gaps: Vec<_> = got
+        .gaps
+        .iter()
+        .filter(|g| g.src == "adapter:fake/syntax")
+        .collect();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(
+        (gaps[0].gap, gaps[0].detail),
+        (GapKind::FailedLayer, Some(FailedDetail::RowInvalid))
+    );
+}
+
+#[test]
+fn outline_extent_uses_the_row_body_as_fallback_in_utf8_bytes() {
     let mut snapshot = run(&[], &[]);
     let row = json!({"anchor":owner(),"outline":[{"k":"opaque","range":[1,2,1,5]}]});
     let lines = gosanja_core::graph::LineIndex::new(SOURCE.as_bytes());
@@ -609,9 +648,13 @@ fn outline_extent_prefers_the_row_body_then_the_base_body_in_utf8_bytes() {
     assert_eq!(gaps[0].gap, GapKind::FailedLayer);
     let mut own = row;
     own["body"] = json!([0, 0, 1, 5]);
-    let (rows, gaps) = attach(&mut snapshot.entities, own);
+    let mut row_only = run(&[], &[]);
+    let (rows, gaps) = attach(&mut row_only.entities, own.clone());
     assert_eq!(rows.len(), 1);
     assert_eq!(gaps.len(), 0);
+    let (rows, gaps) = attach(&mut snapshot.entities, own);
+    assert_eq!(rows.len(), 0);
+    assert_eq!(gaps[0].gap, GapKind::FailedLayer);
     assert_eq!(
         snapshot
             .entities

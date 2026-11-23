@@ -250,3 +250,50 @@ fn the_version_is_refused_before_the_root_is_resolved() {
     let output = gosanja(&[&"validate", &dir, &"--root", &scratch("no-such-root")]);
     assert_eq!(code(&output), 2, "{}", stderr(&output));
 }
+
+/// A table that blocks whoever opens it for reading, since no writer ever comes.
+#[cfg(unix)]
+fn fifo(path: &Path) {
+    fs::remove_file(path).expect("remove");
+    let made = Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_refused_version_is_decided_without_opening_any_table() {
+    let dir = corrupted("manifest-only", "manifest.json", |t| {
+        t.replace(r#""schema":"0.1""#, r#""schema":"0.2""#)
+    });
+    for table in [
+        "files",
+        "entities",
+        "externals",
+        "relations",
+        "syntax",
+        "gaps",
+    ] {
+        fifo(&dir.join(format!("{table}.jsonl")));
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gosanja"))
+        .arg("validate")
+        .arg(&dir)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("runs");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("waits") {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            child.kill().expect("kills");
+            panic!("validate opened a table before refusing the version");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(2));
+}
