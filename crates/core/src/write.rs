@@ -73,7 +73,9 @@ impl SourceReader for FsSource {
                     Location::Outside
                 };
             }
-            if !candidate.pop() || !candidate.starts_with(&self.root) {
+            // Some prefix resolves before the loop runs out: the root itself, which `new`
+            // resolved, or for a path that leaves it, the file-system root.
+            if !candidate.pop() {
                 return Location::Outside;
             }
         }
@@ -158,8 +160,10 @@ impl SnapshotFiles {
     }
 
     /// Reads the six tables of the snapshot at `dir`, as [`Self::read_manifest`] reads the
-    /// manifest.
+    /// manifest. Reading again replaces what an earlier read said about the tables and keeps
+    /// what was said about the manifest.
     pub fn read_tables(&mut self, dir: &Path) {
+        self.unreadable.retain(|(name, _)| *name == "manifest.json");
         let unreadable = &mut self.unreadable;
         self.files = read_file(dir, "files.jsonl", unreadable);
         self.entities = read_file(dir, "entities.jsonl", unreadable);

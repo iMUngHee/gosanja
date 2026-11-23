@@ -364,6 +364,17 @@ pub fn validate(
     Ok(v.diagnostics)
 }
 
+/// What a table's order requires besides sorting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Order {
+    /// Every row has its own key.
+    UniqueKey,
+    /// No row appears twice, as no relation does.
+    DistinctRows,
+    /// Equal rows may repeat, as gaps may.
+    Repeatable,
+}
+
 struct Checks {
     diagnostics: Vec<Diagnostic>,
 }
@@ -429,7 +440,7 @@ impl Checks {
             &snap.files,
             &file_text,
             |r| vec![Some(r.path.clone())],
-            true,
+            Order::UniqueKey,
         );
         let text = lines(files.entities.as_ref());
         self.sorted(
@@ -437,7 +448,7 @@ impl Checks {
             &snap.entities,
             &text,
             |r| vec![Some(r.key.clone())],
-            true,
+            Order::UniqueKey,
         );
         let text = lines(files.externals.as_ref());
         self.sorted(
@@ -445,7 +456,7 @@ impl Checks {
             &snap.externals,
             &text,
             |r| vec![Some(r.key.clone())],
-            true,
+            Order::UniqueKey,
         );
         let text = lines(files.relations.as_ref());
         self.sorted(
@@ -453,7 +464,7 @@ impl Checks {
             &snap.relations,
             &text,
             write::relation_order,
-            false,
+            Order::DistinctRows,
         );
         let text = lines(files.syntax.as_ref());
         self.sorted(
@@ -461,10 +472,16 @@ impl Checks {
             &snap.syntax,
             &text,
             |r| vec![Some(r.key.clone())],
-            true,
+            Order::UniqueKey,
         );
         let text = lines(files.gaps.as_ref());
-        self.sorted("gaps.jsonl", &snap.gaps, &text, write::gap_order, false);
+        self.sorted(
+            "gaps.jsonl",
+            &snap.gaps,
+            &text,
+            write::gap_order,
+            Order::Repeatable,
+        );
         let entities: BTreeSet<&str> = snap.entities.iter().map(|(_, e)| e.key.as_str()).collect();
         for (line, external) in &snap.externals {
             if entities.contains(external.key.as_str()) {
@@ -484,7 +501,7 @@ impl Checks {
         rows: &[(usize, T)],
         text: &[String],
         key: impl Fn(&T) -> K,
-        unique: bool,
+        order: Order,
     ) {
         let keyed: Vec<(K, &str, usize)> = rows
             .iter()
@@ -498,12 +515,19 @@ impl Checks {
             .collect();
         for pair in keyed.windows(2) {
             let ((ka, la, _), (kb, lb, line)) = (&pair[0], &pair[1]);
-            if unique && ka == kb {
+            if order == Order::UniqueKey && ka == kb {
                 self.diag(
                     name,
                     *line,
                     "duplicate-key",
                     "the key of the previous row again".to_owned(),
+                );
+            } else if order == Order::DistinctRows && (ka, la) == (kb, lb) {
+                self.diag(
+                    name,
+                    *line,
+                    "duplicate-row",
+                    "the previous row again".to_owned(),
                 );
             } else if (ka, la) > (kb, lb) {
                 self.diag(
@@ -617,20 +641,6 @@ impl Checks {
         let keys: BTreeSet<&str> = snap.entities.iter().map(|(_, e)| e.key.as_str()).collect();
         for (line, e) in &snap.entities {
             let line = *line;
-            let variant = match (e.group, e.r#virtual, e.member_of.is_some()) {
-                (true, false, false) => e.symbol.is_some() && e.def.is_none(),
-                (false, true, false) => e.role.is_some() && e.def.is_none(),
-                (false, false, _) => e.symbol.is_some() && e.role.is_some() && e.def.is_some(),
-                _ => false,
-            };
-            if !variant {
-                self.diag(
-                    "entities.jsonl",
-                    line,
-                    "variant",
-                    format!("{} is none of the four row variants", e.key),
-                );
-            }
             if let Some(parent) = &e.parent
                 && !keys.contains(parent.as_str())
             {
@@ -655,14 +665,6 @@ impl Checks {
                 self.position("entities.jsonl", line, lines, &def.file, def.name);
                 if let Some(body) = def.body {
                     self.position("entities.jsonl", line, lines, &def.file, body);
-                }
-                if def.body.is_some() != def.body_src.is_some() {
-                    self.diag(
-                        "entities.jsonl",
-                        line,
-                        "variant",
-                        "`body` and `body_src` go together".to_owned(),
-                    );
                 }
             }
         }

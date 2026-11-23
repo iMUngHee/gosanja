@@ -130,6 +130,19 @@ mod tests {
     }
 
     #[test]
+    fn errors_name_their_cause() {
+        use std::error::Error as _;
+        let truncated = &index("a", "x.rs")[..5];
+        let error = for_each_item(&mut &*truncated, |_| {}).unwrap_err();
+        assert!(error.source().is_some());
+        assert!(error.to_string().contains("cannot be decoded"), "{error}");
+        // Field 1 with wire type 7, which protobuf does not define.
+        let error = for_each_item(&mut &[(1 << 3) | 7][..], |_| {}).unwrap_err();
+        assert!(error.source().is_none());
+        assert!(error.to_string().contains("invalid tag 15"), "{error}");
+    }
+
+    #[test]
     fn unknown_fields_are_skipped_and_garbage_is_refused() {
         // Field 9 with wire type 0 (varint) and the value 5.
         let mut bytes = vec![9 << 3, 5];

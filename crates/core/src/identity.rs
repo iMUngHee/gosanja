@@ -423,6 +423,14 @@ mod tests {
     }
 
     #[test]
+    fn simple_names_take_non_ascii_letters_and_stop_at_punctuation() {
+        let s = global("s m p 1 café#größe.");
+        let names: Vec<_> = s.descriptors.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["café", "größe"]);
+        assert_eq!(parse("s m p 1 a→b#"), Err(InvalidSymbol));
+    }
+
+    #[test]
     fn roles_follow_the_last_descriptor() {
         assert_eq!(role(Suffix::Term, true), Role::Member);
         assert_eq!(role(Suffix::Term, false), Role::Value);

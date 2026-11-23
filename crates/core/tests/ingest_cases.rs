@@ -920,3 +920,26 @@ fn a_statement_in_a_document_defining_the_symbol_twice_comes_from_the_group() {
         )]
     );
 }
+
+#[test]
+fn a_statement_in_a_document_without_the_definition_makes_no_row() {
+    let sources = MemSource::with(&[("a.rs", &blank()), ("b.rs", &blank())]);
+    let defining = doc(
+        "a.rs",
+        vec![
+            occ("s m p 1 T#", DEF, &[1, 0, 1], &[]),
+            occ("s m p 1 I#", DEF, &[2, 0, 1], &[]),
+        ],
+    );
+    let mut stating = doc("b.rs", vec![occ("s m p 1 T#", REF, &[1, 0, 1], &[])]);
+    stating.symbols = vec![support::implementing("s m p 1 T#", &["s m p 1 I#"])];
+    let snapshot = both_orders(&[defining, stating], &sources);
+    assert_eq!(
+        snapshot
+            .relations
+            .iter()
+            .filter(|r| r.rel == Rel::Implements)
+            .count(),
+        0
+    );
+}

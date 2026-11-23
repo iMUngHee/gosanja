@@ -297,3 +297,24 @@ fn a_refused_version_is_decided_without_opening_any_table() {
     };
     assert_eq!(status.code(), Some(2));
 }
+
+#[test]
+fn the_project_is_named_after_its_root() {
+    let out = scratch("named");
+    let root = repo("fixtures/rust-basic");
+    let index = gosanja(&[
+        &"index",
+        &"--scip",
+        &root.join("index.scip"),
+        &"--root",
+        &root,
+        &"--out",
+        &out,
+    ]);
+    assert_eq!(code(&index), 0, "{}", stderr(&index));
+    let manifest = fs::read_to_string(out.join("manifest.json")).expect("manifest");
+    assert!(
+        manifest.contains(r#""project":{"name":"rust-basic"}"#),
+        "{manifest}"
+    );
+}
