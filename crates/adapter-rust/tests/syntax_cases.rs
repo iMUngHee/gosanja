@@ -806,3 +806,160 @@ fn a_closure_s_parameter_and_return_types_are_part_of_its_outline() {
         )])
     );
 }
+
+// The forms in which an index gives ranges: typed fields, single-line or multi-line, before
+// the legacy integer arrays of three or four elements, for name and enclosing range alike.
+
+fn single(line: i32, start: i32, end: i32) -> scip::types::SingleLineRange {
+    scip::types::SingleLineRange {
+        line,
+        start_character: start,
+        end_character: end,
+        ..Default::default()
+    }
+}
+
+fn multi(sl: i32, sc: i32, el: i32, ec: i32) -> scip::types::MultiLineRange {
+    scip::types::MultiLineRange {
+        start_line: sl,
+        start_character: sc,
+        end_line: el,
+        end_character: ec,
+        ..Default::default()
+    }
+}
+
+/// The layer of one file `a.rs` with `text`, indexed by `occurrences`; whether the outline of
+/// its first row was withheld for lying outside the extent.
+fn withheld(text: &str, occurrences: Vec<scip::types::Occurrence>) -> bool {
+    let temp = tempfile::tempdir().expect("a directory");
+    let root = temp.path().canonicalize().expect("resolved");
+    std::fs::write(root.join("a.rs"), text).expect("write");
+    let layer = syntax::layer(&root, &index_of(vec![document("a.rs", occurrences)]));
+    let out = layer.rows[0].outline.is_none();
+    assert_eq!(
+        skipped(&layer),
+        if out {
+            vec![("a.rs", "outline-outside-definition")]
+        } else {
+            vec![]
+        }
+    );
+    out
+}
+
+#[test]
+fn every_range_form_of_the_index_is_read_and_typed_fields_come_first() {
+    use scip::types::occurrence::{Typed_enclosing_range, Typed_range};
+    const ONE: &str = "fn wide() { f(); }\n"; // f() at 0:12-15
+    const THREE: &str = "fn wide() {\n    f();\n}\n"; // f() at 1:4-7
+    let symbol = "s m p 1 wide().";
+    let typed = |name: Typed_range, enclosing: Option<Typed_enclosing_range>| {
+        let mut o = definition(symbol, [0, 0, 0], &[]);
+        o.range = Vec::new();
+        o.typed_range = Some(name);
+        o.typed_enclosing_range = enclosing;
+        o
+    };
+    // Typed single-line name and enclosing range: the narrow extent counts.
+    let narrow_one = Typed_enclosing_range::SingleLineEnclosingRange(single(0, 0, 10));
+    assert!(withheld(
+        ONE,
+        vec![typed(
+            Typed_range::SingleLineRange(single(0, 3, 7)),
+            Some(narrow_one.clone())
+        )]
+    ));
+    // Typed multi-line name and enclosing range.
+    let narrow_three = Typed_enclosing_range::MultiLineEnclosingRange(multi(0, 0, 1, 4));
+    assert!(withheld(
+        THREE,
+        vec![typed(
+            Typed_range::MultiLineRange(multi(0, 3, 0, 7)),
+            Some(narrow_three)
+        )]
+    ));
+    let wide_three = Typed_enclosing_range::MultiLineEnclosingRange(multi(0, 0, 2, 1));
+    assert!(!withheld(
+        THREE,
+        vec![typed(
+            Typed_range::MultiLineRange(multi(0, 3, 0, 7)),
+            Some(wide_three)
+        )]
+    ));
+    // Legacy: three elements for the name, four for a multi-line enclosing range.
+    assert!(withheld(
+        THREE,
+        vec![definition(symbol, [0, 3, 7], &[0, 0, 1, 4])]
+    ));
+    assert!(!withheld(
+        THREE,
+        vec![definition(symbol, [0, 3, 7], &[0, 0, 2, 1])]
+    ));
+    // Typed fields win over the legacy arrays of the same occurrence.
+    let mut both = definition(symbol, [0, 3, 7], &[0, 0, 18]);
+    both.typed_enclosing_range = Some(narrow_one);
+    assert!(withheld(ONE, vec![both]));
+    let mut both = definition(symbol, [1, 0, 2], &[0, 0, 10]);
+    both.typed_range = Some(Typed_range::SingleLineRange(single(0, 3, 7)));
+    assert!(
+        withheld(ONE, vec![both]),
+        "the typed name puts it at the anchor"
+    );
+}
+
+#[test]
+fn a_definition_without_an_enclosing_range_still_takes_part_in_the_lookup() {
+    // Two symbols defined at the anchor make it ambiguous, as in the engine, even when one has
+    // no enclosing range; then only the nesting rules apply.
+    const ONE: &str = "fn wide() { f(); }\n";
+    assert!(!withheld(
+        ONE,
+        vec![
+            definition("s m p 1 wide().", [0, 3, 7], &[]),
+            definition("s m p 1 other().", [0, 3, 7], &[0, 0, 10]),
+        ]
+    ));
+}
+
+#[test]
+fn a_reference_at_the_anchor_is_not_a_definition() {
+    const ONE: &str = "fn wide() { f(); }\n";
+    let mut reference = definition("s m p 1 elsewhere().", [0, 3, 7], &[0, 0, 18]);
+    reference.symbol_roles = 0;
+    assert!(withheld(
+        ONE,
+        vec![
+            definition("s m p 1 wide().", [0, 3, 7], &[0, 0, 10]),
+            reference
+        ]
+    ));
+}
+
+#[test]
+fn a_macro_with_a_name_after_the_bang_is_an_invocation_unless_it_is_macro_rules() {
+    let rows = syntax::rows("a.rs", "foo! bar { }\n").expect("parses");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0].anchor.line, rows[0].anchor.col),
+        (0, Some(0)),
+        "the file's module"
+    );
+    assert_eq!(
+        outline(&rows[0]),
+        json!([leaf("opaque", Some("foo!"), 0, 0, 12)])
+    );
+}
+
+#[test]
+fn patterns_and_types_kept_as_raw_tokens_are_verbatim_nodes() {
+    // syn keeps a `box` pattern and a `dyn*` type as raw tokens.
+    assert_eq!(
+        outline(&only_row("fn f() { let box y = b; }")),
+        json!([leaf("opaque", Some("verbatim"), 0, 13, 18)])
+    );
+    assert_eq!(
+        outline(&only_row("fn f() { let p: dyn* T = x; }")),
+        json!([leaf("opaque", Some("verbatim"), 0, 16, 22)])
+    );
+}

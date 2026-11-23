@@ -310,3 +310,65 @@ fn unsigned(raw: [i32; 4]) -> Option<Range> {
     let [sl, sc, el, ec] = raw.map(|v| u32::try_from(v).ok());
     Some(Range::new(sl?, sc?, el?, ec?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gosanja_schema::snapshot::OutlineKind;
+
+    fn node(range: [u32; 4], callee: Option<[u32; 4]>, children: Vec<OutlineNode>) -> OutlineNode {
+        OutlineNode {
+            k: OutlineKind::Call,
+            detail: None,
+            range: Range(range),
+            callee: callee.map(Range),
+            children: (!children.is_empty()).then_some(children),
+        }
+    }
+
+    #[test]
+    fn an_outline_that_breaks_the_range_rules_is_withheld() {
+        let outside = Some("outline-outside-definition");
+        let good = node(
+            [0, 0, 0, 9],
+            Some([0, 0, 0, 1]),
+            vec![node([0, 2, 0, 5], None, vec![])],
+        );
+        assert_eq!(check(std::slice::from_ref(&good), None), None);
+        assert_eq!(check(&[good], Some(Range([0, 0, 0, 9]))), None);
+        // A range that ends before it starts.
+        assert_eq!(check(&[node([0, 5, 0, 2], None, vec![])], None), outside);
+        // A child outside its parent.
+        assert_eq!(
+            check(
+                &[node(
+                    [0, 0, 0, 4],
+                    None,
+                    vec![node([0, 3, 0, 6], None, vec![])]
+                )],
+                None
+            ),
+            outside
+        );
+        // A callee outside its node, and one that ends before it starts.
+        assert_eq!(
+            check(&[node([0, 0, 0, 4], Some([0, 3, 0, 6]), vec![])], None),
+            outside
+        );
+        assert_eq!(
+            check(&[node([0, 0, 0, 4], Some([0, 3, 0, 1]), vec![])], None),
+            outside
+        );
+        // A bad node deeper down.
+        let deep = node(
+            [0, 0, 0, 9],
+            None,
+            vec![node(
+                [0, 1, 0, 8],
+                None,
+                vec![node([0, 7, 0, 3], None, vec![])],
+            )],
+        );
+        assert_eq!(check(&[deep], None), outside);
+    }
+}
