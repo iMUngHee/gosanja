@@ -97,7 +97,7 @@ A layer entry:
 | --- | --- | --- |
 | `status` | `ok` or `failed` | |
 | `diagnostics` | array of `{code, message?}`, optional | what went wrong |
-| `skipped` | array of `{file, code}`, optional | files the layer was meant to cover and could not process |
+| `skipped` | array of `{file, code}`, optional | files the layer was meant to cover and could not process, in whole or in part |
 
 `code` matches `^[a-z][a-z0-9-]{0,63}$` and names a kind of problem, for example
 `toolchain-missing`. `message` is free text for a human and may hold paths, process ids or
@@ -105,7 +105,8 @@ timings. Only the first `code` of a failed layer is stored in the snapshot; a `m
 is, so two equivalent failures give identical snapshots.
 
 `skipped` lets a layer succeed without hiding what it left out: a source file that does not
-parse, a file that is not valid text. `file` is a path relative to `--root` and `code` has the
+parse, a file that is not valid text, or a file for which the layer reports some facts and
+had to leave others out; the `code` says which. `file` is a path relative to `--root` and `code` has the
 form of a diagnostic code. The whole of `result.json` is checked against its schema, so a
 malformed entry is an adapter failure whatever the layer's status. For a layer whose status is
 `ok`, the engine records one `skipped-file` gap for each distinct file and code of that layer,

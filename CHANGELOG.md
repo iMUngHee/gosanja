@@ -23,7 +23,7 @@ Breaks 0.1. A 0.2 engine refuses an adapter that declares 0.1; an adapter has to
 
 - `markers` in the manifest: file names whose presence in a project root lets the engine
   choose the adapter when the user names none;
-- `skipped` on a layer of `result.json`: files the layer could not process;
+- `skipped` on a layer of `result.json`: files the layer could not process, in whole or in part;
 - a `call` node may leave out `callee` when the callee is not a name. An adapter must no
   longer put anything but a name token there.
 

@@ -362,7 +362,7 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `unanchored` | an anchor matched no definition or several | `layer`, `anchor` |
 | `open-call` | a reported call's callee token matches no reference, or the call has no callee token | `file`, `range`: the callee token in the first case, the whole call node in the second |
 | `opaque-region` | the syntax layer marked a region as unreadable | `file`, `range`, `keys`: the entity |
-| `skipped-file` | an adapter layer reported a file it was meant to cover and could not process | `file`, `layer`, `code`; one row per distinct file and code of a layer |
+| `skipped-file` | an adapter layer reported a file it was meant to cover and could not process, in whole or in part | `file`, `layer`, `code`; one row per distinct file and code of a layer |
 | `unknown-build-context` | call evidence names a build context the adapter did not report | `layer`, `count` |
 | `unknown-value` | rows were skipped under the compatibility rules | `layer`, `count` |
 
