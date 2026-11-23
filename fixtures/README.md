@@ -32,3 +32,13 @@ rust-analyzer and scip-typescript give the same bytes on every run. scip-go 0.2.
 the order of `Document.symbols` changes between runs, so a regenerated `go-basic/index.scip`
 can differ from the checked-in one without any change in its facts. The index is kept as
 the indexer wrote it, and tests must not depend on that order.
+
+## The fake adapter
+
+`fake-adapter/adapter.sh` is a shell script that speaks the adapter contract and serves the
+checked-in index of `rust-basic`. Tests use it to exercise the engine's side of the contract
+and the discovery of installed adapters without any real adapter. Options before the command
+set what its manifest says (`--name`, `--version-json`, `--languages`, `--layers`,
+`--encoding`, `--markers`, `--requires`), `--mode` selects one of its misbehaviours, and
+`--record <file>` appends each command it is asked to run to a file. A test never lets
+`GOSANJA_FAKE_MODE` from the developer's shell reach it.

@@ -39,6 +39,7 @@ index your own project, produce a SCIP index for it first, for example with
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the engine is cut and why |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Rules for changing the code |
 | [docs/research/](docs/research/README.md) | The papers, tools and measurements behind the design |
+| [docs/adapters.md](docs/adapters.md) | How the engine finds and chooses installed adapters |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, including writing an adapter |
 
 ## Licence

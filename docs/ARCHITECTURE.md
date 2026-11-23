@@ -38,7 +38,9 @@ See [research/engine-architecture.md](research/engine-architecture.md) and
 **Languages live outside the core.** Precise facts need each ecosystem's own tools: a Go
 call graph needs `go/ssa`, TypeScript needs its compiler API. Those cannot be linked into one
 Rust binary, so every adapter is a separate program behind a file contract, the Rust one
-included. Adding a language means writing an adapter; the core is not rebuilt.
+included. Adding a language means writing an adapter; the core is not rebuilt. Installed
+adapters are executables named `gosanja-adapter-<name>` that the command line finds and
+chooses by marker files in the project root; see [adapters.md](adapters.md).
 
 **Side-cars join by position.** An adapter points at a definition by the position of its name,
 not by a symbol string, so it does not have to reproduce an indexer's symbol grammar. An anchor
@@ -61,7 +63,7 @@ See [research/structural-diff-identity.md](research/structural-diff-identity.md)
 | --- | --- | --- |
 | `gosanja-schema` | `crates/schema` | Types of both interfaces and the version compatibility rules. Shared with adapters written in Rust. |
 | `gosanja-core` | `crates/core` | Decoding, keys, the graph, side-car joins, writing, validation, running adapters. Knows no language. |
-| `gosanja` | `crates/cli` | The command line. Reads files, calls the core, sets exit codes. |
+| `gosanja` | `crates/cli` | The command line. Reads files, finds installed adapters (`discover`), calls the core, sets exit codes. |
 
 Core modules:
 
@@ -72,7 +74,7 @@ Core modules:
 | `graph` | Entities, containment, ownership of references, relations. |
 | `anchor` | Matches adapter anchors against definitions. |
 | `sidecar` | Reads the syntax and calls layers and joins them to the graph. |
-| `adapter` | Runs an adapter and classifies what it produced. |
+| `adapter` | Runs one given adapter program and classifies what it produced. The program that was described is the one that is run. |
 | `write` | Serialises a snapshot deterministically, and reads sources and snapshots from disk. |
 | `publish` | Moves a finished snapshot into place and protects what was there. |
 | `validate` | Checks a snapshot on disk against the specification. |

@@ -28,7 +28,8 @@ would have to do differently. A change touches the document, the JSON Schema, th
 `CHANGELOG.md` together.
 
 **A language adapter.** An adapter is a separate program; it does not have to live in this
-repository or be written in Rust. [spec/adapter-contract.md](spec/adapter-contract.md) is
+repository or be written in Rust. [docs/adapters.md](docs/adapters.md) says how the engine
+finds an installed adapter, and [spec/adapter-contract.md](spec/adapter-contract.md) is
 everything it has to satisfy, and `spec/schema/` lets you test its output on your side.
 
 **A fixture.** Write the project yourself and keep it small. Do not copy code from anywhere
