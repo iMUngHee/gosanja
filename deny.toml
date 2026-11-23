@@ -6,4 +6,8 @@ allow = [
     "Apache-2.0",
     # unicode-ident carries Unicode data tables under this permissive, OSI-approved licence.
     "Unicode-3.0",
+    # borrow-or-share, through jsonschema. MIT without the attribution requirement.
+    "MIT-0",
+    # foldhash, through jsonschema. Permissive; altered source must be marked as altered.
+    "Zlib",
 ]
