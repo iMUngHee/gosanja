@@ -7,3 +7,7 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+gosanja-core = { version = "0.1.0", path = "../core" }
+gosanja-schema = { version = "0.1.0", path = "../schema" }

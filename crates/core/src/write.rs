@@ -1,0 +1,1 @@
+//! Serialises a snapshot deterministically.

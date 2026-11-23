@@ -158,10 +158,17 @@ dependencies = [
 [[package]]
 name = "gosanja"
 version = "0.1.0"
+dependencies = [
+ "gosanja-core",
+ "gosanja-schema",
+]
 
 [[package]]
 name = "gosanja-core"
 version = "0.1.0"
+dependencies = [
+ "gosanja-schema",
+]
 
 [[package]]
 name = "gosanja-schema"
