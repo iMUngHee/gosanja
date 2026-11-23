@@ -29,8 +29,8 @@ Every file is always present. The conventions for paths, ranges and versions are
   `syntax.jsonl` and `gaps.jsonl` has `src`, one of:
   - `scip:<tool name>`, taken from an index produced by that tool;
   - `adapter:<adapter name>/<layer>`, taken from an adapter's `syntax` or `calls` layer;
-  - `core:<pass>`, derived by the engine. The passes are `containment`, `identity`,
-    `reference-in-body` and `publication`.
+  - `core:<pass>`, derived by the engine. The passes are `containment`, `identity` and
+    `reference-in-body`.
 
 ## Keys
 
@@ -351,6 +351,15 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `opaque-region` | the syntax layer marked a region as unreadable | `file`, `range`, `keys`: the entity |
 | `unknown-build-context` | call evidence names a build context the adapter did not report | `layer`, `count` |
 | `unknown-value` | rows were skipped under the compatibility rules | `layer`, `count` |
+
+The `src` of a gap names what the gap is about:
+
+| `src` | Gaps |
+| --- | --- |
+| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `unknown-build-context`, `unknown-value` |
+| `scip:<tool>` | `undecodable-document`, `document-outside-root`, `source-unavailable`, `position-out-of-range` |
+| `core:identity` | `symbol-collision` |
+| `core:reference-in-body` | `unattributed-references`, `overlapping-bodies` |
 
 A document goes through three checks in a fixed order and the first that fails decides its
 single gap: location (`document-outside-root`), availability (`source-unavailable`), encoding

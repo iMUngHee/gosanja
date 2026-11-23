@@ -54,7 +54,7 @@
     },
     "provenance": {
       "type": "string",
-      "pattern": "^(?:scip:.+|adapter:[a-z0-9-]+/(?:syntax|calls)|core:(?:containment|identity|reference-in-body|publication))$"
+      "pattern": "^(?:scip:.+|adapter:[a-z0-9-]+/(?:syntax|calls)|core:(?:containment|identity|reference-in-body))$"
     }
   }
 }
