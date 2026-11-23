@@ -36,15 +36,18 @@ gosanja adapter list
 ```
 
 ```text
+old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.1, this reader implements 0.2; 0.x versions are only compatible with themselves
 rust 1.2.3 contract=0.2 languages=rust layers=base,syntax markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
   requires rust-analyzer: found /usr/bin/rust-analyzer
   requires cargo: missing
-old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.1, this reader implements 0.2; 0.x versions are only compatible with themselves
 ```
 
-Each adapter says which external tools it needs. `found` means an executable of that name is
-in `PATH`; `missing` means it is not, and the adapter will report its own failure when it is
-run. A tool given as anything but a plain file name is shown as `not checked`.
+Adapters are listed in name order, usable or not. Each adapter says which external tools it
+needs. `found` means an executable file of that name is in an absolute directory of `PATH`;
+`missing` means it is not. The engine does nothing more with this: it still runs an adapter
+whose tool is missing, and what happens then is up to the adapter. A tool is looked up only
+when its name is made of letters, digits, `.`, `_` and `-`; any other value, a path or a
+name such as `g++`, is shown as `not checked`.
 
 To list adapters, the engine runs `describe` on every one it finds, which means it executes
 those programs. An adapter that does not return from `describe` holds the command up; there

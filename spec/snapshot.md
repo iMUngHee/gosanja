@@ -138,7 +138,9 @@ none is an absolute path, and `id`, `target` and `profile` contain no `/` or `\`
 ## files.jsonl
 
 One row per source file that a fact refers to: every indexed document, and any other file named
-by call evidence that is in the snapshot. Sorted by `path`.
+by call evidence that is in the snapshot. Sorted by `path`. A file that only a gap without a
+range names, such as a `skipped-file` or `source-unavailable` gap, has no row: the engine
+never read it.
 
 | Field | Type | Meaning |
 | --- | --- | --- |

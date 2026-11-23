@@ -25,8 +25,11 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
 - **The core does no I/O** except running an adapter (`adapter.rs`) and writing a snapshot
   (`write.rs`, `publish.rs`). Source text reaches it through one reader, so a test can see what
   was asked for. The command-line crate does the rest.
-- **The analysed tree is read-only.** Nothing is created, changed or deleted under the root
-  being indexed, and the output path may not overlap it.
+- **The engine and its adapters leave the analysed tree alone.** The engine creates, changes
+  and deletes nothing under the root being indexed, and the output path may not overlap it.
+  An adapter and the tools it runs do the same of their own accord; what the project's own
+  build code or configuration writes there is outside the rule, as the adapter contract
+  states, and an adapter documents it.
 
 ## Specifications
 
