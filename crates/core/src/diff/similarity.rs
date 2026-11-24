@@ -29,7 +29,7 @@ pub fn multiset<T: Ord>(
 ) -> u32 {
     let intersection: u128 = left
         .iter()
-        .map(|(k, numerator)| u128::from((*numerator).min(*right.get(k).unwrap_or(&0))))
+        .map(|(item, left_count)| u128::from((*left_count).min(*right.get(item).unwrap_or(&0))))
         .sum();
     let total: u128 = left
         .values()

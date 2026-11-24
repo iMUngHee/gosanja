@@ -1,7 +1,7 @@
 //! Rank alternatives for each removed definition independently.
 use super::{
-    compared,
     entities::lines,
+    relations::compared,
     similarity::{multiset, sequence},
 };
 use crate::validate::ReadSnapshot;
@@ -37,11 +37,7 @@ fn definitions<'a>(
         .collect();
     let mut definitions = BTreeMap::new();
     for (&key, entity) in &entities {
-        if mapped.contains_key(key)
-            || entity.r#virtual
-            || entity.group
-            || entity.member_of.is_some()
-        {
+        if mapped.contains_key(key) || entity.member_of.is_some() {
             continue;
         }
         let (Some(def), Some(kind)) = (&entity.def, entity.kind.as_deref()) else {
@@ -163,4 +159,42 @@ pub(super) fn rank<'a>(
         }
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff::tests::{empty, entity};
+
+    #[test]
+    fn candidate_features_use_the_outermost_parent_first_and_unicode_scalars() {
+        let mut old = empty();
+        let mut outer = entity("outer", "ra m p 1 outer/");
+        outer.name = "library".into();
+        let mut inner = entity("inner", "ra m p 1 inner/");
+        inner.name = "reader".into();
+        inner.parent = Some("outer".into());
+        let mut leaf = entity("leaf", "ra m p 1 leaf.");
+        leaf.name = "café".into();
+        leaf.parent = Some("inner".into());
+        old.entities = vec![(1, outer), (2, inner), (3, leaf)];
+        let mut new = old.clone();
+        new.entities[0].1.name = "application".into();
+        new.entities[2].1.key = "renamed".into();
+        new.entities[2].1.symbol = Some("ra m p 1 renamed.".into());
+        new.entities[2].1.name = "cafè".into();
+        let paired = BTreeMap::from([("outer", "outer"), ("inner", "inner")]);
+        let removed = definitions(&old, &paired, true, &[]);
+        assert_eq!(removed[0].parents, ["library", "reader"]);
+        let rows = rank(
+            &old,
+            &new,
+            &paired,
+            &paired,
+            &[],
+            gosanja_schema::diff::WEIGHTS,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].parents, rows[0].name), (500_000, 750_000));
+    }
 }

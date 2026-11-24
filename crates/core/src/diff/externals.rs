@@ -1,3 +1,4 @@
+//! Report added, removed and rekeyed external symbols and their packages.
 use crate::identity::escape_component;
 use crate::validate::ReadSnapshot;
 use gosanja_schema::diff::ExternalRow;

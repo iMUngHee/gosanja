@@ -302,7 +302,9 @@ pub(crate) struct SymbolParts {
     pub version: String,
     pub base_key: String,
 }
+
 pub(crate) type SymbolIndex = BTreeMap<String, SymbolParts>;
+
 pub(crate) fn symbol_parts(snap: &ReadSnapshot, diagnostics: &mut Vec<Diagnostic>) -> SymbolIndex {
     use crate::identity::{Parsed, parse};
     let symbols = snap

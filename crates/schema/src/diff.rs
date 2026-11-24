@@ -33,6 +33,8 @@ pub struct Weights {
     pub threshold: u32,
 }
 
+/// Feature weights sum to 100. Each feature is at most 1,000,000, so the
+/// weighted sum before division is at most 100,000,000 and fits in u32.
 pub const WEIGHTS: Weights = Weights {
     name: 30,
     file: 18,
@@ -42,6 +44,16 @@ pub const WEIGHTS: Weights = Weights {
     incoming: 9,
     threshold: 440_000,
 };
+
+const _: () = assert!(
+    WEIGHTS.name
+        + WEIGHTS.file
+        + WEIGHTS.parents
+        + WEIGHTS.size
+        + WEIGHTS.outgoing
+        + WEIGHTS.incoming
+        == 100
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Side {

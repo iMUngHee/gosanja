@@ -50,12 +50,12 @@ fn manifest_counts_match_the_emitted_rows_with_and_without_excluded_layers() {
 fn fixture_change_rows_match_the_hand_derived_rows_byte_for_byte() {
     let root = fixture("diff-basic");
     let load = |side: &str| read_dir(&root.join(side).join("expected"));
-    let d = compare(&load("old"), &load("new")).unwrap();
+    let comparison = compare(&load("old"), &load("new")).unwrap();
     for (file, actual) in [
-        ("entities", jsonl(&d.entities)),
-        ("externals", jsonl(&d.externals)),
-        ("relations", jsonl(&d.relations)),
-        ("candidates", jsonl(&d.candidates)),
+        ("entities", jsonl(&comparison.entities)),
+        ("externals", jsonl(&comparison.externals)),
+        ("relations", jsonl(&comparison.relations)),
+        ("candidates", jsonl(&comparison.candidates)),
     ] {
         let expected = std::fs::read(root.join("expected").join(format!("{file}.jsonl"))).unwrap();
         assert_eq!(
@@ -64,27 +64,33 @@ fn fixture_change_rows_match_the_hand_derived_rows_byte_for_byte() {
             "{file}"
         );
     }
-    for row in to_value(&d.entities)
+    for row in to_value(&comparison.entities)
         .unwrap()
         .as_array()
         .unwrap()
         .iter()
-        .chain(to_value(&d.externals).unwrap().as_array().unwrap())
+        .chain(to_value(&comparison.externals).unwrap().as_array().unwrap())
     {
         if row["change"] == "rekeyed" {
             assert_ne!(row["old"], row["new"]);
         }
     }
-    let first: Vec<_> = d
+    let first: Vec<_> = comparison
         .candidates
         .iter()
-        .filter(|c| c.rank == 1)
-        .map(|c| {
+        .filter(|candidate| candidate.rank == 1)
+        .map(|candidate| {
             (
-                c.old.as_str(),
-                c.new.as_str(),
+                candidate.old.as_str(),
+                candidate.new.as_str(),
                 [
-                    c.name, c.file, c.parents, c.size, c.outgoing, c.incoming, c.score,
+                    candidate.name,
+                    candidate.file,
+                    candidate.parents,
+                    candidate.size,
+                    candidate.outgoing,
+                    candidate.incoming,
+                    candidate.score,
                 ],
             )
         })
@@ -115,7 +121,7 @@ fn fixture_change_rows_match_the_hand_derived_rows_byte_for_byte() {
     let expected: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("expected/manifest.json")).unwrap())
             .unwrap();
-    assert_eq!(to_value(d.manifest).unwrap(), expected);
+    assert_eq!(to_value(comparison.manifest).unwrap(), expected);
 }
 
 #[test]
@@ -153,22 +159,25 @@ fn public_base64_list_reproduces_the_measured_ranks() {
         ]
     );
     let load = |tag| read_dir(&root.join(tag));
-    let d = compare(&load("v0.20.0"), &load("v0.21.0")).unwrap();
+    let comparison = compare(&load("v0.20.0"), &load("v0.21.0")).unwrap();
     let mut correct = 0;
     let mut deletions = 0;
     let mut missed = vec![];
     for line in labels.lines() {
-        let f: Vec<_> = line.split('\t').collect();
-        if f[0] != "base64" {
+        let fields: Vec<_> = line.split('\t').collect();
+        if fields[0] != "base64" {
             continue;
         }
-        let first = d.candidates.iter().find(|r| r.old == f[1]);
-        match (f[3], first) {
-            ("yes", Some(c)) => {
-                assert_eq!((c.new.as_str(), c.rank), (f[2], 1));
+        let first = comparison
+            .candidates
+            .iter()
+            .find(|row| row.old == fields[1]);
+        match (fields[3], first) {
+            ("yes", Some(candidate)) => {
+                assert_eq!((candidate.new.as_str(), candidate.rank), (fields[2], 1));
                 correct += 1;
             }
-            ("yes", None) => missed.push((f[1], f[2])),
+            ("yes", None) => missed.push((fields[1], fields[2])),
             ("no", None) => deletions += 1,
             _ => panic!("unexpected prediction for {line}"),
         }
@@ -210,7 +219,7 @@ fn public_compare_returns_the_validator_diagnostic_on_either_side() {
         let mut rows: Vec<Value> = std::str::from_utf8(invalid.entities.as_ref().unwrap())
             .unwrap()
             .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
+            .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         if field == "body" {
             rows[0]["def"]["body"] = value;
@@ -247,10 +256,10 @@ fn two_scopes_are_refused_and_missing_roles_keep_the_schema_diagnostic() {
     let mut rows: Vec<serde_json::Value> = std::str::from_utf8(bad.relations.as_ref().unwrap())
         .unwrap()
         .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
+        .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     rows.iter_mut()
-        .find(|r| r["rel"] == "ref")
+        .find(|row| row["rel"] == "ref")
         .unwrap()
         .as_object_mut()
         .unwrap()

@@ -6,6 +6,10 @@ use gosanja_schema::snapshot::{EntityRow, RelationRow, SCHEMA_VERSION};
 use serde_json::{json, to_value};
 use std::path::{Path, PathBuf};
 
+fn test_row<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
+    serde_json::from_value(value).expect("test data matches the snapshot row schema")
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures")
@@ -20,39 +24,41 @@ fn compare(old: &ReadSnapshot, new: &ReadSnapshot) -> Result<Comparison, Compare
     super::compare_rows(old, new, &old_symbols, &new_symbols)
 }
 
-fn empty() -> ReadSnapshot {
-    let mut s = read(
+pub(super) fn empty() -> ReadSnapshot {
+    let mut snapshot = read(
         &SnapshotFiles::read(&fixture("rust-basic").join("expected")),
         SCHEMA_VERSION,
     )
     .unwrap();
-    s.entities.clear();
-    s.externals.clear();
-    s.relations.clear();
-    s.syntax.clear();
-    s.gaps.clear();
-    s
+    snapshot.entities.clear();
+    snapshot.externals.clear();
+    snapshot.relations.clear();
+    snapshot.syntax.clear();
+    snapshot.gaps.clear();
+    snapshot
 }
 
-fn entity(key: &str, symbol: &str) -> EntityRow {
-    serde_json::from_value(
-        json!({"key":key,"symbol":symbol,"name":"f","kind":"rust:function",
-      "role":"callable","src":"scip:ra",
-      "def":{"file":"src/lib.rs","name":[0,0,0,1],"body":[0,0,1,0],"body_src":"scip:ra"}}),
-    )
-    .unwrap()
+pub(super) fn entity(key: &str, symbol: &str) -> EntityRow {
+    test_row(json!({
+        "key": key, "symbol": symbol, "name": "f", "kind": "rust:function",
+        "role": "callable", "src": "scip:ra",
+        "def": {
+            "file": "src/lib.rs", "name": [0,0,0,1], "body": [0,0,1,0], "body_src": "scip:ra"
+        }
+    }))
 }
 
 fn reference(from: &str, to: &str) -> RelationRow {
-    serde_json::from_value(json!({"from":from,"to":to,"rel":"ref","roles":[],"sites":[],"src":"core:reference-in-body"})).unwrap()
+    test_row(
+        json!({"from":from,"to":to,"rel":"ref","roles":[],"sites":[],"src":"core:reference-in-body"}),
+    )
 }
 
 fn external(key: &str, version: &str) -> gosanja_schema::snapshot::ExternalRow {
-    serde_json::from_value(json!({
-      "key":key,"symbol":format!("ra m p {version} x."),
-      "package":{"manager":"m","name":"p","version":version},"src":"scip:ra"
+    test_row(json!({
+        "key":key,"symbol":format!("ra m p {version} x."),
+        "package":{"manager":"m","name":"p","version":version},"src":"scip:ra"
     }))
-    .unwrap()
 }
 
 fn ref_change(
@@ -94,7 +100,11 @@ fn versions_seen_only_in_old_externals_or_members_block_fallback() {
         } else {
             let mut member = entity("member", "ra m p 2 something.");
             member.member_of = Some("g".into());
-            old.entities.push((2, member));
+            let mut group = entity("g", "ra m p 1 something.");
+            group.group = true;
+            group.kind = None;
+            group.def = None;
+            old.entities.extend([(2, group), (3, member)]);
         }
         let result = compare(&old, &new).unwrap();
         assert!(!result.pairs.contains_key("f"));
@@ -127,8 +137,10 @@ fn member_kind_and_unchanged_file_discriminate_occurrences() {
     assert_eq!(
         to_value(result.entities).unwrap(),
         json!([
- {"change":"rekeyed","old":"g~1","new":"g~2"},
- {"change":"added","new":"g~1","kind":"rust:function","role":"callable","name":"f","member_of":"g","file":"src/views.rs"}])
+            {"change":"rekeyed","old":"g~1","new":"g~2"},
+            {"change":"added","new":"g~1","kind":"rust:function","role":"callable",
+             "name":"f","member_of":"g","file":"src/views.rs"}
+        ])
     );
     assert_eq!(result.relations, []);
     for whole in [true, false] {
@@ -176,7 +188,9 @@ fn external_rekeys_and_reached_packages_follow_relations() {
     assert_eq!(
         to_value(&result.externals).unwrap(),
         json!([
- {"change":"rekeyed","old":"K","new":"K@1"},{"change":"added","new":"K@2","package":"m:p"}])
+            {"change":"rekeyed","old":"K","new":"K@1"},
+            {"change":"added","new":"K@2","package":"m:p"}
+        ])
     );
     assert_eq!(result.manifest.packages_added, Vec::<String>::new());
     new.relations.clear();
@@ -200,8 +214,10 @@ fn a_named_virtual_and_definition_with_the_same_symbol_do_not_pair() {
     assert_eq!(result.pairs.len(), 0);
     assert_eq!(
         to_value(result.entities).unwrap(),
-        json!([described("removed","f",None,false),
- {"change":"added","new":"f","name":"f","kind":"rust:function","role":"callable","virtual":true}])
+        json!([
+            described("removed","f",None,false),
+            {"change":"added","new":"f","name":"f","kind":"rust:function","role":"callable","virtual":true}
+        ])
     );
 }
 
@@ -247,15 +263,29 @@ fn multiple_versions_and_exact_symbols_in_different_tables_cannot_fall_back() {
         to_value(result.relations).unwrap(),
         json!([
             ref_change("removed", source.clone(), json!({"old":"f"}), "to"),
-            ref_change("added", source, json!({"new":"f"}), "to")
+            ref_change("added", source.clone(), json!({"new":"f"}), "to")
         ])
     );
     new.entities.remove(0);
-    new.externals.push((1,serde_json::from_value(json!({"key":"f","symbol":"ra m p 1 f.","package":{"name":"p","manager":"m","version":"1"},"src":"scip:ra"})).unwrap()));
+    let mut replacement = external("f", "1");
+    replacement.symbol = "ra m p 1 f.".into();
+    new.externals.push((1, replacement));
     let result = compare(&old, &new).unwrap();
-    assert_eq!(result.entities.len(), 1);
-    assert_eq!(result.externals.len(), 1);
-    assert_eq!(result.relations.len(), 2);
+    assert_eq!(
+        to_value(result.entities).unwrap(),
+        json!([described("removed", "f", None, false)])
+    );
+    assert_eq!(
+        to_value(result.externals).unwrap(),
+        json!([{"change":"added","new":"f","package":"m:p"}])
+    );
+    assert_eq!(
+        to_value(result.relations).unwrap(),
+        json!([
+            ref_change("removed", source.clone(), json!({"old":"f"}), "to"),
+            ref_change("added", source, json!({"new":"f"}), "to")
+        ])
+    );
     assert_eq!(result.manifest.packages_added, ["m:p"]);
 }
 
@@ -275,25 +305,51 @@ fn schemes_and_unnamed_ancestors_follow_paired_children() {
     let result = compare(&old, &new).unwrap();
     assert_eq!(result.pairs.get("K").unwrap(), "K@a");
     assert_eq!(result.pairs.get("container").unwrap(), "container");
-    assert_eq!(result.entities.len(), 2);
+    assert_eq!(
+        to_value(result.entities).unwrap(),
+        json!([
+            {"change":"rekeyed","old":"K","new":"K@a"},
+            described("added","K",None,false)
+        ])
+    );
     new.entities.remove(1);
     new.entities[1].1.parent = Some("container".into());
     let result = compare(&old, &new).unwrap();
-    assert_eq!(result.entities.len(), 4);
-    assert_eq!(result.pairs.len(), 0);
+    let leaf_row = |change| {
+        let mut row = described(change, "K", None, false);
+        row["parent"] = "container".into();
+        row
+    };
+    let container_row = |change: &str| {
+        let mut row = json!({"change":change,"name":"f","kind":"rust:function","role":"callable","virtual":true});
+        row[if change == "removed" { "old" } else { "new" }] = "container".into();
+        row
+    };
+    assert_eq!(
+        to_value(result.entities).unwrap(),
+        json!([
+            leaf_row("removed"),
+            container_row("removed"),
+            leaf_row("added"),
+            container_row("added")
+        ])
+    );
+    assert!(result.pairs.is_empty());
     // A paired child under two named virtual parents does not override the parents' symbols.
     new.entities[1].1.symbol = old.entities[1].1.symbol.clone();
     old.entities[0].1.symbol = Some("a m p a c/".into());
     new.entities[0].1.symbol = Some("b m p a c/".into());
     let result = compare(&old, &new).unwrap();
-    assert_eq!(result.pairs.len(), 1);
     assert_eq!(
-        to_value(&result.entities)
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .len(),
-        3
+        result.pairs,
+        std::collections::BTreeMap::from([("K".into(), "K".into())])
+    );
+    assert_eq!(
+        to_value(result.entities).unwrap(),
+        json!([
+            {"change":"changed","old":"K","new":"K","properties":{"parent":{"old":"container","new":"container"}}},
+            container_row("removed"), container_row("added")
+        ])
     );
 }
 
@@ -306,10 +362,10 @@ fn member_pairing_requires_equal_file_digest_kind_and_range() {
     group.kind = None;
     old.entities.push((1, group));
     let member = |key: &str, line| {
-        let mut e = entity(key, "ra m p 1 group.");
-        e.member_of = Some("group".into());
-        e.def.as_mut().unwrap().name = gosanja_schema::position::Range([line, 0, line, 1]);
-        e
+        let mut row = entity(key, "ra m p 1 group.");
+        row.member_of = Some("group".into());
+        row.def.as_mut().unwrap().name = gosanja_schema::position::Range([line, 0, line, 1]);
+        row
     };
     old.entities.push((2, member("one", 0)));
     old.entities.push((3, member("two", 1)));
@@ -323,23 +379,44 @@ fn member_pairing_requires_equal_file_digest_kind_and_range() {
     let mut new = old.clone();
     new.entities[1].1 = member("two", 1);
     new.entities[2].1 = member("three", 2);
-    for (_, f) in &mut new.files {
-        f.sha256.make_ascii_uppercase();
+    for (_, file) in &mut new.files {
+        file.sha256.make_ascii_uppercase();
     }
     let result = compare(&old, &new).unwrap();
-    assert_eq!(result.entities.len(), 2);
+    assert_eq!(
+        to_value(result.entities).unwrap(),
+        json!([
+            described("removed", "one", Some("group"), false),
+            described("added", "three", Some("group"), false)
+        ])
+    );
     assert_eq!(result.pairs.get("two").unwrap(), "two");
     assert_eq!(result.relations, []);
     let file = &mut new
         .files
         .iter_mut()
-        .find(|(_, f)| f.path == "src/lib.rs")
+        .find(|(_, file)| file.path == "src/lib.rs")
         .unwrap()
         .1;
     file.sha256 = "0".repeat(64);
     let result = compare(&old, &new).unwrap();
-    assert_eq!(result.entities.len(), 4);
-    assert_eq!(result.relations.len(), 2);
+    assert_eq!(
+        to_value(result.entities).unwrap(),
+        json!([
+            described("removed", "one", Some("group"), false),
+            described("removed", "two", Some("group"), false),
+            described("added", "three", Some("group"), false),
+            described("added", "two", Some("group"), false)
+        ])
+    );
+    let group = json!({"old":"group","new":"group"});
+    assert_eq!(
+        to_value(result.relations).unwrap(),
+        json!([
+            ref_change("removed", json!({"old":"two"}), group.clone(), "from"),
+            ref_change("added", json!({"new":"two"}), group, "from")
+        ])
+    );
 }
 
 #[test]
@@ -348,25 +425,29 @@ fn asymmetric_layers_filter_their_own_properties_relations_and_package_targets()
     let mut old = empty();
     old.entities.push((1, entity("a", "ra cargo p 1 a.")));
     let mut new = old.clone();
-    new.externals.push((1,serde_json::from_value(json!({"key":"ext","symbol":"ra cargo dep 1 x.","package":{"name":"dep","manager":"cargo","version":"1"},"src":"scip:ra"})).unwrap()));
-    let mut r = reference("a", "ext");
-    r.src = "adapter:rust/syntax".into();
-    new.relations.push((1, r.clone()));
-    r.rel = gosanja_schema::snapshot::Rel::Call;
-    r.roles = None;
-    r.mechanism = Some(gosanja_schema::snapshot::Mechanism::Static);
-    r.resolution = Some(gosanja_schema::snapshot::Resolution::Direct);
-    r.src = "adapter:rust/calls".into();
-    new.relations.push((2, r));
+    new.externals.push((
+        1,
+        test_row(json!({
+            "key": "ext", "symbol": "ra cargo dep 1 x.", "src": "scip:ra",
+            "package": {"name": "dep", "manager": "cargo", "version": "1"}
+        })),
+    ));
+    let mut relation = reference("a", "ext");
+    relation.src = "adapter:rust/syntax".into();
+    new.relations.push((1, relation.clone()));
+    relation.rel = gosanja_schema::snapshot::Rel::Call;
+    relation.roles = None;
+    relation.mechanism = Some(gosanja_schema::snapshot::Mechanism::Static);
+    relation.resolution = Some(gosanja_schema::snapshot::Resolution::Direct);
+    relation.src = "adapter:rust/calls".into();
+    new.relations.push((2, relation));
     let scope = &mut old.manifest.as_mut().unwrap().scopes[0];
     scope.layers.syntax = Absent;
     scope.layers.calls = Present;
     let scope = &mut new.manifest.as_mut().unwrap().scopes[0];
     scope.layers.syntax = Present;
     scope.layers.calls = Present;
-    scope
-        .builds
-        .push(serde_json::from_value(json!({"id":"debug"})).unwrap());
+    scope.builds.push(test_row(json!({"id":"debug"})));
     let result = compare(&old, &new).unwrap();
     assert_eq!(
         to_value(result.manifest.not_compared).unwrap(),
@@ -403,10 +484,11 @@ fn exact_symbols_pair_before_version_fallback() {
     new.entities.push((2, entity("f@2", "ra cargo p 2 f().")));
     new.relations[0].1 = reference("f@1", "f@1");
     let result = compare(&old, &new).unwrap();
-    assert_eq!(result.entities.len(), 2);
     assert_eq!(
-        to_value(&result.entities[0]).unwrap(),
-        json!({"change":"rekeyed","old":"f","new":"f@1"})
+        to_value(result.entities).unwrap(),
+        json!([
+            {"change":"rekeyed","old":"f","new":"f@1"}, described("added","f@2",None,false)
+        ])
     );
     assert_eq!(result.relations, []);
     new.entities.pop();
@@ -421,7 +503,12 @@ fn exact_symbols_pair_before_version_fallback() {
 fn differing_properties_preserve_positions_and_text_as_specified() {
     let mut old = empty();
     old.entities.push((1, entity("f", "ra cargo p 1 f().")));
-    old.syntax.push((1,serde_json::from_value(json!({"key":"f","src":"adapter:rust/syntax","attributes":[r#"#[path = "/a/one.rs"]"#]})).unwrap()));
+    old.syntax.push((
+        1,
+        test_row(json!({
+            "key": "f", "src": "adapter:rust/syntax", "attributes": [r#"#[path = "/a/one.rs"]"#]
+        })),
+    ));
     let mut new = old.clone();
     new.entities[0].1.def.as_mut().unwrap().body =
         Some(gosanja_schema::position::Range([3, 0, 4, 0]));
@@ -433,7 +520,10 @@ fn differing_properties_preserve_positions_and_text_as_specified() {
     let rows = to_value(compare(&old, &new).unwrap().entities).unwrap();
     assert_eq!(
         rows[0]["properties"],
-        json!({"lines":{"old":1,"new":2},"attributes":{"old":[r#"#[path = "/a/one.rs"]"#],"new":[r#"#[path = "/a/two.rs"]"#]}})
+        json!({
+            "lines": {"old":1,"new":2},
+            "attributes": {"old":[r#"#[path = "/a/one.rs"]"#],"new":[r#"#[path = "/a/two.rs"]"#]}
+        })
     );
 }
 
@@ -445,7 +535,13 @@ fn relation_identity_includes_roles_and_call_discriminators() {
     let mut write = reference("f", "f");
     write.roles = Some(vec![gosanja_schema::snapshot::RefRole::Write]);
     old.relations.push((2, write));
-    old.relations.push((3,serde_json::from_value(json!({"from":"f","to":"f","rel":"call","mechanism":"static","resolution":"direct","src":"adapter:rust/calls","evidence":[]})).unwrap()));
+    old.relations.push((
+        3,
+        test_row(json!({
+            "from": "f", "to": "f", "rel": "call", "mechanism": "static",
+            "resolution": "direct", "src": "adapter:rust/calls", "evidence": []
+        })),
+    ));
     let mut new = old.clone();
     new.relations.remove(1);
     new.relations[1].1.resolution = Some(gosanja_schema::snapshot::Resolution::Declared);
@@ -465,12 +561,12 @@ fn relation_identity_includes_roles_and_call_discriminators() {
             json!({"mechanism":"static","resolution":"declared","src":"adapter:rust/calls"}),
         ),
     ] {
-        let r = rows
+        let relation = rows
             .iter()
-            .find(|r| r["rel"] == rel && r["change"] == change)
+            .find(|relation| relation["rel"] == rel && relation["change"] == change)
             .unwrap();
-        for (k, v) in fields.as_object().unwrap() {
-            assert_eq!(&r[k], v);
+        for (field, value) in fields.as_object().unwrap() {
+            assert_eq!(&relation[field], value);
         }
     }
 }
@@ -478,24 +574,26 @@ fn relation_identity_includes_roles_and_call_discriminators() {
 #[test]
 fn every_property_is_compared_only_when_observed_on_both_sides_as_required() {
     let mut old = empty();
-    let mut f = entity("f", "ra m p 1 f().");
-    f.parent = Some("module".into());
-    old.entities.push((1, f));
+    let mut function = entity("f", "ra m p 1 f().");
+    function.parent = Some("module".into());
+    old.entities.push((1, function));
     old.entities.push((2, entity("module", "ra m p 1 m/")));
     old.syntax.push((
         1,
-        serde_json::from_value(
-            json!({"key":"f","src":"adapter:rust/syntax","visibility":"pub","qualifiers":["async"],
-        "outline":[{"k":"branch","range":[0,0,1,0],"children":[{"k":"arm","range":[0,0,1,0]}]}]}),
-        )
-        .unwrap(),
+        test_row(json!({
+            "key": "f", "src": "adapter:rust/syntax", "visibility": "pub", "qualifiers": ["async"],
+            "outline": [{
+                "k": "branch", "range": [0,0,1,0],
+                "children": [{"k": "arm", "range": [0,0,1,0]}]
+            }]
+        })),
     ));
     let mut new = old.clone();
-    let f = &mut new.entities[0].1;
-    f.kind = Some("rust:method".into());
-    f.role = Some(gosanja_schema::snapshot::Role::Value);
-    f.parent = None;
-    let def = f.def.as_mut().unwrap();
+    let function = &mut new.entities[0].1;
+    function.kind = Some("rust:method".into());
+    function.role = Some(gosanja_schema::snapshot::Role::Value);
+    function.parent = None;
+    let def = function.def.as_mut().unwrap();
     def.file = "src/new.rs".into();
     def.body_src = Some("adapter:rust/syntax".into());
     def.body = Some(gosanja_schema::position::Range([0, 0, 4, 1]));
@@ -507,15 +605,23 @@ fn every_property_is_compared_only_when_observed_on_both_sides_as_required() {
     assert_eq!(
         to_value(&result.entities[0]).unwrap()["properties"],
         json!({
-          "kind":{"old":"rust:function","new":"rust:method"},"role":{"old":"callable","new":"value"},
-          "parent":{"old":"module"},"file":{"old":"src/lib.rs","new":"src/new.rs"},
-          "qualifiers":{"old":["async"],"new":["const"]},"visibility":{"old":"pub"},
-          "outline":{"old":{"arm":1,"branch":1},"new":{}}
+            "kind": {"old":"rust:function","new":"rust:method"}, "role": {"old":"callable","new":"value"},
+            "parent": {"old":"module"}, "file": {"old":"src/lib.rs","new":"src/new.rs"},
+            "qualifiers": {"old":["async"],"new":["const"]}, "visibility": {"old":"pub"},
+            "outline": {"old":{"arm":1,"branch":1},"new":{}}
         })
     );
     new.syntax.clear();
-    let row = to_value(&compare(&old, &new).unwrap().entities[0]).unwrap();
-    assert_eq!(row["properties"].as_object().unwrap().len(), 4);
+    assert_eq!(
+        to_value(compare(&old, &new).unwrap().entities).unwrap(),
+        json!([{
+            "change":"changed","old":"f","new":"f","properties":{
+                "kind":{"old":"rust:function","new":"rust:method"},
+                "role":{"old":"callable","new":"value"},
+                "parent":{"old":"module"},"file":{"old":"src/lib.rs","new":"src/new.rs"}
+            }
+        }])
+    );
 }
 
 #[test]
@@ -623,7 +729,7 @@ fn failed_and_absent_layers_have_the_same_coverage_and_build_sets_ignore_order()
     );
     let a_scope = &mut old.manifest.as_mut().unwrap().scopes[0];
     a_scope.layers.calls = Present;
-    let row = |name, profile| serde_json::from_value(json!({"id":name,"profile":profile})).unwrap();
+    let row = |name, profile| test_row(json!({"id":name,"profile":profile}));
     a_scope.builds = vec![row("a", "debug"), row("b", "release")];
     new.manifest.as_mut().unwrap().scopes[0].builds = vec![row("b", "release"), row("a", "debug")];
     assert_eq!(compare(&old, &new).unwrap().manifest.not_compared, []);
@@ -640,7 +746,13 @@ fn missing_file_observations_leave_rows_and_gap_counts() {
     old.entities.push((1, entity("f", "ra m p 1 f.")));
     let mut new = old.clone();
     new.entities.clear();
-    new.gaps.push((1,serde_json::from_value(json!({"gap":"skipped-file","layer":"syntax","file":"src/lib.rs","code":"parse-failed","src":"adapter:rust/syntax"})).unwrap()));
+    new.gaps.push((
+        1,
+        test_row(json!({
+            "gap": "skipped-file", "layer": "syntax", "file": "src/lib.rs",
+            "code": "parse-failed", "src": "adapter:rust/syntax"
+        })),
+    ));
     let result = compare(&old, &new).unwrap();
     assert_eq!(result.manifest.counts.entities.removed, 1);
     assert_eq!(result.manifest.not_compared, []);
@@ -650,9 +762,9 @@ fn missing_file_observations_leave_rows_and_gap_counts() {
 #[test]
 fn empty_span_on_a_single_line_still_covers_one_line() {
     let mut old = empty();
-    let mut e = entity("f", "ra m p 1 f.");
-    e.def.as_mut().unwrap().body = Some(gosanja_schema::position::Range([0, 0, 0, 0]));
-    old.entities.push((1, e));
+    let mut row = entity("f", "ra m p 1 f.");
+    row.def.as_mut().unwrap().body = Some(gosanja_schema::position::Range([0, 0, 0, 0]));
+    old.entities.push((1, row));
     let mut new = old.clone();
     new.entities[0].1.def.as_mut().unwrap().body =
         Some(gosanja_schema::position::Range([1, 0, 3, 0]));
@@ -685,14 +797,14 @@ fn candidate_threshold_ties_and_missing_evidence() {
     let got: Vec<_> = result
         .candidates
         .iter()
-        .map(|r| {
+        .map(|candidate| {
             (
-                r.new.as_str(),
-                r.rank,
-                r.score,
-                r.parents,
-                r.outgoing,
-                r.incoming,
+                candidate.new.as_str(),
+                candidate.rank,
+                candidate.score,
+                candidate.parents,
+                candidate.outgoing,
+                candidate.incoming,
             )
         })
         .collect();
@@ -704,8 +816,8 @@ fn candidate_threshold_ties_and_missing_evidence() {
             ("c", 3, 440_000, 1_000_000, 0, 0)
         ]
     );
-    new.entities.retain(|(_, e)| {
-        e.name == "y" && e.def.as_ref().unwrap().body == Some(Range([0, 0, 666_666, 0]))
+    new.entities.retain(|(_, row)| {
+        row.name == "y" && row.def.as_ref().unwrap().body == Some(Range([0, 0, 666_666, 0]))
     });
     assert_eq!(compare(&old, &new).unwrap().candidates, []);
     new.entities[0].1.name = "x".into();
@@ -729,10 +841,14 @@ fn only_unpaired_definitions_with_the_same_known_kind_compete() {
         let mut row = entity(variant, &format!("ra m p 1 `{variant}`."));
         match variant {
             "group" => {
+                row.kind = None;
                 row.group = true;
                 row.def = None;
             }
-            "member" => row.member_of = Some("group".into()),
+            "member" => {
+                row.member_of = Some("group".into());
+                row.symbol = Some("ra m p 1 `group`.".into());
+            }
             "virtual" => {
                 row.r#virtual = true;
                 row.def = None;
@@ -749,6 +865,8 @@ fn only_unpaired_definitions_with_the_same_known_kind_compete() {
     let backward = compare(&new, &old).unwrap();
     assert_eq!(backward.candidates.len(), 1);
     assert_eq!(backward.candidates[0].old, "ok");
+    old.entities[0].1.kind = None;
+    assert_eq!(compare(&old, &new).unwrap().candidates, []);
 }
 
 #[test]
@@ -786,6 +904,13 @@ fn candidate_neighbors_count_rows_once_and_use_only_compared_paired_endpoints() 
     let mut call = reference("paired", "old");
     call.src = "adapter:rust/syntax".into();
     old.relations.push((5, call));
+    let mut incoming_write = reference("paired", "old");
+    incoming_write.roles = Some(vec![gosanja_schema::snapshot::RefRole::Write]);
+    old.relations.push((6, incoming_write));
+    let mut implements = reference("new", "paired-new");
+    implements.rel = gosanja_schema::snapshot::Rel::Implements;
+    implements.roles = None;
+    new.relations.push((3, implements));
     old.manifest.as_mut().unwrap().scopes[0].layers.syntax =
         gosanja_schema::snapshot::LayerState::Present;
     new.manifest.as_mut().unwrap().scopes[0].layers.syntax =
@@ -794,7 +919,7 @@ fn candidate_neighbors_count_rows_once_and_use_only_compared_paired_endpoints() 
     assert_eq!(result.candidates.len(), 1);
     assert_eq!(
         (result.candidates[0].outgoing, result.candidates[0].incoming),
-        (500_000, 1_000_000)
+        (333_333, 500_000)
     );
 }
 
@@ -806,7 +931,7 @@ fn absent_calls_ignore_build_metadata() {
     let mut new = old.clone();
     new.manifest.as_mut().unwrap().scopes[0]
         .builds
-        .push(serde_json::from_value(json!({"id":"different"})).unwrap());
+        .push(test_row(json!({"id":"different"})));
     assert_eq!(compare(&old, &new).unwrap().manifest.not_compared, []);
 }
 
@@ -843,8 +968,7 @@ fn syntax_excluded_even_when_both_sides_have_syntax_rows() {
     old.entities.push((1, entity("f", "ra m p 1 f.")));
     old.syntax.push((
         1,
-        serde_json::from_value(json!({"key":"f","src":"adapter:rust/syntax","visibility":"pub"}))
-            .unwrap(),
+        test_row(json!({"key":"f","src":"adapter:rust/syntax","visibility":"pub"})),
     ));
     old.manifest.as_mut().unwrap().scopes[0].layers.syntax =
         gosanja_schema::snapshot::LayerState::Present;
@@ -876,6 +1000,9 @@ fn scheme_suffix_and_version_suffix_do_not_establish_identity() {
     assert_eq!(
         to_value(result.entities).unwrap(),
         json!([
- {"change":"rekeyed","old":"K","new":"K@b"},described("removed","K@b",None,false),described("added","K",None,false)])
+            {"change":"rekeyed","old":"K","new":"K@b"},
+            described("removed","K@b",None,false),
+            described("added","K",None,false)
+        ])
     );
 }

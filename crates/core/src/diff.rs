@@ -4,7 +4,7 @@ mod entities;
 mod externals;
 mod pair;
 mod relations;
-pub mod similarity;
+mod similarity;
 #[cfg(test)]
 mod tests;
 use crate::validate::{Diagnostic, ReadSnapshot};
@@ -15,7 +15,6 @@ use gosanja_schema::{
     },
     snapshot::{LayerState, Scope, Tool},
 };
-pub use relations::compared;
 use std::collections::BTreeMap;
 
 /// Structural differences and the cross-snapshot key mapping used by candidate ranking.
@@ -211,7 +210,7 @@ fn compare_rows(
         candidates,
         pairs: pairs
             .into_iter()
-            .map(|(k, h)| (k.into(), h.into()))
+            .map(|(old_key, new_key)| (old_key.into(), new_key.into()))
             .collect(),
     })
 }

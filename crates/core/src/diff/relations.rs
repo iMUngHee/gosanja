@@ -1,3 +1,4 @@
+//! Compare relation identities and the packages reached by their targets.
 use super::externals::package;
 use crate::validate::ReadSnapshot;
 use gosanja_schema::diff::{Change, Endpoint, Excluded, RelationKind, RelationRow, Sides};
@@ -6,9 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Whether a snapshot relation's source layer can contribute to the comparison.
 #[must_use]
-pub fn compared(src: &str, excluded: &[Excluded]) -> bool {
+pub(super) fn compared(src: &str, excluded: &[Excluded]) -> bool {
     !src.strip_prefix("adapter:")
-        .and_then(|s| s.rsplit_once('/'))
+        .and_then(|adapter| adapter.rsplit_once('/'))
         .is_some_and(|(_, layer)| match layer {
             "syntax" => excluded.contains(&Excluded::Syntax),
             "calls" => excluded.contains(&Excluded::Calls),
@@ -17,6 +18,7 @@ pub fn compared(src: &str, excluded: &[Excluded]) -> bool {
 }
 
 type Identity = (Sides<String>, Sides<String>, RelationKind);
+
 pub(super) struct SideRelations {
     rows: BTreeSet<Identity>,
     pub packages: BTreeSet<String>,
@@ -24,13 +26,13 @@ pub(super) struct SideRelations {
 
 impl SideRelations {
     pub fn new(
-        s: &ReadSnapshot,
+        snapshot: &ReadSnapshot,
         pairs: &BTreeMap<&str, &str>,
         old: bool,
         excluded: &[Excluded],
     ) -> Self {
         let endpoint = |key: &str| {
-            let partner = pairs.get(key).map(|s| (*s).to_owned());
+            let partner = pairs.get(key).copied().map(str::to_owned);
             if old {
                 Sides {
                     old: Some(key.into()),
@@ -43,14 +45,14 @@ impl SideRelations {
                 }
             }
         };
-        let externals: BTreeMap<_, _> = s
+        let externals: BTreeMap<_, _> = snapshot
             .externals
             .iter()
             .map(|(_, external)| (external.key.as_str(), external))
             .collect();
         let mut rows = BTreeSet::new();
         let mut packages = BTreeSet::new();
-        for (_, relation) in &s.relations {
+        for (_, relation) in &snapshot.relations {
             if !compared(&relation.src, excluded) {
                 continue;
             }
@@ -117,7 +119,7 @@ pub(super) fn order(rows: &mut [RelationRow]) {
             last(&relation.to.old),
             last(&relation.to.new),
             rel,
-            serde_json::to_vec(relation).expect("serializable relation"),
+            serde_json::to_vec(relation).expect("diff relation rows serialize to JSON"),
         )
     });
 }

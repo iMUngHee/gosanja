@@ -23,27 +23,33 @@ struct Symbols<'a> {
 impl<'a> Symbols<'a> {
     fn of(snapshot: &'a ReadSnapshot, parsed: &SymbolIndex) -> Self {
         let mut index = Self::default();
-        let entities = snapshot.entities.iter().filter_map(|(_, e)| {
+        let entities = snapshot.entities.iter().filter_map(|(_, entity)| {
             Some((
-                e.symbol.as_deref()?,
-                e.key.as_str(),
-                if e.group {
+                entity.symbol.as_deref()?,
+                entity.key.as_str(),
+                if entity.group {
                     Variant::Group
-                } else if e.r#virtual {
+                } else if entity.r#virtual {
                     Variant::Virtual
                 } else {
                     Variant::Definition
                 },
-                e.member_of.is_some(),
+                entity.member_of.is_some(),
             ))
         });
-        for (raw, key, variant, member) in entities.chain(
-            snapshot
-                .externals
-                .iter()
-                .map(|(_, e)| (e.symbol.as_str(), e.key.as_str(), Variant::External, false)),
-        ) {
-            let parts = &parsed[raw];
+        for (raw, key, variant, member) in
+            entities.chain(snapshot.externals.iter().map(|(_, external)| {
+                (
+                    external.symbol.as_str(),
+                    external.key.as_str(),
+                    Variant::External,
+                    false,
+                )
+            }))
+        {
+            let parts = parsed
+                .get(raw)
+                .expect("validation indexed every non-local symbol");
             index
                 .versions
                 .entry(parts.package.clone())
@@ -62,18 +68,20 @@ impl<'a> Symbols<'a> {
             if other.exact.contains_key(raw) {
                 continue;
             }
-            let parts = &parsed[raw];
+            let parts = parsed
+                .get(raw)
+                .expect("validation indexed every non-local symbol");
             if ![self, other].iter().all(|index| {
                 index
                     .versions
                     .get(&parts.package)
-                    .is_some_and(|v| v.len() == 1)
+                    .is_some_and(|versions| versions.len() == 1)
             }) {
                 continue;
             }
-            for &(key, v) in rows {
+            for &(key, variant) in rows {
                 buckets
-                    .entry((parts.scheme.clone(), parts.base_key.clone(), v))
+                    .entry((parts.scheme.clone(), parts.base_key.clone(), variant))
                     .or_default()
                     .push(key);
             }
@@ -110,10 +118,11 @@ pub(super) fn pairs<'snapshot>(
             pairs.insert(*old_key, *new_key);
         }
     }
-    let files = |s: &'snapshot ReadSnapshot| {
-        s.files
+    let files = |snapshot: &'snapshot ReadSnapshot| {
+        snapshot
+            .files
             .iter()
-            .map(|(_, f)| (f.path.as_str(), f.sha256.as_str()))
+            .map(|(_, file)| (file.path.as_str(), file.sha256.as_str()))
             .collect::<BTreeMap<_, _>>()
     };
     let (old_files, new_files) = (files(old_snapshot), files(new_snapshot));
@@ -124,24 +133,29 @@ pub(super) fn pairs<'snapshot>(
                 .get(**path)
                 .is_some_and(|digest| sha.eq_ignore_ascii_case(digest))
         })
-        .map(|(&p, _)| p)
+        .map(|(&path, _)| path)
         .collect();
-    let member_buckets = |s: &'snapshot ReadSnapshot, old_side: bool| {
+    let member_buckets = |snapshot: &'snapshot ReadSnapshot, old_side: bool| {
         let mut buckets = BTreeMap::<_, Vec<_>>::new();
-        for (_, e) in &s.entities {
-            if let (Some(group), Some(def)) = (e.member_of.as_deref(), e.def.as_ref())
+        for (_, entity) in &snapshot.entities {
+            if let (Some(group), Some(def)) = (entity.member_of.as_deref(), entity.def.as_ref())
                 && unchanged.contains(def.file.as_str())
             {
-                let g = if old_side {
+                let paired_group = if old_side {
                     pairs.get(group).copied()
                 } else {
                     Some(group)
                 };
-                if let Some(g) = g {
+                if let Some(paired_group) = paired_group {
                     buckets
-                        .entry((g, def.file.as_str(), e.kind.as_deref(), def.name.0))
+                        .entry((
+                            paired_group,
+                            def.file.as_str(),
+                            entity.kind.as_deref(),
+                            def.name.0,
+                        ))
                         .or_default()
-                        .push(e.key.as_str());
+                        .push(entity.key.as_str());
                 }
             }
         }
@@ -153,10 +167,11 @@ pub(super) fn pairs<'snapshot>(
             pairs.insert(*old_key, *new_key);
         }
     }
-    let entities = |s: &'snapshot ReadSnapshot| {
-        s.entities
+    let entities = |snapshot: &'snapshot ReadSnapshot| {
+        snapshot
+            .entities
             .iter()
-            .map(|(_, e)| (e.key.as_str(), e))
+            .map(|(_, entity)| (entity.key.as_str(), entity))
             .collect::<BTreeMap<_, _>>()
     };
     let (old, new) = (entities(old_snapshot), entities(new_snapshot));
@@ -166,13 +181,13 @@ pub(super) fn pairs<'snapshot>(
         .collect();
     while let Some((old_key, new_key)) = work.pop() {
         if let (Some(parent), Some(other)) = (
-            old.get(old_key).and_then(|e| e.parent.as_deref()),
-            new.get(new_key).and_then(|e| e.parent.as_deref()),
+            old.get(old_key).and_then(|entity| entity.parent.as_deref()),
+            new.get(new_key).and_then(|entity| entity.parent.as_deref()),
         ) && parent == other
             && !pairs.contains_key(parent)
             && [old.get(parent), new.get(other)]
                 .iter()
-                .all(|e| e.is_some_and(|entity| entity.r#virtual && entity.symbol.is_none()))
+                .all(|row| row.is_some_and(|entity| entity.r#virtual && entity.symbol.is_none()))
         {
             pairs.insert(parent, other);
             work.push((parent, other));

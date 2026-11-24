@@ -1,3 +1,4 @@
+//! Compare entity descriptions and properties across paired keys.
 use crate::validate::ReadSnapshot;
 use gosanja_schema::{
     diff::{Description, EntityRow, Properties, Sides},
@@ -6,11 +7,11 @@ use gosanja_schema::{
 use std::collections::BTreeMap;
 
 pub(super) fn lines(definition: &Def) -> Option<u64> {
-    let [sl, _, el, ec] = definition.body?.0;
-    u64::from(el)
-        .checked_sub(u64::from(sl))?
+    let [start_line, _, end_line, end_column] = definition.body?.0;
+    u64::from(end_line)
+        .checked_sub(u64::from(start_line))?
         .checked_add(1)?
-        .checked_sub(u64::from(ec == 0 && el > sl))
+        .checked_sub(u64::from(end_column == 0 && end_line > start_line))
 }
 
 fn outline(nodes: &[OutlineNode]) -> BTreeMap<String, u64> {
@@ -101,7 +102,7 @@ pub(super) fn changes(
         snapshot
             .syntax
             .iter()
-            .map(|(_, snapshot)| (snapshot.key.as_str(), snapshot))
+            .map(|(_, syntax)| (syntax.key.as_str(), syntax))
             .collect()
     }
     let (old_syntax, new_syntax) = (syntax_map(old_snapshot), syntax_map(new_snapshot));
