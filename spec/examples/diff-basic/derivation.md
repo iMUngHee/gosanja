@@ -25,9 +25,7 @@ Step 2, version moved on: the only identity left with one row on each side is `p
 (old 1.0.0, new 2.0.0, both keyed `cargo:pair:f().`). Package `pair` has versions 1.0.0 and 2.0.0
 on each side, so it is not paired. `dep` 0.2.0's rows have no old row left. Nothing pairs.
 
-Step 3: no row without `symbol`.
-
-Step 4, members of the paired groups. File digests: tool.rs `8b1c...` -> `a34e...` (changed),
+Step 3, members of the paired groups. File digests: tool.rs `8b1c...` -> `a34e...` (changed),
 lib.rs `6bf6...` -> `93ee...` (changed), main.rs `47935a88...` on both sides. extra.rs is new.
 
 | Group | old member | new member | Result |
@@ -39,6 +37,8 @@ lib.rs `6bf6...` -> `93ee...` (changed), main.rs `47935a88...` on both sides. ex
 | `main()` | `~1` tool.rs `[0,3,0,7]` | `~2` tool.rs `[1,3,1,7]` | file changed: both unpaired |
 | `main()` | `~2` main.rs | `~3` main.rs | same digest and range: pair |
 | `main()` | - | `~1` extra.rs | unpaired |
+
+Step 4: no row without `symbol`, so no unnamed container to pair.
 
 Totals: 14 entity pairs; old 21 = 14 + 7 unpaired, new 26 = 14 + 12. 9 external pairs; old
 10 = 9 + 1, new 15 = 9 + 6.

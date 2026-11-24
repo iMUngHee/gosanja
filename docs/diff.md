@@ -47,7 +47,10 @@ Two rows are the same thing only when the pairing rules of [spec/diff.md](../spe
 them: by their symbol, by their symbol under a package version that moved on, or, for members
 of a collision group, by an unchanged file and an equal position. Equal key text is not
 identity. A key such as `cargo:pair:f().` can name version 1.0.0 of a function in one snapshot
-and version 2.0.0 in the other, and the diff reports a removed and an added row for it.
+and version 2.0.0 in the other. In `fixtures/diff-basic` the package `pair` is reached in both
+versions on each side, so its change of version is a change of dependency: the diff reports a
+removed and an added row for that `f`. Had each side seen one version of `pair` only, the two
+rows would pair, as a dependency that moved on.
 
 A row that the rules do not pair is reported as removed or added. That is noise, never a false
 statement: the diff states what the two snapshots establish and nothing more.
@@ -83,8 +86,9 @@ had nothing to compare with:
 
 - `syntax`: the syntax layer is present on one side only. Syntax properties (visibility,
   qualifiers, attributes, outline) and the calls the syntax layer declared are not compared.
-- `calls`: the calls layer is present on one side only, or the two sides were built with
-  different build contexts. Calls from that layer are not compared.
+- `calls`: the calls layer is present on one side only, or it is present on both and the two
+  sides were built with different build contexts. Calls from that layer are not compared. When
+  neither side has the calls layer, the build contexts do not matter.
 
 A comparison that is listed there produced no rows, so the absence of such rows says nothing.
 What is not compared is also left out of the candidates and of the package lists.

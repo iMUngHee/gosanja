@@ -1097,3 +1097,30 @@ fn both_diff_documents_open_with_what_a_row_states() {
         }
     }
 }
+
+/// An added or removed row carries what its snapshot row has by its variant, and a property
+/// that is compared only when both sides observed it has both sides.
+#[test]
+fn diff_entity_rows_carry_what_their_variant_and_property_require() {
+    let schemas = Schemas::load();
+    for row in [
+        json!({"change": "added", "new": "cargo:d:f().", "name": "f", "file": "src/lib.rs"}),
+        json!({"change": "removed", "old": "cargo:d:f().", "name": "f", "role": "callable"}),
+        json!({"change": "added", "new": "cargo:d:m/", "name": "m", "virtual": true}),
+        json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"lines": {"old": 2}}}),
+        json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"outline": {"new": {}}}}),
+        json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"kind": {"note": "x"}}}),
+    ] {
+        schemas.assert_invalid("diff-entity", &row);
+    }
+    for row in [
+        json!({"change": "added", "new": "cargo:d:g().", "name": "g", "group": true}),
+        json!({"change": "added", "new": "cargo:d:m/", "name": "m", "role": "container", "virtual": true}),
+        json!({"change": "removed", "old": "cargo:d:f().~1", "name": "f", "role": "callable", "member_of": "cargo:d:f().", "file": "src/a.rs"}),
+        json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"visibility": {"new": "pub"}}}),
+        json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"lines": {"old": 2, "new": 3}, "later": 1}}),
+        json!({"change": "added", "new": "cargo:d:f().", "name": "f", "role": "callable", "file": "src/lib.rs", "later": true}),
+    ] {
+        schemas.assert_valid("diff-entity", &row);
+    }
+}

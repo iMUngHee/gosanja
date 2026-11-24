@@ -41,6 +41,18 @@
       "then": {"required": ["old", "name"], "properties": {"new": false, "properties": false}}
     },
     {
+      "if": {"properties": {"change": {"enum": ["added", "removed"]}}, "required": ["change"]},
+      "then": {
+        "allOf": [
+          {"if": {"required": ["group"]}, "else": {"required": ["role"]}},
+          {
+            "if": {"anyOf": [{"required": ["group"]}, {"required": ["virtual"]}]},
+            "else": {"required": ["file"]}
+          }
+        ]
+      }
+    },
+    {
       "if": {"properties": {"change": {"enum": ["changed", "rekeyed"]}}, "required": ["change"]},
       "then": {
         "required": ["old", "new"],
@@ -79,12 +91,12 @@
       "kind": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/properties/kind"}, "new": {"$ref": "entity.schema.json#/properties/kind"}}},
       "role": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/properties/role"}, "new": {"$ref": "entity.schema.json#/properties/role"}}},
       "file": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "file.schema.json#/$defs/path"}, "new": {"$ref": "file.schema.json#/$defs/path"}}},
-      "lines": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "integer", "minimum": 1}, "new": {"type": "integer", "minimum": 1}}},
+      "lines": {"$ref": "diff-entity.schema.json#/$defs/pair", "required": ["old", "new"], "properties": {"old": {"type": "integer", "minimum": 1}, "new": {"type": "integer", "minimum": 1}}},
       "text": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "string"}, "new": {"type": "string"}}},
       "texts": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "array", "items": {"type": "string"}}, "new": {"type": "array", "items": {"type": "string"}}}},
-      "outline": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "diff-entity.schema.json#/$defs/outline-counts"}, "new": {"$ref": "diff-entity.schema.json#/$defs/outline-counts"}}}
+      "outline": {"$ref": "diff-entity.schema.json#/$defs/pair", "required": ["old", "new"], "properties": {"old": {"$ref": "diff-entity.schema.json#/$defs/outline-counts"}, "new": {"$ref": "diff-entity.schema.json#/$defs/outline-counts"}}}
     },
-    "pair": {"type": "object", "minProperties": 1},
+    "pair": {"type": "object", "anyOf": [{"required": ["old"]}, {"required": ["new"]}]},
     "outline-counts": {
       "type": "object",
       "propertyNames": {"pattern": "^[a-z][a-z-]*$"},

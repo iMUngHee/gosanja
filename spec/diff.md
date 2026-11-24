@@ -69,13 +69,14 @@ a scheme in the other. The steps, in order, over entities and externals together
    only if the package of that identity has exactly one version on each side, counted over all
    rows of both tables. Where two versions of a package are seen on a side, a row that changed
    its version is a change of dependency and stays unpaired.
-3. **Unnamed virtual containers** (no `symbol`). Two with equal keys pair when at least one
-   child of the one is paired with a child of the other. This is repeated until nothing
-   changes.
-4. **Members**, only of two groups that are paired. A member is identified within its group by
+3. **Members**, only of two groups that are paired. A member is identified within its group by
    its file. If the file's `sha256` is the same digest on both sides, compared as a value so
    that upper- and lowercase hex are equal, members of equal kind pair when their name ranges
    are equal. If the file changed, its members stay unpaired, whatever their ranges.
+4. **Unnamed virtual containers** (no `symbol`). Two with equal keys pair when at least one
+   child of the one is paired with a child of the other, by any step, members included. This is
+   repeated until nothing changes, so that a chain of unnamed containers pairs from its paired
+   descendants upwards.
 
 A definition whose symbol becomes a group because a second definition appeared is therefore
 removed, and the group and its members are added. This is what a new collision looks like in a
@@ -159,7 +160,8 @@ A pair with equal keys and no differing property has no row. A position alone is
 
 `properties` lists the differing properties in the order of the table below. Each member is
 `{old, new}`, the property's value on each side; a side's member is absent when the snapshot has
-no value there.
+no value there, and at least one side is present. `lines` and `outline` are compared only when
+both sides have them, so they always have both.
 
 | Property | Compared values |
 | --- | --- |
@@ -269,9 +271,10 @@ its word to `not_compared`:
 
 - `syntax`: the syntax layer is `present` on one side only. Syntax properties, and relations
   whose `src` is the syntax layer, are not compared.
-- `calls`: the calls layer is `present` on one side only, or its build contexts are not equal as
-  sets of whole rows. Relations whose `src` is the calls layer are not compared, because call
-  evidence holds for a build.
+- `calls`: the calls layer is `present` on one side only, or it is `present` on both and their
+  build contexts are not equal as sets of whole rows. Relations whose `src` is the calls layer
+  are not compared, because call evidence holds for a build. When the calls layer is present on
+  neither side, the build contexts are not looked at.
 
 What is not compared is also left out of the candidate features and of the packages. Gaps
 themselves are not diffed. Their counts per kind are in the manifest.
