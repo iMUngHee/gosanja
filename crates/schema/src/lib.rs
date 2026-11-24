@@ -6,5 +6,6 @@
 
 pub mod compat;
 pub mod contract;
+pub mod diff;
 pub mod position;
 pub mod snapshot;

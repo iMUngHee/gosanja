@@ -666,3 +666,46 @@ fn an_unknown_value_in_any_closed_field_is_skipped() {
     assert_eq!(codes(&read.diagnostics), []);
     assert_eq!((read.gaps.len(), read.skipped), (0, 2));
 }
+
+#[test]
+fn symbols_are_global_in_both_tables() {
+    for (file, bad) in [
+        ("entities.jsonl", "local 4"),
+        ("externals.jsonl", "malformed"),
+        ("entities.jsonl", "malformed"),
+        ("externals.jsonl", "local 4"),
+    ] {
+        let files = with(golden(), file, |text| {
+            let (line, rest) = text.split_once('\n').unwrap();
+            let mut row: serde_json::Value = serde_json::from_str(line).unwrap();
+            row["symbol"] = bad.into();
+            format!("{row}\n{rest}")
+        });
+        assert!(check(&files).contains(&(file, "invalid-symbol")));
+    }
+}
+
+#[test]
+fn a_parent_cycle_is_diagnosed() {
+    let files = with(golden(), "entities.jsonl", |s| {
+        s.replacen(
+            r#""name":"views","#,
+            r#""name":"views","parent":"cargo:demo:views/Joined#","#,
+            1,
+        )
+    });
+    assert!(check(&files).contains(&("entities.jsonl", "parent-cycle")));
+}
+
+#[test]
+fn a_member_edge_closes_a_parent_cycle() {
+    let files = read_dir(&fixture("diff-basic").join("old/expected"));
+    let files = with(files, "entities.jsonl", |text| {
+        text.replacen(
+            r#""key":"cargo:diff-basic:crate/","#,
+            r#""key":"cargo:diff-basic:crate/","parent":"cargo:diff-basic:crate/~1","#,
+            1,
+        )
+    });
+    assert!(check(&files).contains(&("entities.jsonl", "parent-cycle")));
+}

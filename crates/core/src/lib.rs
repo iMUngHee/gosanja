@@ -5,6 +5,7 @@
 
 pub mod adapter;
 pub mod anchor;
+pub mod diff;
 pub mod graph;
 pub mod identity;
 pub mod publish;

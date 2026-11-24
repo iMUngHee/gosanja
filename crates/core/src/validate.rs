@@ -295,6 +295,53 @@ impl ReadSnapshot {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct SymbolParts {
+    pub scheme: String,
+    pub package: (String, String),
+    pub version: String,
+    pub base_key: String,
+}
+pub(crate) type SymbolIndex = BTreeMap<String, SymbolParts>;
+pub(crate) fn symbol_parts(snap: &ReadSnapshot, diagnostics: &mut Vec<Diagnostic>) -> SymbolIndex {
+    use crate::identity::{Parsed, parse};
+    let symbols = snap
+        .entities
+        .iter()
+        .filter_map(|(line, e)| Some(("entities.jsonl", *line, e.symbol.as_deref()?)))
+        .chain(
+            snap.externals
+                .iter()
+                .map(|(line, e)| ("externals.jsonl", *line, e.symbol.as_str())),
+        );
+    let mut index = SymbolIndex::new();
+    for (file, line, symbol) in symbols {
+        if index.contains_key(symbol) {
+            continue;
+        }
+        if let Ok(Parsed::Global(parsed)) = parse(symbol) {
+            let base_key = parsed.base_key();
+            index.insert(
+                symbol.to_owned(),
+                SymbolParts {
+                    base_key,
+                    scheme: parsed.scheme,
+                    package: (parsed.manager, parsed.package),
+                    version: parsed.version,
+                },
+            );
+        } else {
+            diagnostics.push(Diagnostic {
+                file,
+                line: Some(line),
+                code: "invalid-symbol",
+                detail: format!("expected a global SCIP symbol: {symbol}"),
+            });
+        }
+    }
+    index
+}
+
 /// Validates a snapshot written with this crate's schema version. With `sources`, the files it
 /// records are compared with the source tree as well.
 ///
@@ -305,7 +352,15 @@ pub fn validate(
     files: &SnapshotFiles,
     sources: Option<&dyn SourceReader>,
 ) -> Result<Vec<Diagnostic>, Refusal> {
-    let mut snap = read(files, SCHEMA_VERSION)?;
+    let snapshot = read(files, SCHEMA_VERSION)?;
+    Ok(checked(snapshot, files, sources).0.diagnostics)
+}
+
+pub(crate) fn checked(
+    mut snap: ReadSnapshot,
+    files: &SnapshotFiles,
+    sources: Option<&dyn SourceReader>,
+) -> (ReadSnapshot, SymbolIndex) {
     let mut v = Checks {
         diagnostics: std::mem::take(&mut snap.diagnostics),
     };
@@ -313,6 +368,8 @@ pub fn validate(
     v.order(files, &snap);
     let lines = v.files(&snap, sources);
     v.entities(&snap, &lines);
+    let symbols = symbol_parts(&snap, &mut v.diagnostics);
+    v.identities(&snap);
     v.relations(&snap, &lines);
     v.gaps(&snap, &lines);
     let entity_keys: BTreeSet<&str> = snap.entities.iter().map(|(_, e)| e.key.as_str()).collect();
@@ -326,7 +383,8 @@ pub fn validate(
             );
         }
     }
-    Ok(v.diagnostics)
+    snap.diagnostics = v.diagnostics;
+    (snap, symbols)
 }
 
 /// What a table's order requires besides sorting.
@@ -630,6 +688,44 @@ impl Checks {
                 self.position("entities.jsonl", line, lines, &def.file, def.name);
                 if let Some(body) = def.body {
                     self.position("entities.jsonl", line, lines, &def.file, body);
+                }
+            }
+        }
+    }
+
+    fn identities(&mut self, snap: &ReadSnapshot) {
+        let entities: BTreeMap<_, _> = snap
+            .entities
+            .iter()
+            .map(|(line, e)| (e.key.as_str(), (*line, e)))
+            .collect();
+        let mut finished = BTreeSet::new();
+        let mut visiting = BTreeSet::new();
+        for &root in entities.keys() {
+            let mut stack = vec![(root, false)];
+            while let Some((key, leaving)) = stack.pop() {
+                if leaving {
+                    visiting.remove(key);
+                    finished.insert(key);
+                } else if !finished.contains(key)
+                    && let Some(&(line, e)) = entities.get(key)
+                {
+                    if visiting.insert(key) {
+                        stack.push((key, true));
+                        stack.extend(
+                            e.parent
+                                .iter()
+                                .chain(&e.member_of)
+                                .map(|next| (next.as_str(), false)),
+                        );
+                    } else {
+                        self.diag(
+                            "entities.jsonl",
+                            line,
+                            "parent-cycle",
+                            format!("containment returns to {key}"),
+                        );
+                    }
                 }
             }
         }
