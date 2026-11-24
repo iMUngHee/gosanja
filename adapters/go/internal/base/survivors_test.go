@@ -52,3 +52,15 @@ func TestGoVersionWordWithNoPlatformSuffix(t *testing.T) {
 		}
 	}
 }
+
+func TestModuleFilesOrderedByRelativePath(t *testing.T) {
+	root := t.TempDir()
+	inventory := Inventory{Packages: []Package{{
+		ImportPath: "example.com/p", Dir: root, Module: &struct{ Main bool }{Main: true},
+		GoFiles: []string{"z.go", "a.go"},
+	}}}
+	got := inventory.moduleFiles(root, sources)
+	if len(got) != 2 || got[0].rel != "a.go" || got[1].rel != "z.go" {
+		t.Fatalf("module files out of order: %v", got)
+	}
+}
