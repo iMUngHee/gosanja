@@ -1017,6 +1017,234 @@ example.com/m6/redecl files=1 syntax=1
   its release-tag probe `go list -e -f {{context.ReleaseTags}} -- unsafe` sets `GO111MODULE=off`
   (`internal/gocommand` of x/tools v0.53.0).
 
+## Syntax joins on two public modules
+
+Observed on 2026-11-25, Linux amd64, at gosanja commit
+`b2fc06ba5d7f81bfc0825268afcd742ac3550ee5`. The CLI and Go adapter both report
+version 0.2.0, with snapshot and adapter contract 0.3. The Go executable reports
+`go1.27.3-X:nodwarf5`. The indexer is scip-go 0.2.10 built from the measured
+scip-go module, and the probe uses the adapter's locked SCIP bindings v0.10.0
+and x/tools v0.53.0. The CLI was built with rustc 1.100.0.
+
+The module cache reported the following archive sums and origins.
+
+| Module | Archive sum | Upstream revision |
+| --- | --- | --- |
+| `golang.org/x/mod@v0.43.0` | `h1:MFuq5J6s35W9D3IjkwyWc9vHh0nENOrt5K8Iof4ofmg=` | `d4f320b9266480df5ed3d791e0c68e64c58c5dde` |
+| `github.com/scip-code/scip-go@v0.2.10` | `h1:8C9teuWnKs1+0hHkO/cssGLYnotcHD8AYuep4H0pH1Y=` | `aedacd940b9c42a4885b5ff4c068598dddbb9c1d` |
+
+The source tags are https://go.googlesource.com/mod/+/refs/tags/v0.43.0 and
+https://github.com/scip-code/scip-go/tree/v0.2.10.
+
+### Preparation and run
+
+The preparation copied each pinned module from the module cache and downloaded
+its full build list, including dependencies used only by tests. This was the
+network-enabled phase.
+
+```sh
+repo=$PWD
+scratch=$(mktemp -d)
+revision=b2fc06ba5d7f81bfc0825268afcd742ac3550ee5
+mkdir -p "$scratch/corpus" "$scratch/records"
+export GOENV=off GOWORK=off GOTOOLCHAIN=local GOFLAGS="-mod=readonly -buildvcs=false"
+export GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org
+
+prepare() {
+    label=$1
+    module=$2
+    go mod download -json "$module" > "$scratch/records/$label.download.json"
+    unpacked=$(jq -er .Dir "$scratch/records/$label.download.json")
+    cp -R "$unpacked" "$scratch/corpus/$label"
+    chmod -R u+w "$scratch/corpus/$label"
+    (
+        cd "$scratch/corpus/$label"
+        go mod download all
+        GOPROXY=off GOSUMDB=off go list -m all
+    ) > "$scratch/records/$label.modules"
+}
+prepare x-mod golang.org/x/mod@v0.43.0
+prepare scip-go github.com/scip-code/scip-go@v0.2.10
+```
+
+All builds, adapter runs and analysis used the completed cache with network
+fetches disabled. Corpus loading included tests and disabled cgo.
+
+```sh
+export GOPROXY=off GOSUMDB=off GOPACKAGESDRIVER=off CGO_ENABLED=0
+export GOCACHE="$scratch/go-cache" XDG_CONFIG_HOME="$scratch/config"
+mkdir -p "$scratch/source" "$scratch/bin" "$scratch/capture-bin" "$GOCACHE" "$XDG_CONFIG_HOME"
+git -C "$repo" archive "$revision" > "$scratch/source.tar"
+tar -xf "$scratch/source.tar" -C "$scratch/source"
+(cd "$scratch/source/adapters/go" &&
+    go build -o "$scratch/bin/gosanja-adapter-go" ./cmd/gosanja-adapter-go)
+(cd "$scratch/corpus/scip-go" &&
+    go build -o "$scratch/bin/scip-go" ./cmd/scip-go)
+(cd "$scratch/source" &&
+    CARGO_TARGET_DIR="$scratch/cargo-target" cargo build --offline --locked -p gosanja --bin gosanja)
+cp -R "$scratch/source/fixtures/go-flow" "$scratch/corpus/go-flow"
+```
+
+The capture launcher delegates to the real adapter and copies its three output
+artefacts before returning to the engine. The syntax row denominator comes from
+the exact sidecar read by that engine invocation. The launcher and all
+captured files are in the scratch directory.
+
+```sh
+cat > "$scratch/capture-bin/gosanja-adapter-go" <<'SH'
+#!/bin/sh
+set -eu
+bin=$(CDPATH= cd "$(dirname "$0")/../bin" && pwd)
+if [ "$1" = describe ]; then
+    exec "$bin/gosanja-adapter-go" "$@"
+fi
+"$bin/gosanja-adapter-go" "$@"
+shift
+while [ "$#" -ge 2 ]; do
+    if [ "$1" = --out ]; then
+        cp "$2/result.json" "$D8_CAPTURE/"
+        for artefact in index.scip syntax.jsonl; do
+            if [ -f "$2/$artefact" ]; then cp "$2/$artefact" "$D8_CAPTURE/"; fi
+        done
+        exit 0
+    fi
+    shift 2
+done
+exit 1
+SH
+chmod +x "$scratch/capture-bin/gosanja-adapter-go"
+export PATH="$scratch/bin:$PATH" GOSANJA_ADAPTER_PATH="$scratch/capture-bin"
+cli="$scratch/cargo-target/debug/gosanja"
+for label in x-mod scip-go go-flow; do
+    root="$scratch/corpus/$label"
+    output="$scratch/records/$label.snapshot"
+    export D8_CAPTURE="$scratch/records/$label.raw"
+    mkdir -p "$D8_CAPTURE"
+    printf '\n%s\n' "$label"
+    "$cli" index --root "$root" --out "$output" --layers base,syntax
+    "$cli" validate "$output" --root "$root"
+    jq -c '.scopes[0].layers' "$output/manifest.json"
+    wc -l "$D8_CAPTURE/syntax.jsonl" "$output/syntax.jsonl"
+done
+```
+
+### Measurements
+
+The probe counted `syntax.jsonl` rows in the captured output and in the
+published snapshot, and counted skip entries by layer and code in
+`result.json`. For each `unanchored` gap it checked the admitted file table
+and looked up global definition occurrences at the same physical line and
+UTF-8 byte column in the captured SCIP. It used the typed range when both
+range forms were present. It classified an absent file as excluded, an empty
+definition set as no definition, and a definition set containing only other
+names as a different name. On the last two paths it retained the source
+line and recovered the written identifier with Go's scanner. Scratch
+controls exercised all three classifications.
+
+For each `overlapping-bodies` gap it located both definitions in the Go AST
+and checked whether both names came from the same multi-name value
+declaration or field. It counted type-level and method-level `implements`
+edges from the SCIP descriptors in the two endpoint symbols. For type-level
+edges, a test-inclusive `go/packages.Load` supplied the `go/types` scope
+objects. The probe used source-loaded packages before packages available
+only through imports and preferred test variants with more syntax files.
+It compared `types.Implements(T, I)` with `types.Implements(types.NewPointer(T), I)`
+for each edge. The probe was built in a scratch module using the same Go
+module files and SCIP reader as the adapter.
+
+```sh
+(cd "$scratch/probe" && go build -o "$scratch/measure" .)
+for label in x-mod scip-go go-flow; do
+    "$scratch/measure" "$scratch/corpus/$label" \
+        "$scratch/records/$label.raw" "$scratch/records/$label.snapshot" \
+        > "$scratch/records/$label.measure.json"
+done
+```
+
+Both corpus runs and the go-flow control passed `gosanja validate`.
+
+| Observation | x/mod v0.43.0 | scip-go v0.2.10 |
+| --- | ---: | ---: |
+| Syntax layer | present | present |
+| Syntax rows sent | 810 | 211 |
+| Syntax rows joined | 810 | 211 |
+| Base and syntax skip entries, across all codes | 0 | 0 |
+| Unanchored / sent | 0/810 (0%) | 0/211 (0%) |
+| Unanchored in an excluded file | 0 | 0 |
+| Unanchored at a position without a definition | 0 | 0 |
+| Unanchored at a definition of another name | 0 | 0 |
+| Overlapping-body gaps | 53 | 1 |
+| Overlaps from multi-name declarations | 53 | 1 |
+| Of those, multi-name fields | 53 | 1 |
+| Of those, multi-name value declarations | 0 | 0 |
+| Type-level implementation edges | 50 | 6 |
+| Type-level edges whose value does not implement the interface | 33 | 3 |
+| Of those, the pointer implements the interface | 33 | 3 |
+| Method-level implementation edges | 92 | 6 |
+| Open-call gaps | 192 | 66 |
+
+Every sent row is accounted for by the joined rows and the three miss
+classes. The corpus overlaps all came from multi-name struct fields, for
+example `Low, High` in x/mod and `car, cdr` in scip-go. The go-flow control
+joined 37 of 37 syntax rows and detected two multi-name value overlaps,
+including the shared extent for `A` and `B`. It also found that
+`*meter.Gauge` implements `Loader` while the value does not. The corpus
+pointer-only checks included `*modfile.CommentBlock` for `modfile.Expr` and
+`*visitors.fileVisitor` for `go/ast.Visitor`. These are counts for the
+pinned trees and build context.
+
+### Resolved build lists
+
+`golang.org/x/mod@v0.43.0`
+
+```text
+golang.org/x/mod
+github.com/google/go-cmp v0.6.0
+github.com/yuin/goldmark v1.4.13
+golang.org/x/net v0.61.0
+golang.org/x/sync v0.24.0
+golang.org/x/sys v0.49.0
+golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a
+golang.org/x/tools v0.52.0
+```
+
+`github.com/scip-code/scip-go@v0.2.10`
+
+```text
+github.com/scip-code/scip-go
+github.com/alecthomas/assert/v2 v2.11.0
+github.com/alecthomas/kong v1.17.0
+github.com/alecthomas/repr v0.5.2
+github.com/davecgh/go-spew v1.1.1
+github.com/fatih/color v1.19.0
+github.com/golang/protobuf v1.5.0
+github.com/google/go-cmp v0.7.0
+github.com/google/gofuzz v1.2.0
+github.com/hexops/gotextdiff v1.0.3
+github.com/kr/pretty v0.3.1
+github.com/mattn/go-colorable v0.1.14
+github.com/mattn/go-isatty v0.0.20
+github.com/pmezard/go-difflib v1.0.0
+github.com/rogpeppe/go-internal v1.11.0
+github.com/scip-code/scip/bindings/go/scip v0.10.0
+github.com/sourcegraph/beaut v0.0.0-20240611013027-627e4c25335a
+github.com/stretchr/objx v0.5.3
+github.com/stretchr/testify v1.12.1
+github.com/yuin/goldmark v1.4.13
+go.yaml.in/yaml/v3 v3.0.5
+golang.org/x/mod v0.43.0
+golang.org/x/net v0.63.0
+golang.org/x/sync v0.25.0
+golang.org/x/sys v0.50.0
+golang.org/x/telemetry v0.0.0-20261116191925-e77a43154acb
+golang.org/x/tools v0.53.0
+golang.org/x/tools/go/vcs v0.1.0-deprecated
+google.golang.org/protobuf v1.36.12
+gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c
+gopkg.in/yaml.v3 v3.0.1
+pgregory.net/rapid v1.3.0
+```
+
 ## Licences
 
 The Go modules a Go adapter would use, as their `LICENSE` files in the module cache state:
