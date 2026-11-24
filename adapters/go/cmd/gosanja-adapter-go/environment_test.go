@@ -1,0 +1,407 @@
+package main
+
+import (
+	"bytes"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+
+	"gosanja/adapters/go/internal/env"
+)
+
+// shellAdded are the variables the recording shell sets by itself.
+var shellAdded = map[string]bool{"PWD": true, "SHLVL": true, "_": true}
+
+// passedNames are the caller variables a child may carry unchanged.
+var passedNames = map[string]bool{"PATH": true, "HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+	"http_proxy": true, "https_proxy": true, "all_proxy": true, "no_proxy": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true}
+
+func settingName(k string) bool {
+	for _, s := range env.Settings {
+		if s == k {
+			return true
+		}
+	}
+	return false
+}
+
+// checkBootstrap checks the first logged invocation: the query for the eight names, in
+// <out>/work, with the env file, every write destination under <out>/work and nothing else
+// but the caller's PATH, network variables and exported settings.
+func checkBootstrap(t *testing.T, inv invocation, out, envFile string) {
+	t.Helper()
+	work := filepath.Join(out, "work")
+	if want := append([]string{"env", "-json"}, env.Settings...); !reflect.DeepEqual(inv.args, want) {
+		t.Errorf("first invocation %v", inv.args)
+	}
+	if inv.cwd != work {
+		t.Errorf("first invocation in %s", inv.cwd)
+	}
+	want := map[string]string{
+		"GOENV": envFile, "HOME": filepath.Join(work, "home"), "XDG_CONFIG_HOME": filepath.Join(work, "config"),
+		"GOCACHE": filepath.Join(work, "cache"), "TMPDIR": filepath.Join(work, "tmp"), "GOTMPDIR": filepath.Join(work, "tmp"),
+		"GOTOOLCHAIN": "local", "GOWORK": "off", "GOPACKAGESDRIVER": "off",
+	}
+	for k, v := range want {
+		if inv.vars[k] != v {
+			t.Errorf("bootstrap %s=%q, want %q", k, inv.vars[k], v)
+		}
+	}
+	for k := range inv.vars {
+		if _, ok := want[k]; !ok && !shellAdded[k] && !passedNames[k] && !settingName(k) {
+			t.Errorf("bootstrap carries %s", k)
+		}
+	}
+}
+
+// checkChild checks a later invocation: the root as working directory and the child environment alone.
+func checkChild(t *testing.T, inv invocation, root, out string, vendor bool) {
+	t.Helper()
+	work := filepath.Join(out, "work")
+	if inv.cwd != root {
+		t.Errorf("%v in %s", inv.args, inv.cwd)
+	}
+	mod := "-mod=readonly"
+	if vendor {
+		mod = "-mod=vendor"
+	}
+	want := map[string]string{
+		"GOENV": "off", "HOME": filepath.Join(work, "home"), "XDG_CONFIG_HOME": filepath.Join(work, "config"),
+		"GOCACHE": filepath.Join(work, "cache"), "TMPDIR": filepath.Join(work, "tmp"), "GOTMPDIR": filepath.Join(work, "tmp"),
+		"GOTOOLCHAIN": "local", "GOWORK": "off", "GOPACKAGESDRIVER": "off", "CGO_ENABLED": "0",
+		"GOFLAGS": "-buildvcs=false " + mod,
+	}
+	for k, v := range want {
+		if inv.vars[k] != v {
+			t.Errorf("%v: %s=%q, want %q", inv.args, k, inv.vars[k], v)
+		}
+	}
+	for k := range inv.vars {
+		if _, ok := want[k]; !ok && !shellAdded[k] && !passedNames[k] && !settingName(k) {
+			t.Errorf("%v carries %s", inv.args, k)
+		}
+	}
+}
+
+func TestEnvironment(t *testing.T) {
+	type setup struct {
+		extra   map[string]string
+		prepare func(w *world, root string)
+		envFile func(w *world) string // the GOENV the bootstrap must get
+		proxy   func(w *world) string // the GOPROXY the later invocations must carry
+	}
+	// fileProxy serves the test's module cache, so that a GOPROXY from the env file works offline.
+	fileProxy := func(w *world) string { return "file://" + filepath.Join(moduleCache(w.t), "cache", "download") }
+	defaultFile := func(w *world) string { return filepath.Join(w.home, ".config", "go", "env") }
+	cases := map[string]setup{
+		"read-only": {prepare: func(w *world, root string) { readOnly(w.t, root) }},
+		"a caller's environment that points into the root": {
+			extra: map[string]string{"GOFLAGS": "-mod=mod", "GOWORK": "ROOT/go.work", "GOTOOLCHAIN": "auto",
+				"GOCACHE": "ROOT/cache", "TMPDIR": "ROOT/tmp", "GOPACKAGESDRIVER": "ROOT/driver"},
+		},
+		"the user's env file sets GOFLAGS and GOPROXY": {
+			extra: map[string]string{"GOPROXY": ""},
+			prepare: func(w *world, root string) {
+				w.write(defaultFile(w), "GOFLAGS=-mod=mod\nGOPROXY="+fileProxy(w)+"\n", 0o644)
+			},
+			proxy: fileProxy,
+		},
+		"a packages driver on PATH": {
+			prepare: func(w *world, root string) {
+				w.write(filepath.Join(w.bin, "gopackagesdriver"), "#!/bin/sh\necho called >> '"+filepath.Join(w.dir, "driver.record")+"'\nexit 1\n", 0o755)
+			},
+		},
+		"a relative GOENV": {
+			extra: map[string]string{"GOENV": "conf/env"},
+			prepare: func(w *world, root string) {
+				w.write(filepath.Join(w.dir, "conf", "env"), "GONOSUMDB=relative.example.invalid\n", 0o644)
+			},
+			envFile: func(w *world) string { return filepath.Join(w.dir, "conf", "env") },
+		},
+		"GOENV off": {
+			extra:   map[string]string{"GOENV": "off"},
+			envFile: func(*world) string { return "off" },
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.recordingGo()
+			root := w.flow("go-flow")
+			extra := map[string]string{}
+			for k, v := range c.extra {
+				extra[k] = strings.ReplaceAll(v, "ROOT", root)
+			}
+			if c.prepare != nil {
+				c.prepare(w, root)
+			}
+			before := listing(t, root)
+			configBefore := listing(t, w.home)
+			out, code, stderr := w.index(w.caller(extra), root)
+			if code != 0 || baseEntry(t, out).Status != "ok" {
+				t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+			}
+			if after := listing(t, root); !reflect.DeepEqual(before, after) {
+				t.Errorf("the root changed")
+			}
+			if after := listing(t, w.home); !reflect.DeepEqual(configBefore, after) {
+				t.Errorf("the caller's home changed")
+			}
+			if _, err := os.Stat(filepath.Join(w.dir, "driver.record")); err == nil {
+				t.Errorf("the packages driver ran")
+			}
+			envFile := defaultFile(w)
+			if c.envFile != nil {
+				envFile = c.envFile(w)
+			}
+			record := readRecord(t, w.gorec)
+			if len(record) < 2 {
+				t.Fatalf("record %+v", record)
+			}
+			checkBootstrap(t, record[0], out, envFile)
+			proxy := "off"
+			if c.proxy != nil {
+				proxy = c.proxy(w)
+			}
+			for _, inv := range append(record[1:], readRecord(t, w.record)...) {
+				checkChild(t, inv, root, out, false)
+				if inv.vars["GOPROXY"] != proxy {
+					t.Errorf("%v: GOPROXY=%q, want %q", inv.args, inv.vars["GOPROXY"], proxy)
+				}
+			}
+		})
+	}
+}
+
+func TestEnvironmentDefaults(t *testing.T) {
+	w := newWorld(t)
+	w.recordingGo()
+	root := w.simple("m", nil)
+	out, code, stderr := w.index(w.caller(map[string]string{"GOMODCACHE": "", "GOPATH": ""}), root)
+	if code != 0 || baseEntry(t, out).Status != "ok" {
+		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+	}
+	for _, inv := range readRecord(t, w.gorec)[1:] {
+		if inv.vars["GOPATH"] != filepath.Join(w.home, "go") || inv.vars["GOMODCACHE"] != filepath.Join(w.home, "go", "pkg", "mod") {
+			t.Errorf("%v: GOPATH=%q GOMODCACHE=%q", inv.args, inv.vars["GOPATH"], inv.vars["GOMODCACHE"])
+		}
+	}
+}
+
+func TestEnvironmentTelemetry(t *testing.T) {
+	for _, which := range []string{"config directory", "telemetry directory"} {
+		t.Run(which, func(t *testing.T) {
+			w := newWorld(t)
+			root := w.flow("go-flow")
+			into := filepath.Join(root, "inside")
+			if err := os.Mkdir(into, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			config := filepath.Join(w.dir, "config")
+			if which == "config directory" {
+				link(t, into, config)
+			} else {
+				link(t, into, filepath.Join(config, "go", "telemetry", "local"))
+			}
+			out, code, stderr := w.index(w.caller(map[string]string{"XDG_CONFIG_HOME": config}), root)
+			if code != 0 || baseEntry(t, out).Status != "ok" {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if entries, _ := os.ReadDir(into); len(entries) != 0 {
+				t.Errorf("%d files appeared in the root", len(entries))
+			}
+			telemetry, _ := os.ReadDir(filepath.Join(out, "work", "config", "go", "telemetry", "local"))
+			if len(telemetry) == 0 {
+				t.Errorf("no telemetry under <out>/work/config")
+			}
+		})
+	}
+}
+
+func TestEnvironmentGoSum(t *testing.T) {
+	w := newWorld(t)
+	root := w.flow("go-flow")
+	sum := filepath.Join(root, "go.sum")
+	text, err := os.ReadFile(sum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	removed := ""
+	for _, line := range strings.SplitAfter(string(text), "\n") {
+		if strings.Contains(line, "/go.mod h1:") {
+			removed = line
+		} else {
+			kept = append(kept, line)
+		}
+	}
+	cut := []byte(strings.Join(kept, ""))
+	if bytes.Equal(cut, text) {
+		t.Fatal("the fixture's go.sum has no go.mod line")
+	}
+	w.write(sum, string(cut), 0o644)
+	out, code, stderr := w.index(w.caller(map[string]string{"GOFLAGS": "-mod=mod"}), root)
+	if e := baseEntry(t, out); code != 0 || e.Status != "failed" || e.Diagnostics[0].Code != "dependencies-missing" {
+		t.Fatalf("exit %d, base %+v: %s", code, e, stderr)
+	}
+	if after, _ := os.ReadFile(sum); !bytes.Equal(after, cut) {
+		t.Errorf("go.sum was completed")
+	}
+	w.goIn(root, []string{"GOFLAGS=-mod=mod"}, "list", "-m", "all")
+	if after, _ := os.ReadFile(sum); !strings.Contains(string(after), removed) {
+		t.Errorf("control: go list -m all under -mod=mod did not restore %q:\n%s", removed, after)
+	}
+}
+
+type listener struct {
+	*httptest.Server
+	mu   sync.Mutex
+	hits []string
+}
+
+// newListener records each request; with a module cache it serves the cache's download
+// directory, which has the layout of a module proxy, and otherwise answers 404.
+func newListener(t *testing.T, cache string) *listener {
+	l := &listener{}
+	files := http.NotFoundHandler()
+	if cache != "" {
+		files = http.FileServer(http.Dir(filepath.Join(cache, "cache", "download")))
+	}
+	l.Server = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		l.mu.Lock()
+		l.hits = append(l.hits, r.URL.Path)
+		l.mu.Unlock()
+		files.ServeHTTP(rw, r)
+	}))
+	t.Cleanup(l.Close)
+	return l
+}
+
+func (l *listener) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.hits)
+}
+
+func TestEnvironmentProxy(t *testing.T) {
+	w := newWorld(t)
+	w.recordingGo()
+	exported, fromFile := newListener(t, moduleCache(t)), newListener(t, "")
+	root := w.flow("go-flow")
+	w.write(filepath.Join(w.home, ".config", "go", "env"), "GOPROXY="+fromFile.URL+"\n", 0o644)
+	cold := filepath.Join(w.dir, "cold-cache")
+	// The go command leaves the module cache read-only; the temporary directory's removal needs it writable.
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(cold, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				_ = os.Chmod(path, 0o755)
+			}
+			return nil
+		})
+	})
+	out, code, stderr := w.index(w.caller(map[string]string{"GOPROXY": exported.URL, "GOMODCACHE": cold}), root)
+	if code != 0 || baseEntry(t, out).Status != "ok" {
+		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+	}
+	if exported.count() == 0 || fromFile.count() != 0 {
+		t.Fatalf("requests: exported %d, env file %d", exported.count(), fromFile.count())
+	}
+	for _, inv := range readRecord(t, w.gorec)[1:] {
+		if inv.vars["GOPROXY"] != exported.URL {
+			t.Errorf("%v: GOPROXY=%q", inv.args, inv.vars["GOPROXY"])
+		}
+	}
+}
+
+func TestEnvironmentGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatal("this test needs git")
+	}
+	w := newWorld(t)
+	root := w.flow("go-flow")
+	gitRecord := filepath.Join(w.dir, "git.record")
+	realGit, _ := exec.LookPath("git")
+	w.write(filepath.Join(w.bin, "git"), "#!/bin/sh\necho \"$*\" >> '"+gitRecord+"'\nexec '"+realGit+"' \"$@\"\n", 0o755)
+	gitIn := func(args ...string) {
+		cmd := exec.Command(realGit, args...)
+		cmd.Dir = root
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + w.home, "GIT_AUTHOR_NAME=p", "GIT_AUTHOR_EMAIL=p@example.invalid",
+			"GIT_COMMITTER_NAME=p", "GIT_COMMITTER_EMAIL=p@example.invalid"}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	gitIn("init", "-q")
+	gitIn("add", "-A")
+	gitIn("commit", "-qm", "fixture")
+	index := filepath.Join(root, ".git", "index")
+	stale := func() []byte {
+		later := filepath.Join(root, "flow.go")
+		info, _ := os.Stat(later)
+		if err := os.Chtimes(later, info.ModTime().Add(2e9), info.ModTime().Add(2e9)); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(index)
+		return data
+	}
+	// Positive controls: default stamping runs git status, and git status rewrites a stale index.
+	stale()
+	cmd := exec.Command(realGo(t), "list", "-e", "-test", "-deps", "-json", "./...")
+	cmd.Dir = root
+	cmd.Env = []string{"PATH=" + w.bin + ":/usr/bin:/bin", "HOME=" + w.home, "GOPROXY=off", "GOTOOLCHAIN=local", "GOWORK=off",
+		"GOMODCACHE=" + moduleCache(t), "GOCACHE=" + filepath.Join(w.dir, "control-cache"), "CGO_ENABLED=0"}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("control go list: %v\n%s", err, out)
+	}
+	if log, _ := os.ReadFile(gitRecord); !strings.Contains(string(log), "status --porcelain") {
+		t.Fatalf("control: go list did not run git status; git ran %q", log)
+	}
+	before := stale()
+	gitIn("status", "--porcelain")
+	if after, _ := os.ReadFile(index); bytes.Equal(before, after) {
+		t.Fatal("control: git status did not rewrite the stale index")
+	}
+	_ = os.Remove(gitRecord)
+	before = stale()
+	w.recordingGo()
+	out, code, stderr := w.index(w.caller(nil), root)
+	if code != 0 || baseEntry(t, out).Status != "ok" {
+		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+	}
+	if log, _ := os.ReadFile(gitRecord); strings.Contains(string(log), "status") {
+		t.Errorf("the adapter's run ran git status: %q", log)
+	}
+	if after, _ := os.ReadFile(index); !bytes.Equal(before, after) {
+		t.Errorf("the adapter's run rewrote .git/index")
+	}
+	for _, inv := range readRecord(t, w.gorec)[1:] {
+		if !strings.Contains(inv.vars["GOFLAGS"], "-buildvcs=false") {
+			t.Errorf("%v: GOFLAGS=%q", inv.args, inv.vars["GOFLAGS"])
+		}
+	}
+}
+
+func TestEnvironmentVendor(t *testing.T) {
+	w := newWorld(t)
+	w.recordingGo()
+	root := w.flow("go-flow")
+	w.goIn(root, nil, "mod", "vendor")
+	out, code, stderr := w.index(w.caller(map[string]string{"GOMODCACHE": filepath.Join(w.dir, "empty-cache")}), root)
+	if code != 0 || baseEntry(t, out).Status != "ok" {
+		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+	}
+	record := readRecord(t, w.gorec)
+	if len(record) < 2 {
+		t.Fatalf("record %+v", record)
+	}
+	for _, inv := range append(record[1:], readRecord(t, w.record)...) {
+		checkChild(t, inv, root, out, true)
+	}
+}
