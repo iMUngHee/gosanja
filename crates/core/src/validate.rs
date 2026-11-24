@@ -281,7 +281,9 @@ impl ReadSnapshot {
     /// keys that were actually skipped count; any other dangling key is left for the
     /// validator to report.
     fn skip_dependents(&mut self) {
-        loop {
+        // A pass that skips nothing ends the loop and every other pass skips at least one
+        // entity, so one pass more than there are entities always reaches that end.
+        for _ in 0..=self.entities.len() {
             let skipped = &mut self.skipped_keys;
             let before = self.entities.len();
             self.entities.retain(|(_, e)| {

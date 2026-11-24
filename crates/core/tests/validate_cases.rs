@@ -626,6 +626,31 @@ fn everything_that_depends_on_a_skipped_row_is_skipped_and_counted() {
     assert_eq!(read.skipped, 5);
 }
 
+/// `A#` sorts before `G#`, its parent, which depends on the skipped `F#`: one pass over the
+/// entities in key order skips `G#` and keeps `A#`, so the skip must repeat until nothing changes.
+#[test]
+fn a_chain_of_dependents_is_skipped_to_its_end() {
+    let mut files = newer(&[]);
+    files.entities = Some(
+        concat!(
+            r#"{"key":"m:p:a/","role":"container","name":"a","virtual":true,"src":"core:containment"}"#,
+            "\n",
+            r#"{"key":"m:p:a/A#","role":"type","name":"A","parent":"m:p:a/G#","virtual":true,"src":"core:containment"}"#,
+            "\n",
+            r#"{"key":"m:p:a/F#","role":"future","name":"F","parent":"m:p:a/","virtual":true,"src":"core:containment"}"#,
+            "\n",
+            r#"{"key":"m:p:a/G#","role":"type","name":"G","parent":"m:p:a/F#","virtual":true,"src":"core:containment"}"#,
+            "\n",
+        )
+        .as_bytes()
+        .to_vec(),
+    );
+    let read = read(&files, 0);
+    let kept: Vec<&str> = read.entities.iter().map(|(_, e)| e.key.as_str()).collect();
+    assert_eq!(kept, ["m:p:a/"]);
+    assert_eq!(read.skipped, 3);
+}
+
 /// An unknown `layer` on a gap from an adapter's syntax layer also fails the conditional
 /// `const` that ties that provenance to the syntax layer; both errors sit on the field that
 /// holds the unknown value, so the row is skipped. An error on any other field makes it
