@@ -242,13 +242,23 @@ impl Module {
             _ => return Err(nodes.wrong(id, "a DILocation without a scope")),
         };
         self.scope(nodes, scope, node.line)?;
-        if let Some(v) = node.fields.get("inlinedAt") {
-            match v {
-                Value::Ref(i) => {
-                    self.location(nodes, *i, node.line)?;
-                }
-                _ => return Err(nodes.wrong(id, "an inlinedAt that is no location")),
+        // The locations an instruction was inlined at, each checked once; a chain that comes
+        // back to one of its own locations is no record of a compilation.
+        let mut seen = BTreeSet::from([id]);
+        let mut next = node.fields.get("inlinedAt");
+        while let Some(v) = next {
+            let Value::Ref(i) = v else {
+                return Err(nodes.wrong(id, "an inlinedAt that is no location"));
+            };
+            if !seen.insert(*i) {
+                return Err(nodes.wrong(*i, "an inlinedAt chain that returns to itself"));
             }
+            let outer = nodes.get(*i, &["DILocation"], node.line)?;
+            let Some(Value::Ref(s)) = outer.fields.get("scope") else {
+                return Err(nodes.wrong(*i, "a DILocation without a scope"));
+            };
+            self.scope(nodes, *s, outer.line)?;
+            next = outer.fields.get("inlinedAt");
         }
         Ok(Location {
             line: number(node, "line", id)?,
@@ -261,11 +271,11 @@ impl Module {
         let mut chain = Vec::new();
         let mut current = id;
         loop {
-            if self.scopes.contains_key(&current) {
-                break;
-            }
             if chain.contains(&current) {
                 return Err(nodes.wrong(current, "a scope that holds itself"));
+            }
+            if self.scopes.contains_key(&current) {
+                break;
             }
             let node = nodes.get(
                 current,

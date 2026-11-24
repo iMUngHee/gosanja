@@ -228,3 +228,35 @@ fn escapes_in_strings_decode() {
         file.filename
     );
 }
+
+#[test]
+fn records_that_lead_back_to_themselves_fail() {
+    let location = "!57 = !DILocation(line: 205, column: 5, scope: !36)";
+    // A lexical block that is its own scope, and two that hold each other.
+    for blocks in [
+        "!999 = distinct !DILexicalBlock(scope: !999, line: 1, column: 1)",
+        "!999 = distinct !DILexicalBlock(scope: !998, line: 1, column: 1)\n!998 = distinct !DILexicalBlock(scope: !999, line: 1, column: 1)",
+    ] {
+        let text = edited(
+            location,
+            &format!("!57 = !DILocation(line: 205, column: 5, scope: !999)\n{blocks}"),
+        );
+        let e = unreadable(&text);
+        assert!(e.contains("holds itself"), "{e}");
+    }
+    // A location inlined at itself, and two inlined at each other.
+    for inlined in [
+        "!57 = !DILocation(line: 205, column: 5, scope: !36, inlinedAt: !57)",
+        "!57 = !DILocation(line: 205, column: 5, scope: !36, inlinedAt: !997)\n!997 = !DILocation(line: 1, column: 1, scope: !36, inlinedAt: !57)",
+    ] {
+        let e = unreadable(&edited(location, inlined));
+        assert!(e.contains("returns to itself"), "{e}");
+    }
+}
+
+#[test]
+fn a_call_head_with_text_of_several_bytes_before_a_quote_does_not_parse() {
+    let text = edited(CALL_DIRECT, "  %total = call i32 é\"x\"(), !dbg !152\n");
+    let e = unreadable(&text);
+    assert!(e.contains("call"), "{e}");
+}

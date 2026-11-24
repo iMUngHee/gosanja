@@ -1550,3 +1550,29 @@ fn a_file_with_a_backslash_in_its_name_is_left_out() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(calls_relations(&out).len(), 1);
 }
+#[test]
+fn a_dependency_missing_from_the_local_registry_fails_the_base_layer_first() {
+    let c = Case::new();
+    probe(&c, "", &[(".cargo/config.toml", "[net]\noffline = true\n")]);
+    let manifest = fs::read_to_string(c.root.join("Cargo.toml")).unwrap();
+    fs::write(
+        c.root.join("Cargo.toml"),
+        format!("{manifest}[dependencies]\ngosanja-probe-absent = \"1.0.0\"\n"),
+    )
+    .unwrap();
+    fs::write(
+        c.root.join("Cargo.lock"),
+        "version = 4\n\n\
+         [[package]]\nname = \"gosanja-probe-absent\"\nversion = \"1.0.0\"\n\
+         source = \"registry+https://github.com/rust-lang/crates.io-index\"\n\
+         checksum = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\n\
+         [[package]]\nname = \"probe\"\nversion = \"0.1.0\"\ndependencies = [\n \"gosanja-probe-absent\",\n]\n",
+    )
+    .unwrap();
+    failed(
+        &c,
+        &mut c.index(),
+        "locked-metadata-failed",
+        &["cargo", "rust-analyzer"],
+    );
+}

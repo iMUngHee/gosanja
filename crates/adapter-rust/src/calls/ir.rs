@@ -244,7 +244,7 @@ fn last_token(head: &str) -> Option<&str> {
         // A quoted name holds no raw quote, so the opening one is the last in `body`.
         let start = body.rfind('"')?;
         let sigil = start.checked_sub(1)?;
-        return matches!(&head[sigil..start], "@" | "%").then(|| &head[sigil..]);
+        return matches!(head.get(sigil..start), Some("@" | "%")).then(|| &head[sigil..]);
     }
     head.rsplit(char::is_whitespace)
         .next()
