@@ -1,4 +1,4 @@
-//! Guards the output path and replaces a completed snapshot.
+//! Guards the output path and replaces a completed snapshot or diff.
 use gosanja_schema::snapshot::FORMAT;
 use serde_json::Value;
 use std::{fs, io, path::Path};
@@ -33,7 +33,9 @@ impl std::fmt::Display for PublishError {
 }
 impl std::error::Error for PublishError {}
 
-fn replaceable(out: &Path) -> Result<bool, PublishError> {
+/// Whether `out` may be used: it is missing, an empty directory, or an earlier output whose
+/// manifest has `format` equal to `marker`. `Ok(true)` means there is something to replace.
+fn replaceable(out: &Path, marker: &str) -> Result<bool, PublishError> {
     let meta = match fs::symlink_metadata(out) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         other => other?,
@@ -47,18 +49,19 @@ fn replaceable(out: &Path) -> Result<bool, PublishError> {
             && fs::File::open(manifest)
                 .ok()
                 .and_then(|f| serde_json::from_reader::<_, Value>(f).ok())
-                .is_some_and(|v| v["format"] == FORMAT)
+                .is_some_and(|v| v["format"] == marker)
         {
             return Ok(true);
         }
     }
     Err(PublishError::Refused(format!(
-        "{} is not an empty directory or gosanja snapshot",
+        "{} is not an empty directory or an earlier {marker}",
         out.display()
     )))
 }
 
-/// Writes to a private sibling directory and installs it after the writer succeeds.
+/// Writes a snapshot of `root` to a private sibling directory and installs it after the writer
+/// succeeds.
 ///
 /// # Errors
 /// Refuses overlapping paths and unrelated output. Returns filesystem and writer errors.
@@ -67,16 +70,36 @@ pub fn publish(
     out: &Path,
     write: impl FnOnce(&Path) -> io::Result<()>,
 ) -> Result<(), PublishError> {
-    publish_with(root, out, write, |a, b| fs::rename(a, b))
+    publish_guarded(&[root], FORMAT, out, write)
+}
+
+/// Writes to a private sibling directory of `out` and installs it after the writer succeeds.
+///
+/// `out` may not be, contain or lie inside any of `protected`, after links are resolved, and an
+/// existing non-empty `out` is replaced only when its manifest's `format` is `marker`.
+///
+/// # Errors
+/// Refuses overlapping paths and unrelated output. Returns filesystem and writer errors.
+pub fn publish_guarded(
+    protected: &[&Path],
+    marker: &str,
+    out: &Path,
+    write: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<(), PublishError> {
+    publish_with(protected, marker, out, write, |a, b| fs::rename(a, b))
 }
 
 fn publish_with(
-    root: &Path,
+    protected: &[&Path],
+    marker: &str,
     out: &Path,
     write: impl FnOnce(&Path) -> io::Result<()>,
     install: impl FnOnce(&Path, &Path) -> io::Result<()>,
 ) -> Result<(), PublishError> {
-    let root = root.canonicalize()?;
+    let protected = protected
+        .iter()
+        .map(|dir| dir.canonicalize())
+        .collect::<io::Result<Vec<_>>>()?;
     let absolute = std::path::absolute(out)?;
     let name = absolute
         .file_name()
@@ -97,16 +120,22 @@ fn publish_with(
         ));
     }
     let out = parent.join(name);
-    if out.starts_with(&root) || root.starts_with(&out) {
-        return Err(PublishError::Refused("output overlaps source".into()));
+    if let Some(dir) = protected
+        .iter()
+        .find(|dir| out.starts_with(dir) || dir.starts_with(&out))
+    {
+        return Err(PublishError::Refused(format!(
+            "output overlaps {}",
+            dir.display()
+        )));
     }
-    replaceable(&out)?;
+    replaceable(&out, marker)?;
     let stage = tempfile::tempdir_in(&parent)?;
     write(stage.path())?;
     // Serialize competing publishers across the check and both renames.
     let lock = directory_handle(&parent)?;
     lock.lock()?;
-    if !replaceable(&out)? {
+    if !replaceable(&out, marker)? {
         install(stage.path(), &out)?;
         return Ok(());
     }
@@ -117,7 +146,7 @@ fn publish_with(
         if let Err(restore) = fs::rename(&old, &out) {
             let preserved = backup.keep();
             return Err(io::Error::other(format!(
-                "install failed ({failure}); rollback failed ({restore}); previous snapshot at {}",
+                "install failed ({failure}); rollback failed ({restore}); previous output at {}",
                 preserved.join("previous").display()
             ))
             .into());
@@ -153,7 +182,8 @@ mod tests {
         fs::write(out.join("manifest.json"), bytes).unwrap();
         fs::write(out.join("data"), [0, 255]).unwrap();
         let err = publish_with(
-            &root,
+            &[&root],
+            FORMAT,
             &out,
             |stage| fs::write(stage.join("new"), "new"),
             |_, destination| {
@@ -166,5 +196,42 @@ mod tests {
         assert_eq!(fs::read(out.join("manifest.json")).unwrap(), bytes);
         assert_eq!(fs::read(out.join("data")).unwrap(), [0, 255]);
         assert_eq!(fs::read_dir(out).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn final_rename_failure_restores_an_earlier_diff() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("old");
+        let new = temp.path().join("new");
+        let out = temp.path().join("out");
+        for dir in [&old, &new, &out] {
+            fs::create_dir(dir).unwrap();
+        }
+        let bytes = br#"{"format":"gosanja-diff","schema":"0.1"}"#;
+        fs::write(out.join("manifest.json"), bytes).unwrap();
+        fs::write(out.join("entities.jsonl"), [0, 255, b'\n']).unwrap();
+        let err = publish_with(
+            &[&old, &new],
+            "gosanja-diff",
+            &out,
+            |stage| fs::write(stage.join("manifest.json"), "replacement"),
+            |_, destination| {
+                assert!(!destination.exists(), "the earlier diff was moved aside");
+                Err(io::Error::other("injected install failure"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.exit_code(), 3);
+        assert_eq!(fs::read(out.join("manifest.json")).unwrap(), bytes);
+        assert_eq!(
+            fs::read(out.join("entities.jsonl")).unwrap(),
+            [0, 255, b'\n']
+        );
+        assert_eq!(fs::read_dir(&out).unwrap().count(), 2);
+        assert_eq!(
+            fs::read_dir(temp.path()).unwrap().count(),
+            3,
+            "no staging or backup directory is left beside the output"
+        );
     }
 }
