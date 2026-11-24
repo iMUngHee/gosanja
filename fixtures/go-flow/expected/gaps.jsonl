@@ -1,0 +1,13 @@
+{"gap":"missing-layer","layer":"calls","src":"adapter:go/calls"}
+{"gap":"open-call","file":"flow.go","range":[63,87,63,97],"src":"adapter:go/syntax"}
+{"gap":"open-call","file":"flow.go","range":[63,99,63,106],"src":"adapter:go/syntax"}
+{"gap":"open-call","file":"flow.go","range":[121,8,121,12],"src":"adapter:go/syntax"}
+{"gap":"overlapping-bodies","file":"flow.go","keys":["gomod:example.com/goflow:`example.com/goflow`/A.","gomod:example.com/goflow:`example.com/goflow`/B."],"src":"core:reference-in-body"}
+{"gap":"overlapping-bodies","file":"flow.go","keys":["gomod:example.com/goflow:`example.com/goflow`/F.","gomod:example.com/goflow:`example.com/goflow`/G."],"src":"core:reference-in-body"}
+{"gap":"skipped-file","file":"cgo.go","layer":"base","code":"build-constraint","src":"adapter:go/base"}
+{"gap":"skipped-file","file":"ignored.go","layer":"base","code":"build-constraint","src":"adapter:go/base"}
+{"gap":"skipped-file","file":"ignored/ignored.go","layer":"base","code":"build-constraint","src":"adapter:go/base"}
+{"gap":"symbol-collision","keys":["gomod:example.com/goflow:`example.com/goflow`/","gomod:example.com/goflow:`example.com/goflow`/~1","gomod:example.com/goflow:`example.com/goflow`/~2","gomod:example.com/goflow:`example.com/goflow`/~3","gomod:example.com/goflow:`example.com/goflow`/~4"],"src":"core:identity"}
+{"gap":"unattributed-references","file":"external_test.go","count":3,"src":"core:reference-in-body"}
+{"gap":"unattributed-references","file":"flow.go","count":13,"src":"core:reference-in-body"}
+{"gap":"unattributed-references","file":"flow_test.go","count":1,"src":"core:reference-in-body"}

@@ -75,8 +75,9 @@ func build(scratch string) (engine, adapters string, err error) {
 	return engine, adapters, nil
 }
 
-// engine runs gosanja with an environment of the world's alone: its tools first on PATH, its
-// home, an offline proxy, the test's module cache and the built adapter.
+// engine runs gosanja with an environment of the world's alone (its tools first on PATH, its
+// home, an offline proxy, the test's module cache and the built adapter) and gives its
+// exit status and its standard output and error together.
 func (w *world) engine(args ...string) (int, string) {
 	w.t.Helper()
 	return w.engineWith("", args...)
@@ -95,16 +96,16 @@ func (w *world) engineWith(cache string, args ...string) (int, string) {
 	cmd.Dir = w.dir
 	cmd.Env = []string{"PATH=" + w.bin + ":/usr/bin:/bin", "HOME=" + w.home, "GOPROXY=off",
 		"GOMODCACHE=" + cache, "GOSANJA_ADAPTER_PATH=" + adapterDir}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
 	err := cmd.Run()
 	if exit, ok := err.(*exec.ExitError); ok {
-		return exit.ExitCode(), stderr.String()
+		return exit.ExitCode(), output.String()
 	}
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	return 0, stderr.String()
+	return 0, output.String()
 }
 
 // snapshot is what a test reads of a published snapshot.

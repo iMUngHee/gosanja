@@ -26,12 +26,14 @@
 # go-flow indexes with the host build context, cgo disabled, and a warm Go module cache.
 #
 # The snapshots are those of rust-flow, rust-calls and both sides of diff-basic, written
-# by this workspace's engine with its Rust adapter, which runs the indexer itself. The
-# engine and the adapter are built into a temporary directory; GOSANJA_BIN names a
-# directory holding gosanja and gosanja-adapter-rust to use instead. A staged snapshot
-# replaces nothing unless every scope of its manifest has the calls layer present and its
-# relations hold the call relation from the Rust adapter's calls layer that
-# fixtures/README.md names as the fixture's control. A fixture's files are put in place
+# by this workspace's engine with its Rust adapter, which runs the indexer itself, and that
+# of go-flow, written by the engine with the Go adapter, which runs scip-go itself. The
+# engine and the adapters are built into a temporary directory; GOSANJA_BIN names a
+# directory holding gosanja, gosanja-adapter-rust and gosanja-adapter-go to use instead. A
+# staged Rust snapshot replaces nothing unless every scope of its manifest has the calls
+# layer present and its relations hold the call relation from the Rust adapter's calls layer
+# that fixtures/README.md names as the fixture's control; the go-flow snapshot replaces
+# nothing unless its base and syntax layers are present. A fixture's files are put in place
 # only once all of them are staged and checked, so a failed run leaves it as it was.
 set -eu
 
@@ -156,6 +158,8 @@ tools() {
         CARGO_TARGET_DIR=$work/tools cargo build --quiet --manifest-path "$repo/Cargo.toml" \
             -p gosanja -p gosanja-adapter-rust >&2
         bin=$work/tools/debug
+        (cd "$repo/adapters/go" && CGO_ENABLED=0 GOFLAGS=-mod=readonly GOWORK=off GOTOOLCHAIN=local \
+            go build -o "$bin/gosanja-adapter-go" ./cmd/gosanja-adapter-go)
     fi
 }
 
@@ -193,6 +197,21 @@ install() {
         rm -rf "$target"
         mv "$stage/$1/${path#./}" "$target"
     done
+}
+
+# go_snapshot <copy directory> <staged snapshot>: the Go adapter's snapshot, in an
+# environment of PATH, with scip-go's directory first, HOME and any module cache setting the
+# caller exported, offline.
+go_snapshot() {
+    tools
+    env -i PATH="$(dirname "$(command -v "$scip_go")"):$PATH" HOME="$HOME" GOPROXY=off \
+        ${GOMODCACHE:+GOMODCACHE="$GOMODCACHE"} ${GOPATH:+GOPATH="$GOPATH"} \
+        "$bin/gosanja" index --adapter "$bin/gosanja-adapter-go" --root "$1" --out "$2" >&2
+    layers=$(grep -o '"layers":{[^}]*}' "$2/manifest.json")
+    case $layers in
+    *'"base":"present"'*'"syntax":"present"'*) ;;
+    *) die "go-flow: the snapshot's layers are $layers, not base and syntax present; nothing replaced" ;;
+    esac
 }
 
 # One Rust fixture: index, and with a snapshot path its snapshot.
@@ -255,13 +274,22 @@ for fixture in "$@"; do
     go-basic) other_index go-basic "$scip_go" index --module-version v1.0.0 ;;
     go-flow)
         mkdir -p "$work/go-cache" "$work/go-tmp"
+        copy go-flow
         (
             unset GOOS GOARCH GO111MODULE
+            cd "$root/go-flow"
             CGO_ENABLED=0 GOFLAGS="-mod=readonly -buildvcs=false" GOENV=off GOWORK=off \
                 GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOPACKAGESDRIVER=off \
                 XDG_CONFIG_HOME="$work/config" GOCACHE="$work/go-cache" GOTMPDIR="$work/go-tmp" \
-                other_index go-flow "$scip_go" index --module-version v0.0.0 --output index.scip
+                "$scip_go" index --module-version v0.0.0 --output index.scip >&2
         )
+        mkdir -p "$stage/go-flow"
+        mv "$root/go-flow/index.scip" "$stage/go-flow/index.scip"
+        if [ -z "$indexes_only" ]; then
+            go_snapshot "$root/go-flow" "$stage/go-flow/expected"
+        fi
+        install go-flow
+        echo "go-flow: $("$scip_go" --version)"
         ;;
     ts-basic) other_index ts-basic "$scip_typescript" index --no-progress-bar ;;
     *) die "unknown fixture: $fixture" ;;
