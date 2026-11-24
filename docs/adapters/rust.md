@@ -60,8 +60,9 @@ them:
 
 `rust-analyzer` and `cargo` on `PATH`; `gosanja adapter list` shows whether they are found.
 The calls layer also needs the compiler that `cargo` runs and a linker on `PATH`, since it
-links the binaries it builds. The project must be a workspace root with a `Cargo.lock` that
-matches its manifests.
+links the binaries it builds, and that compiler must be a stable release: with a nightly or
+beta toolchain the calls layer fails (see "What the calls layer builds"). The project must be
+a workspace root with a `Cargo.lock` that matches its manifests.
 
 The adapter was developed and tested with rust-analyzer 0.3.3049 and with rustc and cargo
 1.99.1, on `x86_64-unknown-linux-gnu`. The snapshots checked in under `fixtures/` are those of
@@ -193,6 +194,13 @@ so does your Cargo configuration, which may name another compiler or a wrapper. 
 context of each target names the compiler that produced its module, as the module records
 it.
 
+The calls layer takes only modules of a stable release. A module whose compiler version has a
+pre-release part, as `1.102.0-nightly` or `1.100.0-beta.3`, makes the layer fail with
+`build-unsupported` before any row is made: on such a compiler, unstable features, and flags
+such as `-Z crate-attr` that Cargo configuration can pass, can change code in ways its source
+does not show. A project built with a nightly or beta toolchain therefore gets the base and
+syntax layers and no calls layer.
+
 ### Build contexts
 
 Every relation of the calls layer names the build it was observed in. The manifest lists one
@@ -259,10 +267,11 @@ The first that fails ends the instruction, and the omission is recorded as the t
      or `static` touches unless it encloses the caller, and that is neither taken nor shared
      with a macro invocation.
 
-   A line is **taken** when it holds any part of a `macro_rules!` definition, or of an item
-   that carries an attribute outside the list below (a `derive` included), from its first
-   attribute to its end. A macro can give the code it generates the position of a token of
-   its input or of its own invocation, so a position on a taken line may be generated code.
+   A line is **taken** when it holds any part of a `macro_rules!` definition, of syntax the
+   parser keeps as unparsed tokens, or of the owner of an attribute that is not allowed (a
+   `derive` included), as "Attributes" below says. A macro can give the code it generates
+   the position of a token of its input or of its own invocation, so a position on a taken
+   line may be generated code.
 
 A row then names the caller and the callee by the file, line and column of their name
 tokens, with the column in characters, and records `mechanism: static`, `resolution: direct`,
@@ -270,24 +279,72 @@ the site and the build context. Equal rows are kept: one row per instruction.
 
 ### Attributes
 
-A function or method is no end of a row when it, or an item around it (an `impl`, a `trait`,
-a `mod`), carries an attribute other than the inert attributes the compiler owns and no
+The layer judges every attribute written in a file, outer (`#[...]`) and inner (`#![...]`),
+at any depth: on items, on the items of an `impl`, a trait or a foreign block, and on fields,
+variants, parameters, generic parameters, statements, expressions and match arms. An
+attribute is **allowed** when it is one of the inert attributes the compiler owns and no
 import can replace:
 
 `cfg`, `doc`, `inline`, `cold`, `must_use`, `deprecated`, `allow`, `warn`, `deny`, `forbid`,
 `expect`, `track_caller`, `no_mangle`, `export_name`, `link_section`, `target_feature`,
-`repr`, `path`, `automatically_derived`, `ignore`, `should_panic`.
+`repr`, `path`, `automatically_derived`, `ignore`, `should_panic`;
 
-`unsafe(...)` counts as the attribute inside it. `cfg_attr(predicate, attributes)` counts as
-its attributes whatever the predicate, because the adapter cannot establish the `cfg` of a
-definition's own build: `#[cfg_attr(feature = "fast", inline)]` leaves a function an end, and
+or when it is written as an inner attribute and is one of the crate-level attributes
+
+`no_std`, `no_main`, `no_implicit_prelude`, `recursion_limit`, `type_length_limit`,
+`crate_name`, `crate_type`, `windows_subsystem`,
+
+or `feature` naming only rustdoc's documentation gates: `doc_cfg`, `doc_notable_trait` and
+`doc_auto_cfg`, an older spelling that published crates still write. Written as an outer
+attribute, as `#[no_std]` on an item, none of these is allowed.
+
+`unsafe(...)` counts as the attribute inside it. `cfg_attr(predicate, attributes)` is allowed
+when all its attributes are, at any nesting, whatever the predicate: the adapter cannot
+establish the `cfg` of a definition's own build, so it takes the predicate as the tokens
+before the first comma and does not evaluate it, and `true` or `false` is read like any
+other. `#[cfg_attr(feature = "fast", inline)]` leaves a function an end, and
 `#[cfg_attr(feature = "off", some_macro)]` does not, even with the feature off.
+
+The allowed inner attributes cannot make a row state something false. `no_std`, `no_main`
+and `no_implicit_prelude` change which library a name resolves to and which entry shim
+exists: the compiler and the indexer both resolve the written name, the shim has no call
+with a site in the project, and a callee outside the project gives no row. The limits and
+the names change no lowering of a written item, and the documentation gates act in rustdoc
+only. Any other gate is not allowed, because a gate can change what written code calls
+without a second attribute: under `feature(try_trait_v2)`, `x?` can call the project's own
+`Try` implementation at the written site. `no_builtins`, which changes how LLVM treats calls
+to library functions, is not allowed either.
+
+An attribute that is not allowed takes the lines of its owner, from the owner's first token
+to its last:
+
+| Attribute | Its owner |
+| --- | --- |
+| outer, on any node | that node: an item, a field, a variant, a parameter, a generic parameter, a statement, an expression or an arm |
+| inner, at the top of a file | every item of the file |
+| inner, in an inline `mod`, an `impl`, a trait, a foreign block or a function body | that module, block or item |
+| inner, in a block, a `match`, a loop, an `unsafe` or `async` block or a closure body | the whole expression, a `match`'s scrutinee included |
+
+So `#[my_attr] let x = leaf();` withholds the call on the lines of that statement, and a
+function whose body holds `#![my_attr]` is no end of a row, since its signature lines are
+taken. An inner attribute of an empty block takes that block only.
+
+Syntax that the parser keeps as unparsed tokens, which it does for syntax it does not know,
+as `become leaf();`, takes its own lines, since an attribute inside it cannot be seen; an
+empty one takes none. The parser also drops some attributes it has read, as the outer
+attributes of a closure parameter it keeps as tokens. The adapter therefore scans each file's
+tokens as well, outside the arguments of macro invocations, for every `#[...]` and `#![...]`
+that the parsed tree did not hold. Such an attribute, when it is not allowed, takes the
+innermost item around it. A macro invocation is not unparsed syntax in this sense: its
+lines follow step 5, so a call written in its arguments, as `m!(leaf())`, keeps its row.
 
 So functions and methods under `#[async_trait]`, `#[tokio::main]`, `#[instrument]`, `#[test]`
 or `#[rustfmt::skip]` have no rows. `test`, `bench` and `derive` are not on the list, and
 neither is any tool attribute written with a path, as `rustfmt::skip` or `clippy::...`: a
 project can bring its own macro under each of those names. Code built around attribute
-macros, as async services often are, gets correspondingly fewer rows.
+macros, as async services often are, gets correspondingly fewer rows. A crate whose root
+holds only allowed inner attributes, as `#![no_std]` with lint attributes, keeps the rows of
+its root file.
 
 ### What a row does and does not show
 
@@ -416,7 +473,7 @@ and a shared id are decided before anything is compiled; a base layer that fails
 | Cargo reports more than one artifact for a target, as a `build.target` naming several platforms gives | `build-unsupported` |
 | Cargo reports no artifact for a target, or no IR file is at the path the adapter gave | `ir-missing` |
 | the reader cannot follow an IR file, or the file is not a module of rustc for one target | `ir-unreadable` |
-| a module reports itself as optimised | `build-unsupported` |
+| a module reports itself as optimised, or names a compiler that is not a stable release | `build-unsupported` |
 
 **A comma in the output path.** For `gosanja index` the directory the adapter writes to is
 the engine's cache directory, not the snapshot's destination; for an adapter run by hand it
@@ -455,7 +512,9 @@ definitions of the project that the layer did not publish. It is a mark per file
 count. A call to a closure is among those calls. On ryu 1.0.23 the layer published 49 rows.
 A scratch reader of the same rules, measured before the layer was finished, gave the same 49
 of the 65 direct calls whose site is in the project and whose callee the calling module
-defines there, and 1 736 of 1 969 on regex-syntax 0.8.12.
+defines there, and 1 736 of 1 969 on regex-syntax 0.8.12. The layer itself gives regex-syntax
+0.8.12 1 736 rows; eight of them are in files whose root carries `#![no_std]` and
+`#![cfg_attr(docsrs_regex, feature(doc_cfg))]`.
 
 ## What the calls layer trusts
 
@@ -463,6 +522,13 @@ The toolchain that rustup or your configuration selects, Cargo, and the project'
 scripts and procedural macros, which the base layer already runs. The layer is built to be
 right for projects as people configure them; it does not claim to withstand a project
 arranged to deceive it.
+
+That includes a stable compiler unlocked with `RUSTC_BOOTSTRAP`, set in the environment or
+in the project's Cargo configuration (`[env]`), with unstable features injected by flags
+such as `-Z crate-attr`. Such a project uses what the compiler withholds from stable code and
+can change code in ways its source does not show. No rule over the source can see an injected
+feature, and the layer does not read Cargo configuration, so this is outside what the layer
+trusts and can produce false rows.
 
 
 Measurements behind the base and syntax layers, and how often each case occurs on real

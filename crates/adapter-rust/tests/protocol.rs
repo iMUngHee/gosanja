@@ -1576,3 +1576,57 @@ fn a_dependency_missing_from_the_local_registry_fails_the_base_layer_first() {
         &["cargo", "rust-analyzer"],
     );
 }
+
+#[test]
+fn calls_refuse_prerelease_producers_after_reading_all_modules() {
+    let c = Case::new();
+    probe(&c, "", &[]);
+    let (result, _) = calls_run(&c);
+    assert_eq!(result["layers"]["calls"]["status"], "ok", "{result}");
+    assert_eq!(calls_rows(&c).len(), 1);
+
+    for (release, binary, damage, code) in [
+        ("1.102.0-nightly", false, "", "build-unsupported"),
+        ("1.100.0-beta.3", false, "", "build-unsupported"),
+        ("1.102.0-nightly", true, "", "ir-unreadable"),
+        (
+            "1.102.0-nightly",
+            false,
+            r#"sed -i '/ = call .* !dbg !/s/!dbg ![0-9][0-9]*/!dbg !999999/' "$ir""#,
+            "ir-unreadable",
+        ),
+    ] {
+        let c = Case::new();
+        if binary {
+            probe_with_binary(&c);
+        } else {
+            probe(&c, "", &[]);
+        }
+        wrap(
+            &c,
+            "rustc",
+            &format!(
+                r#""$REAL" "$@" || exit $?
+for a in "$@"; do
+    case "$a" in
+        --emit=llvm-ir=*/0.ll)
+            ir="${{a#--emit=llvm-ir=}}"
+            sed -i '/DICompileUnit/s/rustc version [^ ]*/rustc version {release}/' "$ir"
+            {damage}
+            ;;
+        --emit=llvm-ir=*/1.ll)
+            ir="${{a#--emit=llvm-ir=}}"
+            sed -i '/DICompileUnit/,$d' "$ir"
+            ;;
+    esac
+done
+exit 0"#
+            ),
+        );
+        let (result, stderr) = calls_run(&c);
+        calls_failed(&result, &c, code);
+        if code == "build-unsupported" {
+            assert!(stderr.contains(release), "{stderr}");
+        }
+    }
+}

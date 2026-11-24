@@ -446,9 +446,312 @@ and `f2s_intrinsics`, without a `cfg` on either import.
 
 ### Not measured
 
-- regex-syntax with the finished adapter. Its numbers above are the scratch reader's.
+- regex-syntax with the adapter of this run. Its numbers above are the scratch reader's. A
+  later run of the adapter on regex-syntax, before and after the rule for crate inner
+  attributes, is in "The rule for inner attributes on regex-syntax 0.8.12" below.
 - The memory of Cargo, rustc and rust-analyzer during the run.
 - Whether the 19 packages missing from the local cache matter on another host. On this one,
   the build did not need them.
 - Other host targets than `x86_64-unknown-linux-gnu`, and other toolchains.
 - How often the published calls run at run time. A row is one instruction of one static build.
+
+## Coverage extensions in a scratch probe, 2026-11-25
+
+These are scratch measurements, not the production adapter's. A harness linked the calls
+layer's row code of commit `8cf2ee8` as a library, changed one rule per mode with a recorded
+patch (`experiment.py`), and ran it over IR recorded from one workspace build of each corpus
+and over an index of the same sources. `gosanja-adapter-rust index` did not run. Five
+extensions of the layer were measured, one at a time against the same build: calls into
+another target, dynamic dispatch, drop glue, attribute macros that return their input
+unchanged, and crate-level inner attributes. A sixth question was whether the indexes record
+trait and implementation relationships.
+
+### Inputs
+
+| Corpus | Sources | Index | Manifest as built |
+| --- | --- | --- | --- |
+| the `rust-calls` fixture | `fixtures/rust-calls` at `8cf2ee8`, identical file for file | the fixture's checked-in index | unchanged |
+| ryu 1.0.23 | `src/` identical to the published archive's (SHA-256 `9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f`) | from the measurements above | unchanged |
+| regex-syntax 0.8.12 | `src/` identical to the published archive's (SHA-256 `d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6`) | from the measurements above | the optional `arbitrary` dependency and its feature removed, an empty `[workspace]` table added |
+| zbus 5.19.0 | `src/` identical to the published archive's (SHA-256 `5db4be7c075cb421e4b7ee645541604239bd243ba7c357511f4ff3a74b555907`) | generated for this probe, under the adjusted manifest | every dev-dependency removed; of the features, only `default` and the features it enables kept, and the optional dependencies that only the removed features select (`tokio`, `tokio-vsock`, `vsock`) removed |
+
+The offline build could not resolve `arbitrary` for regex-syntax, nor `codspeed-criterion-compat`
+and then `tokio-vsock` for zbus; the manifests were adjusted for that reason alone. zbus was
+built first as a path dependency of a scratch package, then as its own root. For the
+attribute-macro run only, its manifest later gained a `[patch.crates-io]` table naming
+instrumented copies of its procedural macro dependencies; the IR the other columns use was
+recorded before that change, from the registry's macros. The archive digests are those of the
+archives in the local Cargo cache, against which the `src/` trees were compared.
+
+Host and settings: `x86_64-unknown-linux-gnu`, rustc 1.99.1 (58cf8f9c3), LLVM 23.1.1, the `dev`
+profile and default features. Every library and binary target of the workspace was built in one
+invocation. A compiler wrapper added an LLVM IR output to the same compiler run that produced
+each workspace artifact other than a build script, added `-Ccodegen-units=1 -Cdebuginfo=2
+-Copt-level=0`, and recorded the compiler's arguments, output and working directories. Tests,
+examples and downstream programs were not built and are not counted.
+
+```sh
+# in the scratch directory, once per corpus
+CARGO_TARGET_DIR="$d/target/$corpus" RECORD="$d/ir/$corpus" RUSTC_WORKSPACE_WRAPPER="$d/wrapper" \
+    cargo +1.99.1 build --offline --locked --workspace --lib --bins -j2
+# the rows of each mode, then their differences
+./run
+python stats.py
+python edges.py fixture
+```
+
+### Rows added by each extension
+
+| Corpus | Rows of the unchanged rules | Calls into another target | Dynamic dispatch¹ | Drop glue¹ | Unchanged attribute macro | Crate inner attributes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `rust-calls` | 83 | +2 | 0 | 0 | +8 | 0 |
+| ryu 1.0.23 | 49 | 0 | 0 | 0 | 0 | 0 |
+| regex-syntax 0.8.12 | 1 728 | 0 | 0 | 0 | 0 | +8 |
+| zbus 5.19.0 | 1 376 | 0 | not measured | not measured | 0 | 0 |
+
+A row is one serialized evidence entry with its build context. The rows of each mode were
+compared with those of the unchanged rules as multisets. No row of the unchanged rules
+disappeared in any mode.
+
+¹ For dynamic dispatch and drop glue, the number is how many rows the existing relation
+(`mechanism: static`, `resolution: direct`, corroborated by a reference on the site's line)
+could support. The probe derived it by examining the instructions and the index occurrences;
+no resolver was built for either.
+
+The 1 728 rows of regex-syntax come from the harness and are not comparable with the scratch
+reader's 1 736 of the first sections. The two readers differ, and so do the builds: one
+workspace build through a wrapper here, one `cargo rustc` of the library there.
+
+```text
+$ ./run
+fixture base 83
+fixture cross 85
+fixture macro 91
+fixture inner 83
+ryu-1.0.23 base 49
+ryu-1.0.23 cross 49
+ryu-1.0.23 macro 49
+ryu-1.0.23 inner 49
+regex-syntax-0.8.12 base 1728
+regex-syntax-0.8.12 cross 1728
+regex-syntax-0.8.12 macro 1728
+regex-syntax-0.8.12 inner 1736
+zbus-5.19.0 base 1376
+zbus-5.19.0 cross 1376
+zbus-5.19.0 macro 1376
+zbus-5.19.0 inner 1376
+```
+
+### Calls into another target
+
+The probe resolved a `v0` symbol that the calling module only declares, to its definition in
+exactly one direct workspace dependency of the caller. A dependency was matched when its
+artifact existed in the output directory the compiler recorded for it, with the same crate
+name and Cargo suffix as the `--extern` path given to the caller. A definition in the caller
+still took precedence, and every other check of the layer ran afterwards.
+
+The fixture gained two rows: `main` calling `calls_lib::direct` at
+`calls-app/src/main.rs:12`, and `hinted` calling `leaf` at `calls-lib/src/lib.rs:559` in the
+`calls_app` build. ryu, regex-syntax and zbus each built one target, so their zero says
+nothing about calls between targets. The probe did not resolve unmangled exports, packages
+outside the workspace or transitive dependencies, and it used one machine and one
+configuration. A production reader would have to bind each output to its artifact across
+retries and caches.
+
+### Dynamic dispatch
+
+The fixture holds two indirect calls with a site in the project, ryu and regex-syntax none:
+`calls_lib::apply` calls a function pointer at `calls-lib/src/lib.rs:410`, and
+`calls_lib::dyn_call` loads a method from the table its caller passes, at
+`calls-lib/src/lib.rs:88`. The fixture's own table puts `Square::area` in the slot it loads.
+The probe also compiled a separate crate that implements the same trait for another type and
+passes it to the same prebuilt library. Its table puts that type's method in the same slot:
+
+```sh
+rustc +1.99.1 --crate-type lib --emit=llvm-ir \
+    --extern calls_lib=$(ls target/fixture/debug/deps/libcalls_lib*.rlib) \
+    -L dependency=target/fixture/debug/deps downstream.rs -o downstream.ll
+```
+
+The receiver set is open. The slot names a method only for a known table, and the index names
+the trait's method at the site. Neither shows which table reaches the call. One concrete
+callee would need the table's provenance at the site, which neither instruction supplies
+locally, so neither gives a supportable row under the existing relation. A relation to the
+trait's declaration, or a "possible target" relation, would need meanings of its own.
+
+### Drop glue
+
+| Corpus | Glue call instructions | Distinct sites | Local `Drop` implementations | Sites with a same-line reference to a local destructor |
+| --- | ---: | ---: | ---: | ---: |
+| `rust-calls` | 130 | 44 | 3 | 0 |
+| ryu 1.0.23 | 0 | 0 | 0 | 0 |
+| regex-syntax 0.8.12 | 584 | 247 | 3 | 0 |
+
+The probe counted direct calls to `core::ptr::drop_glue` or `drop_in_place` with a nonzero line
+in the project, monomorphizations and cleanup paths included. It then looked, on the same line,
+for a non-definition occurrence of any local symbol ending in `[Drop]drop().`. That check is
+broader than the layer's call-head match, and it still found none: at
+`calls-lib/src/drops.rs:40` and `:44`, `drop(None::<Guard>)` and `drop(Some(Guard(8)))`
+reference `core`'s `mem::drop`, `Option`'s variants and the guard type, not its destructor, and
+the glue for `Option<Guard>` branches on the variant before it calls the guard's. A walk of
+reachable glue would attach the destructor to the `None` case. An implicit destruction relation
+would need a source anchor, ownership semantics and a rule for conditional effects. Zero here
+does not count the destructors the program runs.
+
+### Attribute macros that return their input
+
+The probe wrapped the `proc_macro_attribute` entry points of scratch copies of the macro
+crates. Each invocation logged its path, line, column and name, and whether its input and the
+stream it returned had equal `Debug` representations in that invocation. Rows were then
+admitted only at the logged positions of equal invocations.
+
+```text
+$ cut -f4,5 attributes.tsv | sort | uniq -c
+32 async_trait false; 14 instrument false; 9 proxy false; 4 interface false
+3 bitflags_internal false; 1 async_recursion false; 1 retype false
+1 retrait false; 1 copy_to false; 4 keep true
+```
+
+All 61 invocations logged at zbus's own source paths returned a different representation, so
+zbus gained nothing. In the fixture, the four invocations of `keep` (lines 423, 430, 454 and
+468 of `calls-lib/src/lib.rs`, two of them through aliases) were equal and gave four rows out
+of and four into the items they hold; two `proxy` invocations and `retype`, `retrait` and
+`copy_to` were not.
+
+The test compares `Debug` representations, which is an experiment, not a stable provenance.
+A control that re-parses the printed input shows that printed text alone loses span
+differences:
+
+```text
+$ cat innerprobe/compare.log
+text_equal=true debug_equal=false
+```
+
+The join was by source coordinates in distinct measured paths. A production witness would
+also need the originating build, the input file's identity, the expansion stack, the resolved
+macro, and a token-by-token comparison of delimiters, spacing, spans and hygiene. It is also
+whole-item identity: a macro that keeps every method but changes the item around them fails
+it.
+
+### Crate inner attributes
+
+A crate-level inner attribute other than the layer's inert attributes takes every item of its
+file. ryu's `src/lib.rs` has `#![no_std]`; regex-syntax's has `#![no_std]` and
+`#![cfg_attr(docsrs_regex, feature(doc_cfg))]`, besides lint attributes that are already
+inert. The probe exempted exactly two attributes: `#![no_std]`, and the written
+`cfg_attr(docsrs_regex, feature(doc_cfg))` compared as token text. The recorded compiler
+arguments list `docsrs_regex` under `--check-cfg` and not under `--cfg`, so in this build the
+`cfg_attr` contributes no attribute. That is a narrower rule than one over a list of
+built-in attributes.
+
+ryu gained nothing. regex-syntax gained eight rows: five at sites in `src/lib.rs` (lines 205,
+216, 307, 351 and 371) and three at sites in other files calling into it
+(`src/ast/parse.rs:1532` and `:1539`, `src/hir/print.rs:310`).
+
+A blanket exemption is not sound. On rustc 1.99.1, an inner attribute macro that replaces its
+crate with a generated function is refused, and accepted once `RUSTC_BOOTSTRAP` unlocks the
+feature:
+
+```sh
+cd innerprobe
+rustc +1.99.1 --crate-type proc-macro attr.rs
+rustc +1.99.1 --crate-type lib --edition=2024 --extern attr=libattr.so lib.rs
+# error[E0658]: inner macro attributes are unstable
+RUSTC_BOOTSTRAP=1 rustc +1.99.1 --cfg probe --crate-type lib --edition=2024 \
+    --extern attr=libattr.so lib.rs --emit=llvm-ir -o lib.ll
+rg '^; .*generated' lib.ll
+# ; lib::generated
+```
+
+This counterexample is not part of the corpus counts.
+
+### Trait and implementation relationships in the index
+
+The indexes of the fixture, ryu and regex-syntax, and of a synthetic control crate, held no
+`relationships` on any document symbol. zbus's index was not counted. The control is:
+
+```rust
+pub trait Root { fn value(&self) -> u32; }
+pub trait Peer {}
+pub trait Child: Root + Peer { type Output: Root; }
+pub struct Leaf;
+impl Root for Leaf { fn value(&self) -> u32 { 1 } }
+impl Peer for Leaf {}
+impl Child for Leaf { type Output = Leaf; }
+```
+
+In it, the first and the last `Root` of `Child`'s declaration have the same symbol and the
+same reference role, though only the first is a supertrait. `impl Root for Leaf` gives
+references to `Root` and `Leaf` and a definition of the method, under a symbol whose spelling
+is the indexer's own; an `impl` without methods has nothing to inspect. With these indexes,
+the occurrences can anchor the ends of such a relation but do not label an `impl` header or a
+supertrait bound. Inferring either from occurrences on one line would be guessing.
+
+### Not measured
+
+- Dynamic dispatch and drop glue on zbus, and the relationships of zbus's index.
+- Features other than the defaults, release builds, tests and examples.
+- Calls into another target on any corpus with more than one target except the fixture.
+- Other hosts and toolchains than rustc 1.99.1 on `x86_64-unknown-linux-gnu`.
+- The production adapter, except for the crate inner attributes on regex-syntax below.
+
+## The rule for inner attributes on regex-syntax 0.8.12, 2026-11-25
+
+These are measurements of the production adapter: `gosanja-adapter-rust index` built from
+commit `8cf2ee8`, before the calls layer allowed crate-level inner attributes such as
+`#![no_std]`, and from the change that allows them and judges every attribute in a file. They
+measure that change on the input where the scratch probe above found its gain.
+
+Input: the published archive `regex-syntax-0.8.12.crate` from the local Cargo cache, SHA-256
+`d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6`, unpacked under `/var/tmp`
+and compared file for file with the archive: identical, its manifest included, so the optional
+`arbitrary` dependency is kept. It was built with the lock file the archive carries.
+
+Host and settings:
+- `x86_64-unknown-linux-gnu`; rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, through
+  `RUSTUP_TOOLCHAIN`; rust-analyzer 0.3.3049-standalone;
+- a Cargo home made for the run, holding no configuration, filled by `cargo fetch --locked`
+  from the archive's lock file, which downloaded its six packages (`arbitrary`,
+  `derive_arbitrary`, `proc-macro2`, `quote`, `syn` and `unicode-ident`);
+- no `.cargo/config` or `.cargo/config.toml` in the crate's directory or any directory above
+  it up to `/`;
+- of the environment, only `PATH` (with rust-analyzer's directory first), `HOME` (an empty
+  directory), `CARGO_HOME`, `RUSTUP_HOME` and `RUSTUP_TOOLCHAIN`.
+
+~~~sh
+env -i PATH="$ra_dir:$PATH" HOME="$d/home" CARGO_HOME="$d/cargo" RUSTUP_HOME="$rustup_home" \
+    RUSTUP_TOOLCHAIN=1.99.1 "$adapter" index --root "$crate" --out "$d/$label-out"
+python3 compare-production.py
+~~~
+
+`compare-production.py` requires the calls layer `ok` in both `result.json` files and compares
+the two `calls.jsonl` as multisets of rows.
+
+~~~text
+base: calls ok, 1728 rows
+branch: calls ok, 1736 rows
++8 -0
+~~~
+
+Both runs built one target, the library (`regex-syntax-lib-regex_syntax`), with the default
+features. No row went. The eight rows added are the eight sites the scratch probe named:
+
+| Site | Caller | Callee |
+| --- | --- | --- |
+| src/lib.rs:205:5 | `escape` src/lib.rs:203 | `escape_into` src/lib.rs:213 |
+| src/lib.rs:216:12 | `escape_into` src/lib.rs:213 | `is_meta_character` src/lib.rs:262 |
+| src/lib.rs:307:8 | `is_escapeable_character` src/lib.rs:305 | `is_meta_character` src/lib.rs:262 |
+| src/lib.rs:351:5 | `is_word_character` src/lib.rs:350 | `try_is_word_character` src/lib.rs:368 |
+| src/lib.rs:371:5 | `try_is_word_character` src/lib.rs:368 | `is_word_character` src/unicode.rs:463 |
+| src/ast/parse.rs:1532:12 | `parse_escape` src/ast/parse.rs:1482 | `is_meta_character` src/lib.rs:262 |
+| src/ast/parse.rs:1539:12 | `parse_escape` src/ast/parse.rs:1482 | `is_escapeable_character` src/lib.rs:305 |
+| src/hir/print.rs:310:12 | `write_literal_char` src/hir/print.rs:309 | `is_meta_character` src/lib.rs:262 |
+
+Each was checked by hand against the unpacked archive. Each site's line lies inside the
+caller's body and calls the callee by name, followed by `(`; at src/lib.rs:371 the column is
+that of the path `unicode::is_word_character`, which names the function of `src/unicode.rs`,
+not the `is_word_character` of `src/lib.rs`. The callers in `src/ast/parse.rs` and
+`src/hir/print.rs` import their callees from the crate root with `use crate::{...}`.
+
+`src/lib.rs` was the one file whose `uncorroborated` entry went: `skipped` held twelve files
+before and eleven after, the other eleven unchanged.

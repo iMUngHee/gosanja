@@ -22,6 +22,8 @@ pub enum Refused {
     },
     /// `build-unsupported`: the compile unit does not say `isOptimized: false`.
     Optimised { toolchain: String },
+    /// `build-unsupported`: the producer version has a prerelease suffix.
+    Prerelease { toolchain: String },
 }
 
 impl Refused {
@@ -30,7 +32,7 @@ impl Refused {
     pub fn toolchain(&self) -> Option<&str> {
         match self {
             Self::Unreadable { toolchain, .. } => toolchain.as_deref(),
-            Self::Optimised { toolchain } => Some(toolchain),
+            Self::Optimised { toolchain } | Self::Prerelease { toolchain } => Some(toolchain),
         }
     }
 }
@@ -107,7 +109,8 @@ impl Module {
     ///
     /// # Errors
     /// [`Refused::Unreadable`] when a requirement fails, and only then
-    /// [`Refused::Optimised`] when the compile unit does not say it was not optimised.
+    /// [`Refused::Optimised`] when the compile unit does not say it was not optimised,
+    /// or [`Refused::Prerelease`] when it names a prerelease compiler.
     pub fn read(text: &str) -> Result<Self, Refused> {
         let early = |error| Refused::Unreadable {
             error,
@@ -123,6 +126,13 @@ impl Module {
             })?;
         if optimised {
             return Err(Refused::Optimised { toolchain });
+        }
+        if toolchain
+            .split_whitespace()
+            .nth(1)
+            .is_some_and(|version| version.contains('-'))
+        {
+            return Err(Refused::Prerelease { toolchain });
         }
         Ok(m)
     }

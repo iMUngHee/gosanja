@@ -6,6 +6,35 @@ change may break compatibility, and an entry here says so when it does.
 
 ## Unreleased
 
+### Rust adapter: which attributes and compilers the calls layer accepts
+
+Neither interface changes. The calls layer judges attributes in more places and accepts fewer
+compilers, and that changes which call rows a snapshot of a Rust project holds:
+
+- An inner attribute at the top of a file no longer withholds every row of the file when it
+  is one of the crate-level attributes `no_std`, `no_main`, `no_implicit_prelude`,
+  `recursion_limit`, `type_length_limit`, `crate_name`, `crate_type` and `windows_subsystem`,
+  or a `feature` that names only rustdoc's documentation gates (`doc_cfg`,
+  `doc_notable_trait`, `doc_auto_cfg`). A crate root holding `#![no_std]` now keeps its rows:
+  on regex-syntax 0.8.12 the layer gives 1 736 rows, eight more than before, and loses none.
+  Any other `feature`, and these names written as outer attributes, still withhold them.
+- Every attribute written in a file is now judged, not only those on items. An attribute
+  outside the inert list on a statement, an expression, a match arm, a field, a variant, a
+  parameter or a generic parameter withholds the calls on that node's lines, and an inner
+  attribute in a function body or a block those of its owner. So does syntax the parser keeps
+  as unparsed tokens, as `become`. Rows that a snapshot held before can therefore go.
+- A module whose compiler is not a stable release, as `1.102.0-nightly` or `1.100.0-beta.3`,
+  makes the calls layer fail with `build-unsupported`. A project built with a nightly or beta
+  toolchain gets the base and syntax layers and no calls layer.
+
+The snapshots and the diff checked in under `fixtures/` and `spec/examples/` do not change.
+
+[docs/adapters/rust.md](docs/adapters/rust.md) gives the rule, which node owns which lines,
+and why the admitted inner attributes cannot make a row false. It also names a path the rule
+cannot close: a stable compiler unlocked with `RUSTC_BOOTSTRAP`, from the environment or
+Cargo's `[env]`, with features injected by flags such as `-Z crate-attr`, is outside what the
+layer trusts and can produce false rows.
+
 ### Rust adapter: the calls layer
 
 `gosanja-adapter-rust` now gives the calls layer. Neither interface changes: the adapter

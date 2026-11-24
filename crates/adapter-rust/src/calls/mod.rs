@@ -162,11 +162,15 @@ pub fn finish(
         let failure = Failure::new("ir-unreadable", format!("{id}: {error}"));
         return Ok(Outcome::failed(&failure, rustc));
     }
-    if let Some((id, _)) = refusals.first() {
-        let failure = Failure::new(
-            "build-unsupported",
-            format!("{id}: the module says it was optimised"),
-        );
+    if let Some((id, refusal)) = refusals.first() {
+        let reason = match refusal {
+            Refused::Optimised { .. } => "the module says it was optimised".to_owned(),
+            Refused::Prerelease { toolchain } => {
+                format!("the module names a prerelease compiler: {toolchain}")
+            }
+            Refused::Unreadable { .. } => unreachable!("unreadable modules were checked first"),
+        };
+        let failure = Failure::new("build-unsupported", format!("{id}: {reason}"));
         return Ok(Outcome::failed(&failure, rustc));
     }
     let builds: Vec<BuildContext> = built

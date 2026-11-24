@@ -1060,3 +1060,139 @@ fn instruction_positions_at_the_end_of_an_item_are_outside_it() {
         );
     }
 }
+
+fn attribute_case(source: &str, kept: bool) {
+    let rows = variant(source, "caller");
+    check(
+        &rows,
+        usize::from(kept),
+        (!kept).then_some("uncorroborated"),
+    );
+    if kept {
+        let row = &rows.evidence[0];
+        let point = |before: &str, after: usize| {
+            let prefix = &source[..source.find(before).unwrap() + after];
+            let line = u32::try_from(prefix.matches('\n').count()).unwrap();
+            let column = u32::try_from(prefix.rsplit('\n').next().unwrap().len()).unwrap();
+            (FILE, line, Some(column))
+        };
+        for (anchor, expected) in [
+            (&row.caller, point("fn caller", 3)),
+            (&row.callee, point("fn leaf", 3)),
+        ] {
+            assert_eq!(
+                (anchor.file.as_str(), anchor.line, anchor.col),
+                expected,
+                "{source}"
+            );
+        }
+        let site = row.site.as_ref().unwrap();
+        assert_eq!(
+            (site.file.as_str(), site.line, site.col),
+            point("§", 0),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn only_allowed_inner_attributes_keep_calls() {
+    for (attr, kept) in [
+        ("no_std", true),
+        ("no_main", true),
+        ("no_implicit_prelude", true),
+        ("recursion_limit = \"8\"", true),
+        ("type_length_limit = \"16\"", true),
+        ("crate_name = \"rows\"", true),
+        ("crate_type = \"lib\"", true),
+        ("windows_subsystem = \"windows\"", true),
+        ("feature(doc_cfg)", true),
+        ("feature(doc_notable_trait, doc_auto_cfg)", true),
+        ("cfg_attr(docsrs_regex, feature(doc_cfg))", true),
+        (
+            "cfg_attr(any(), cfg_attr(any(), no_std), recursion_limit = \"8\")",
+            true,
+        ),
+        ("cfg_attr(true, no_std)", true),
+        ("my_attr", false),
+        ("tool::attr", false),
+        ("feature(try_trait_v2)", false),
+        ("feature(doc_cfg, try_trait_v2)", false),
+        ("cfg_attr(any(), my_attr)", false),
+        ("cfg_attr(any(), no_std, my_attr)", false),
+        ("cfg_attr(false, my_attr)", false),
+        ("no_builtins", false),
+    ] {
+        let source = format!(
+            "#![{attr}]\npub fn leaf() {{}}\npub fn caller() {{\n    §leaf();\n    leaf();\n}}"
+        );
+        attribute_case(&source, kept);
+        attribute_case(
+            &source.replace("§leaf();\n    leaf();", "leaf();\n    §leaf();"),
+            kept,
+        );
+    }
+    attribute_case(
+        "pub fn leaf() {}\n#[no_std]\npub fn caller() {\n    §leaf();\n}",
+        false,
+    );
+    attribute_case(
+        "#!/usr/bin/env rust-script\n#![no_std]\npub fn leaf() {}\npub fn caller() {\n    §leaf();\n}",
+        true,
+    );
+}
+
+#[test]
+fn nested_attribute_owners_keep_unrelated_sites() {
+    for (node, kept, control) in [
+        ("#[my_attr] let x = §leaf();", false, true),
+        ("#[my_attr] §leaf();", false, true),
+        (
+            "match 0 {\n        #[my_attr] 0 => §leaf(),\n        _ => (),\n    };",
+            false,
+            true,
+        ),
+        ("let f = #[my_attr] || §leaf();", false, true),
+        ("become §leaf();", false, true),
+        ("#[allow(unused)] let x = §leaf();", true, true),
+        ("#![my_attr]\n    §leaf();", false, false),
+        (
+            "{\n        #![my_attr]\n        §leaf();\n    }",
+            false,
+            true,
+        ),
+        (
+            "match §leaf() {\n        #![my_attr]\n        _ => (),\n    };",
+            false,
+            true,
+        ),
+        (
+            "let _ = |#[cfg_attr(false, my_attr)]\n        box x| ();\n    §leaf();",
+            false,
+            false,
+        ),
+        ("{ #![cfg_attr(false, my_attr)] }\n    §leaf();", true, true),
+        ("m!(§leaf());", true, true),
+        ("m!(#[my_attr] §leaf());", true, true),
+    ] {
+        let source = format!("pub fn leaf() {{}}\npub fn caller() {{\n    {node}\n    leaf();\n}}");
+        attribute_case(&source, kept);
+        attribute_case(
+            &source
+                .replacen('§', "", 1)
+                .replace("\n    leaf();\n}", "\n    §leaf();\n}"),
+            control,
+        );
+    }
+    for source in [
+        "pub fn leaf() {}\nmod m {\n    #![my_attr]\n    fn caller() {\n        §leaf();\n    }\n}",
+        "pub fn leaf() {}\nimpl T {\n    #![my_attr]\n    fn caller() {\n        §leaf();\n    }\n}",
+        "pub fn leaf() {\n    #![my_attr]\n}\npub fn caller() {\n    §leaf();\n}",
+    ] {
+        attribute_case(source, false);
+    }
+    attribute_case(
+        "pub fn leaf() {}\nfn blocked() {\n    let _ = |#[cfg_attr(false, my_attr)]\n        box x| ();\n}\npub fn caller() {\n    §leaf();\n}",
+        true,
+    );
+}
