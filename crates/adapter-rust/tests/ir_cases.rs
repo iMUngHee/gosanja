@@ -1,0 +1,230 @@
+//! The IR reader on a module the pinned toolchain emitted (`fixtures/ir/reader/app.ll`, a
+//! binary of `fixtures/rust-calls`), and on that module edited one way at a time.
+
+use gosanja_adapter_rust::calls::debug::{Module, Refused};
+use gosanja_adapter_rust::calls::ir::Target;
+use std::path::Path;
+
+const TOOLCHAIN: &str = "rustc 1.99.1 (58cf8f9c3 2026-10-13)";
+const MAIN: &str = "_RNvCsjoC0h555x8z_9calls_app4main";
+const DIRECT: &str = "_RNvCshPFz110IhNm_9calls_lib6direct";
+const LANG_START: &str = "_RINvNtCs8ZKwes1zzDd_3std2rt10lang_startuECsjoC0h555x8z_9calls_app";
+const CALL_DIRECT: &str = "  %total = call i32 @_RNvCshPFz110IhNm_9calls_lib6direct(), !dbg !152\n";
+
+fn app() -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ir/reader/app.ll");
+    std::fs::read_to_string(path).expect("the reader fixture")
+}
+
+fn edited(from: &str, to: &str) -> String {
+    let text = app();
+    assert_eq!(text.matches(from).count(), 1, "one place to edit: {from}");
+    text.replacen(from, to, 1)
+}
+
+fn unreadable(text: &str) -> String {
+    match Module::read(text) {
+        Err(Refused::Unreadable { error, .. }) => error.to_string(),
+        other => panic!("expected an unreadable module, got {other:?}"),
+    }
+}
+
+fn function<'m>(m: &'m Module, symbol: &str) -> &'m gosanja_adapter_rust::calls::debug::Function {
+    m.functions
+        .iter()
+        .find(|f| f.symbol == symbol)
+        .unwrap_or_else(|| panic!("{symbol} is defined"))
+}
+
+#[test]
+fn the_emitted_module_reads() {
+    let m = Module::read(&app()).unwrap();
+    assert_eq!(m.toolchain, "rustc 1.99.1 (58cf8f9c3 2026-10-13)");
+    assert_eq!(m.triple, "x86_64-unknown-linux-gnu");
+    assert_eq!(m.functions.len(), 9);
+    assert!(m.declared.contains(DIRECT));
+    let main = function(&m, MAIN);
+    let targets: Vec<_> = main.instructions.iter().map(|i| i.target.clone()).collect();
+    assert_eq!(
+        targets,
+        [
+            Target::Direct(DIRECT.into()),
+            Target::Direct("shared_entry".into())
+        ]
+    );
+    let site = main.instructions[0].location.unwrap();
+    assert_eq!((site.line, site.column), (6, 17));
+    let sp = m.subprogram(m.scope_subprogram(site.scope));
+    assert_eq!(sp.name, "main");
+    let file = m.file(m.scope_file(site.scope).unwrap());
+    assert_eq!(
+        (file.directory.as_str(), file.filename.as_str()),
+        ("@ROOT@", "calls-app/src/main.rs")
+    );
+    assert!(file.md5.as_deref().is_some_and(|s| s.len() == 32));
+    // The entry point the compiler generates has no `!dbg`, and neither has its call.
+    let entry = function(&m, "main");
+    assert_eq!(entry.subprogram, None);
+    assert_eq!(entry.instructions.len(), 1);
+    assert_eq!(entry.instructions[0].location, None);
+    assert_eq!(m.definition("main"), Some(None));
+    assert_eq!(m.definition(DIRECT), None, "only declared");
+    assert_eq!(
+        m.definition(LANG_START)
+            .flatten()
+            .map(|s| (s.name.as_str(), s.line)),
+        Some(("lang_start<()>", 199))
+    );
+}
+
+#[test]
+fn an_invoke_over_two_lines_is_one_call() {
+    let m = Module::read(&edited(
+        CALL_DIRECT,
+        "  %total = invoke i32 @_RNvCshPFz110IhNm_9calls_lib6direct()\n          to label %start unwind label %start, !dbg !152\n",
+    ))
+    .unwrap();
+    let main = function(&m, MAIN);
+    assert_eq!(main.instructions.len(), 2);
+    assert_eq!(main.instructions[0].target, Target::Direct(DIRECT.into()));
+    assert_eq!(main.instructions[0].location.map(|l| l.line), Some(6));
+}
+
+#[test]
+fn an_invoke_without_its_continuation_does_not_parse() {
+    unreadable(&edited(
+        CALL_DIRECT,
+        "  %total = invoke i32 @_RNvCshPFz110IhNm_9calls_lib6direct(), !dbg !152\n",
+    ));
+}
+
+#[test]
+fn an_understood_line_that_does_not_parse_fails() {
+    let text = app();
+    let location = text
+        .lines()
+        .find(|l| l.starts_with("!152 = !DILocation("))
+        .unwrap();
+    unreadable(&edited(location, location.trim_end_matches(')')));
+    unreadable(&edited(CALL_DIRECT, "  %total = call i32 0(), !dbg !152\n"));
+    unreadable(&edited(
+        "define hidden void @_RNvCsjoC0h555x8z_9calls_app4main() unnamed_addr #0 !dbg !144 !guid !151 {",
+        "define hidden void @_RNvCsjoC0h555x8z_9calls_app4main() unnamed_addr #0 !dbg !144 !guid !151",
+    ));
+}
+
+#[test]
+fn a_reference_to_a_missing_node_or_one_of_the_wrong_kind_fails() {
+    let missing = unreadable(&edited(CALL_DIRECT, &CALL_DIRECT.replace("!152", "!99999")));
+    assert!(missing.contains("!99999"), "{missing}");
+    let wrong = unreadable(&edited(CALL_DIRECT, &CALL_DIRECT.replace("!152", "!34")));
+    assert!(wrong.contains("DIFile"), "{wrong}");
+}
+
+#[test]
+fn a_module_that_ends_inside_a_function_fails() {
+    let text = app();
+    let cut = text.find(CALL_DIRECT).unwrap();
+    let e = unreadable(&text[..cut]);
+    assert!(e.contains("ends inside a function"), "{e}");
+}
+
+#[test]
+fn a_string_that_is_not_utf8_fails() {
+    unreadable(&edited(
+        "filename: \"calls-app/src/main.rs/@/6ioqopafrauawqaowcojr5zfo\"",
+        "filename: \"calls-app/src/m\\FFin.rs/@/6ioqopafrauawqaowcojr5zfo\"",
+    ));
+}
+
+#[test]
+fn an_empty_or_cut_module_fails() {
+    unreadable("");
+    let text = app();
+    let first = text.find("\n}\n").unwrap() + 3;
+    unreadable(&text[..first]);
+    let compile_unit = text.find("!33 = distinct !DICompileUnit(").unwrap();
+    unreadable(&text[..compile_unit]);
+}
+
+#[test]
+fn a_module_without_a_target_triple_fails() {
+    let e = unreadable(&edited(
+        "target triple = \"x86_64-unknown-linux-gnu\"\n",
+        "",
+    ));
+    assert!(e.contains("target triple"), "{e}");
+}
+
+#[test]
+fn a_module_of_another_producer_fails() {
+    let e = unreadable(&edited(
+        "producer: \"clang LLVM (rustc version 1.99.1 (58cf8f9c3 2026-10-13))\"",
+        "producer: \"clang version 19.1.0\"",
+    ));
+    assert!(e.contains("another producer"), "{e}");
+}
+
+#[test]
+fn a_second_compile_unit_fails() {
+    let text = app();
+    let unit = text
+        .lines()
+        .find(|l| l.starts_with("!33 = distinct !DICompileUnit("))
+        .unwrap();
+    let e = unreadable(&format!("{text}{}\n", unit.replacen("!33", "!9033", 1)));
+    assert!(e.contains("second compile unit"), "{e}");
+}
+
+#[test]
+fn an_optimised_module_is_refused_as_such() {
+    let text = edited("isOptimized: false", "isOptimized: true");
+    assert_eq!(
+        Module::read(&text).unwrap_err(),
+        Refused::Optimised {
+            toolchain: TOOLCHAIN.into()
+        }
+    );
+    let text = edited("isOptimized: false, ", "");
+    assert_eq!(
+        Module::read(&text).unwrap_err(),
+        Refused::Optimised {
+            toolchain: TOOLCHAIN.into()
+        }
+    );
+    // Unreadable comes first.
+    let text = text.replace("target triple = \"x86_64-unknown-linux-gnu\"\n", "");
+    unreadable(&text);
+}
+
+#[test]
+fn unknown_lines_kinds_and_fields_are_passed_over() {
+    let text = app();
+    let subprogram = text
+        .lines()
+        .find(|l| l.starts_with("!144 = distinct !DISubprogram("))
+        .unwrap();
+    let with_field = subprogram.replacen("(name: ", "(futureField: 7, name: ", 1);
+    let text = text.replacen(subprogram, &with_field, 1)
+        + "$future = comdat any\nsome future line\n!9000 = !DIFutureKind(x: 1, y: \"\\FF\")\n";
+    let m = Module::read(&text).unwrap();
+    assert_eq!(function(&m, MAIN).instructions.len(), 2);
+}
+
+#[test]
+fn escapes_in_strings_decode() {
+    let text = app();
+    let file = text
+        .lines()
+        .find(|l| l.starts_with("!37 = !DIFile("))
+        .unwrap();
+    let escaped = file.replacen("std/src/rt.rs", "std/src/r\\5Ct\\22.rs", 1);
+    let m = Module::read(&text.replacen(file, &escaped, 1)).unwrap();
+    let id = function(&m, LANG_START).subprogram.unwrap();
+    let file = m.file(m.subprogram(id).file.unwrap());
+    assert!(
+        file.filename.ends_with("std/src/r\\t\".rs"),
+        "{}",
+        file.filename
+    );
+}

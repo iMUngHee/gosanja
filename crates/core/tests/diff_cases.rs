@@ -37,7 +37,7 @@ fn manifest_counts_match_the_emitted_rows_with_and_without_excluded_layers() {
 
     let calls_only = materialize(&calls_only);
     for (old, excluded) in [
-        (root.join("old/expected"), vec![]),
+        (root.join("old/expected"), vec![Excluded::Calls]),
         (
             calls_only.path().to_owned(),
             vec![Excluded::Calls, Excluded::Syntax],

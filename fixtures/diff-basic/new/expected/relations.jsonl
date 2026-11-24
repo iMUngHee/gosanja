@@ -5,7 +5,9 @@
 {"from":"cargo:diff-basic:both_g().","to":"cargo:pair:crate/@2.0.0","rel":"ref","roles":[],"sites":[["src/lib.rs",51,17,51,22]],"src":"core:reference-in-body"}
 {"from":"cargo:diff-basic:both_g().","to":"cargo:pair:g().@1.0.0","rel":"ref","roles":[],"sites":[["src/lib.rs",51,11,51,12]],"src":"core:reference-in-body"}
 {"from":"cargo:diff-basic:both_g().","to":"cargo:pair:g().@2.0.0","rel":"ref","roles":[],"sites":[["src/lib.rs",51,24,51,25]],"src":"core:reference-in-body"}
+{"from":"cargo:diff-basic:caller().","to":"cargo:diff-basic:callee().","rel":"call","mechanism":"static","resolution":"direct","evidence":[{"file":"src/lib.rs","line":31,"col":15,"build":"diff-basic-lib-diff_basic"}],"src":"adapter:rust/calls"}
 {"from":"cargo:diff-basic:caller().","to":"cargo:diff-basic:callee().","rel":"call","mechanism":"unknown","resolution":"declared","evidence":[{"file":"src/lib.rs","line":31,"col":15,"end":[31,21]}],"src":"adapter:rust/syntax"}
+{"from":"cargo:diff-basic:caller().","to":"cargo:diff-basic:hidden().","rel":"call","mechanism":"static","resolution":"direct","evidence":[{"file":"src/lib.rs","line":31,"col":4,"build":"diff-basic-lib-diff_basic"}],"src":"adapter:rust/calls"}
 {"from":"cargo:diff-basic:caller().","to":"cargo:diff-basic:hidden().","rel":"call","mechanism":"unknown","resolution":"declared","evidence":[{"file":"src/lib.rs","line":31,"col":4,"end":[31,10]}],"src":"adapter:rust/syntax"}
 {"from":"cargo:diff-basic:caller().","to":"cargo:core:ops/arith/impl#[u8][`Add<Self>`]add().","rel":"ref","roles":[],"sites":[["src/lib.rs",31,12,31,13],["src/lib.rs",31,13,31,14],["src/lib.rs",31,14,31,15]],"src":"core:reference-in-body"}
 {"from":"cargo:diff-basic:caller().","to":"cargo:diff-basic:callee().","rel":"ref","roles":[],"sites":[["src/lib.rs",31,15,31,21]],"src":"core:reference-in-body"}
@@ -34,7 +36,9 @@
 {"from":"cargo:diff-basic:uses_f().","to":"cargo:pair:f().","rel":"call","mechanism":"unknown","resolution":"declared","evidence":[{"file":"src/lib.rs","line":55,"col":11,"end":[55,12]}],"src":"adapter:rust/syntax"}
 {"from":"cargo:diff-basic:uses_f().","to":"cargo:pair:crate/@2.0.0","rel":"ref","roles":[],"sites":[["src/lib.rs",55,4,55,9]],"src":"core:reference-in-body"}
 {"from":"cargo:diff-basic:uses_f().","to":"cargo:pair:f().","rel":"ref","roles":[],"sites":[["src/lib.rs",55,11,55,12]],"src":"core:reference-in-body"}
+{"from":"cargo:diff-basic:uses_moved().","to":"cargo:diff-basic:inner/meander().","rel":"call","mechanism":"static","resolution":"direct","evidence":[{"file":"src/lib.rs","line":17,"col":21,"build":"diff-basic-lib-diff_basic"}],"src":"adapter:rust/calls"}
 {"from":"cargo:diff-basic:uses_moved().","to":"cargo:diff-basic:inner/meander().","rel":"call","mechanism":"unknown","resolution":"declared","evidence":[{"file":"src/lib.rs","line":17,"col":28,"end":[17,35]}],"src":"adapter:rust/syntax"}
+{"from":"cargo:diff-basic:uses_moved().","to":"cargo:diff-basic:util/mover().","rel":"call","mechanism":"static","resolution":"direct","evidence":[{"file":"src/lib.rs","line":17,"col":4,"build":"diff-basic-lib-diff_basic"}],"src":"adapter:rust/calls"}
 {"from":"cargo:diff-basic:uses_moved().","to":"cargo:diff-basic:util/mover().","rel":"call","mechanism":"unknown","resolution":"declared","evidence":[{"file":"src/lib.rs","line":17,"col":10,"end":[17,15]}],"src":"adapter:rust/syntax"}
 {"from":"cargo:diff-basic:uses_moved().","to":"cargo:core:ops/arith/impl#[u8][`Add<Self>`]add().","rel":"ref","roles":[],"sites":[["src/lib.rs",17,18,17,19],["src/lib.rs",17,19,17,20],["src/lib.rs",17,20,17,21]],"src":"core:reference-in-body"}
 {"from":"cargo:diff-basic:uses_moved().","to":"cargo:diff-basic:inner/","rel":"ref","roles":[],"sites":[["src/lib.rs",17,21,17,26]],"src":"core:reference-in-body"}

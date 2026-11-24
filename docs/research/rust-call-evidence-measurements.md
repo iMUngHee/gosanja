@@ -207,3 +207,83 @@ The 84 candidate sites cover 80 possible relations and 86 possible evidence
 entries before checking the emitted code. Part two of the fixture note lists
 the observed positions, multiplicities and targets. Equality here counts
 evidence entries, including repeated sites in different emitted functions.
+
+## Which target emits a generic instance
+
+On 2026-11-25, rustc 1.99.1 (58cf8f9c3 2026-10-13) on x86_64-unknown-linux-gnu
+compiled an rlib and its consumer in separate invocations. The library uses the
+generic function at `u32`. The binary calls it at both `u32` and `u64`.
+
+```rust
+// sample.rs
+#[inline(never)]
+pub fn generic<T>(x: T) -> T { x }
+pub fn shared(x: u32) -> u32 { generic(x) }
+```
+
+```rust
+// app.rs
+fn main() {
+    std::hint::black_box(sample::generic(11_u32));
+    std::hint::black_box(sample::generic(12_u64));
+}
+```
+
+```sh
+rustc +1.99.1 --edition=2024 --crate-type=rlib --crate-name sample \
+  -Copt-level=0 -Cdebuginfo=2 -Ccodegen-units=1 --emit=link,llvm-ir sample.rs
+rustc +1.99.1 --edition=2024 --extern sample=libsample.rlib \
+  -Copt-level=0 -Cdebuginfo=2 -Ccodegen-units=1 --emit=llvm-ir app.rs
+awk '/^; (call )?sample::generic/ { name=$NF; pending=1; next }
+     pending && !/^;/ { print FILENAME, ($1=="define" || $1=="declare") ? $1 : "call", name; pending=0 }' sample.ll app.ll
+```
+
+```text
+sample.ll define sample::generic::<u32>
+sample.ll call sample::generic::<u32>
+app.ll define sample::generic::<u64>
+app.ll call sample::generic::<u32>
+app.ll call sample::generic::<u64>
+app.ll declare sample::generic::<u32>
+```
+
+Both calls survive in the binary's IR. Only the `u64` call has a callee definition
+in that module. The binary reuses the library's `u32` instance. The calls layer
+can therefore consider the binary's `u64` call for publication while the
+binary's `u32` call is declared-only in this build.
+
+## Two Rust targets with one LLVM triple
+
+On the same host and compiler, an empty library with `no_core` let rustc emit a
+real LLVM module for each target without installing either target's standard
+library. This probe used `RUSTC_BOOTSTRAP=1` for `no_core`. Neither cross build
+invoked a linker. The separate `--print cfg` call reads the Rust target features.
+
+```sh
+printf '%s\n' '#![feature(no_core)]' '#![no_core]' >empty.rs
+for target in riscv32imc-unknown-none-elf riscv32imac-unknown-none-elf; do
+  RUSTC_BOOTSTRAP=1 rustc +1.99.1 --crate-type lib --target "$target" \
+    --emit llvm-ir empty.rs -o "$target.ll"
+  rg '^target triple' "$target.ll"
+  rustc +1.99.1 --print cfg --target "$target" | rg '^target_feature'
+done
+```
+
+```text
+target triple = "riscv32"
+target_feature="c"
+target_feature="m"
+target_feature="zca"
+target triple = "riscv32"
+target_feature="a"
+target_feature="c"
+target_feature="m"
+target_feature="zaamo"
+target_feature="zalrsc"
+target_feature="zca"
+```
+
+A Rust source branch guarded by `cfg(target_feature = "a")` can differ between
+these builds. The calls-layer context records the module triple and Cargo
+features. With the same package target ID, compiler, profile and Cargo features,
+the two contexts compare equal.

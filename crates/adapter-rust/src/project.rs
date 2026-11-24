@@ -122,7 +122,7 @@ impl<'a> Project<'a> {
         Ok(Self { root, vars })
     }
 
-    pub fn run(&self, tool: &str, args: &[&OsStr]) -> io::Result<Output> {
+    pub fn run(&self, tool: &str, args: &[impl AsRef<OsStr>]) -> io::Result<Output> {
         Command::new(tool)
             .args(args)
             .current_dir(self.root)

@@ -43,5 +43,8 @@
 {"from":"cargo:flow-kit:impl#[Op]apply().","to":"cargo:flow-kit:Op#f.","rel":"ref","roles":[],"sites":[["kit/src/lib.rs",20,47,20,48]],"src":"core:reference-in-body"}
 {"from":"cargo:flow-kit:make().","to":"cargo:flow-kit:Count#","rel":"ref","roles":[],"sites":[["kit/src/lib.rs",34,20,34,25],["kit/src/lib.rs",34,30,34,35]],"src":"core:reference-in-body"}
 {"from":"cargo:flow-kit:make().","to":"cargo:flow-kit:step().","rel":"ref","roles":[],"sites":[["kit/src/lib.rs",34,38,34,42]],"src":"core:reference-in-body"}
+{"from":"cargo:flow-kit:ping().","to":"cargo:flow-kit:pong().","rel":"call","mechanism":"static","resolution":"direct","evidence":[{"file":"kit/src/lib.rs","line":53,"col":4,"build":"flow-kit-lib-flow_kit"}],"src":"adapter:rust/calls"}
+{"from":"cargo:flow-kit:ping().","to":"cargo:flow-kit:pong().","rel":"call","mechanism":"unknown","resolution":"declared","evidence":[{"file":"kit/src/lib.rs","line":53,"col":4,"end":[53,8]}],"src":"adapter:rust/syntax"}
+{"from":"cargo:flow-kit:ping().","to":"cargo:flow-kit:pong().","rel":"ref","roles":[],"sites":[["kit/src/lib.rs",53,4,53,8]],"src":"core:reference-in-body"}
 {"from":"cargo:flow-kit:step().","to":"cargo:core:ops/arith/impl#[i32][`Add<Self>`]add().","rel":"ref","roles":[],"sites":[["kit/src/lib.rs",33,34,33,35],["kit/src/lib.rs",33,35,33,36],["kit/src/lib.rs",33,36,33,37]],"src":"core:reference-in-body"}
 {"from":"cargo:flow-kit:step().","to":"cargo:flow-kit:Count#","rel":"ref","roles":[],"sites":[["kit/src/lib.rs",33,15,33,20],["kit/src/lib.rs",33,25,33,30]],"src":"core:reference-in-body"}

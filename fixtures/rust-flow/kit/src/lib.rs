@@ -49,3 +49,11 @@ fn inactive() {}
 macro_rules! one { () => { 1 } }
 #[macro_export]
 macro_rules! int { () => { i32 } }
+
+pub fn ping() -> u32 {
+    pong()
+}
+
+fn pong() -> u32 {
+    1
+}

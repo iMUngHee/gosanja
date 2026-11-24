@@ -30,5 +30,7 @@
 {"key":"cargo:flow-kit:int!","attributes":["#[macro_export]"],"src":"adapter:rust/syntax"}
 {"key":"cargo:flow-kit:make().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
 {"key":"cargo:flow-kit:one!","attributes":["#[macro_export]"],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:ping().","visibility":"pub","outline":[{"k":"call","range":[53,4,53,10],"callee":[53,4,53,8]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:flow-kit:pong().","outline":[],"src":"adapter:rust/syntax"}
 {"key":"cargo:flow-kit:slot!","src":"adapter:rust/syntax"}
 {"key":"cargo:flow-kit:step().","visibility":"pub","attributes":["#[inline]","#[must_use = \"use the next count\"]"],"outline":[],"src":"adapter:rust/syntax"}

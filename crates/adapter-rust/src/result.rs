@@ -1,3 +1,4 @@
+use gosanja_adapter_rust::calls::Outcome;
 use gosanja_schema::contract::{
     AdapterManifest, AdapterResult, CONTRACT_VERSION, Diagnostic, LayerName, LayerResult,
     LayerStatus, RESULT_FILE, Requirement,
@@ -13,7 +14,7 @@ pub fn manifest() -> AdapterManifest {
         version: env!("CARGO_PKG_VERSION").into(),
         languages: vec!["rust".into()],
         position_encoding: PositionEncoding::Utf32,
-        layers: vec![LayerName::Base, LayerName::Syntax],
+        layers: vec![LayerName::Base, LayerName::Syntax, LayerName::Calls],
         requires: Some(
             ["rust-analyzer", "cargo"]
                 .map(|name| Requirement {
@@ -47,11 +48,21 @@ fn failed(code: &str) -> LayerResult {
         skipped: None,
     }
 }
-pub fn publish(
-    out: &Path,
-    syntax: Result<LayerResult, Problem>,
-    tools: Vec<Tool>,
-) -> io::Result<()> {
+/// What each layer gave.
+pub struct Layers {
+    /// The syntax layer's entry, or why the base layer failed.
+    pub syntax: Result<LayerResult, Problem>,
+    pub calls: Outcome,
+}
+
+pub fn publish(out: &Path, layers: Layers, mut tools: Vec<Tool>) -> io::Result<()> {
+    let Layers { syntax, calls } = layers;
+    if let Some(version) = calls.rustc {
+        tools.push(Tool {
+            name: "rustc".into(),
+            version,
+        });
+    }
     let (base, syntax) = match syntax {
         Ok(layer) => (
             LayerResult {
@@ -71,9 +82,13 @@ pub fn publish(
     };
     let result = AdapterResult {
         contract: CONTRACT_VERSION.to_string(),
-        layers: BTreeMap::from([("base".into(), base), ("syntax".into(), syntax)]),
+        layers: BTreeMap::from([
+            ("base".into(), base),
+            ("calls".into(), calls.layer),
+            ("syntax".into(), syntax),
+        ]),
         tools: (!tools.is_empty()).then_some(tools),
-        builds: None,
+        builds: calls.builds,
     };
     serde_json::to_writer(File::create(out.join(RESULT_FILE))?, &result)?;
     Ok(())

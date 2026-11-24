@@ -1,8 +1,9 @@
 //! The syntax layer: rows of `syntax.jsonl` read from the source files with syn.
 
+pub(crate) mod call_facts;
 mod items;
 mod outline;
-mod position;
+pub(crate) mod position;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -237,7 +238,7 @@ impl Extents {
             .filter(|o| is_entity(&o.symbol));
         for occurrence in occurrences {
             // An occurrence the engine cannot convert is dropped there too.
-            let Some((name, enclosing)) = convert(occurrence, lines) else {
+            let Some((name, enclosing)) = convert(occurrence, |r| lines.char_range(r)) else {
                 continue;
             };
             let extent = at
@@ -264,13 +265,16 @@ impl Extents {
 
 /// Whether the engine makes an entity of a symbol's definition: not of a local symbol, and
 /// not of a parameter, whose descriptor ends in `)`.
-fn is_entity(symbol: &str) -> bool {
+pub(crate) fn is_entity(symbol: &str) -> bool {
     !symbol.starts_with("local ") && !symbol.ends_with(')')
 }
 
 /// An occurrence's name and enclosing ranges in characters, typed fields first as the engine
 /// reads them; `None` when one cannot be converted against the file.
-fn convert(o: &Occurrence, lines: &Lines<'_>) -> Option<(Range, Option<Range>)> {
+pub(crate) fn convert(
+    o: &Occurrence,
+    range: impl Fn(Range) -> Option<Range>,
+) -> Option<(Range, Option<Range>)> {
     let name = match &o.typed_range {
         Some(Typed_range::SingleLineRange(r)) => {
             [r.line, r.start_character, r.line, r.end_character]
@@ -280,19 +284,23 @@ fn convert(o: &Occurrence, lines: &Lines<'_>) -> Option<(Range, Option<Range>)> 
         }
         _ => legacy(&o.range)?,
     };
-    let enclosing = match &o.typed_enclosing_range {
-        Some(Typed_enclosing_range::SingleLineEnclosingRange(r)) => {
-            Some([r.line, r.start_character, r.line, r.end_character])
+    let enclosing = if o.symbol_roles & SymbolRole::Definition as i32 == 0 {
+        None
+    } else {
+        match &o.typed_enclosing_range {
+            Some(Typed_enclosing_range::SingleLineEnclosingRange(r)) => {
+                Some([r.line, r.start_character, r.line, r.end_character])
+            }
+            Some(Typed_enclosing_range::MultiLineEnclosingRange(r)) => {
+                Some([r.start_line, r.start_character, r.end_line, r.end_character])
+            }
+            _ if o.enclosing_range.is_empty() => None,
+            _ => Some(legacy(&o.enclosing_range)?),
         }
-        Some(Typed_enclosing_range::MultiLineEnclosingRange(r)) => {
-            Some([r.start_line, r.start_character, r.end_line, r.end_character])
-        }
-        _ if o.enclosing_range.is_empty() => None,
-        _ => Some(legacy(&o.enclosing_range)?),
     };
-    let name = lines.char_range(unsigned(name)?)?;
+    let name = range(unsigned(name)?)?;
     let enclosing = match enclosing {
-        Some(raw) => Some(lines.char_range(unsigned(raw)?)?),
+        Some(raw) => Some(range(unsigned(raw)?)?),
         None => None,
     };
     Some((name, enclosing))
@@ -308,7 +316,8 @@ fn legacy(raw: &[i32]) -> Option<[i32; 4]> {
 
 fn unsigned(raw: [i32; 4]) -> Option<Range> {
     let [sl, sc, el, ec] = raw.map(|v| u32::try_from(v).ok());
-    Some(Range::new(sl?, sc?, el?, ec?))
+    let range = Range::new(sl?, sc?, el?, ec?);
+    (range.start() <= range.end()).then_some(range)
 }
 
 #[cfg(test)]

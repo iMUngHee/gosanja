@@ -52,6 +52,40 @@ impl<'a> Lines<'a> {
         u32::try_from(prefix.chars().count()).ok()
     }
 
+    /// Converts SCIP columns to scalar offsets after checking both endpoints.
+    pub fn scip_range(
+        &self,
+        value: Range,
+        encoding: scip::types::PositionEncoding,
+    ) -> Option<Range> {
+        use scip::types::PositionEncoding::{
+            UTF8CodeUnitOffsetFromLineStart as Utf8, UTF16CodeUnitOffsetFromLineStart as Utf16,
+            UTF32CodeUnitOffsetFromLineStart as Utf32,
+        };
+        if encoding == Utf8 {
+            return self.char_range(value);
+        }
+        let column = |line: u32, units: u32| {
+            let line = self.lines.get(line as usize)?;
+            let mut remaining = usize::try_from(units).ok()?;
+            let mut count = 0;
+            for ch in line.chars() {
+                if remaining == 0 {
+                    break;
+                }
+                remaining = remaining.checked_sub(match encoding {
+                    Utf16 => ch.len_utf16(),
+                    Utf32 => 1,
+                    _ => return None,
+                })?;
+                count += 1;
+            }
+            (remaining == 0).then_some(count)
+        };
+        let [sl, sc, el, ec] = value.0;
+        Some(Range::new(sl, column(sl, sc)?, el, column(el, ec)?))
+    }
+
     /// A byte range converted to characters.
     pub fn char_range(&self, bytes: Range) -> Option<Range> {
         let [sl, sc, el, ec] = bytes.0;

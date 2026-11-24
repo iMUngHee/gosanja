@@ -135,6 +135,8 @@ fn every_item_kind_has_one_row_at_its_name_and_rows_come_in_order() {
         (KIT, 46, 3),  // inactive, under #[cfg(any())]
         (KIT, 48, 13), // one, macro_rules
         (KIT, 50, 13), // int, macro_rules
+        (KIT, 52, 7),  // ping
+        (KIT, 56, 3),  // pong
     ];
     assert_eq!(anchors, expected);
     assert!(

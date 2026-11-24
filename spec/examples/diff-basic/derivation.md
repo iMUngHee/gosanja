@@ -98,17 +98,34 @@ added (32):
 - `endpoint: both`: extra.rs `main().~1 -> width` (call, ref); `uses_dep2 -> helper()@0.2.0` (call,
   ref) and `-> dep crate/@0.2.0`; `width -> size_of` (call, ref), `-> mem/`, `-> std crate/`.
 
-The `f` case of criterion 4: the two `f` rows stay unpaired, and `uses_f`'s call and ref are
+The `f` case: the two `f` rows stay unpaired, and `uses_f`'s call and ref are
 removed to the 1.0.0 row and added to the 2.0.0 row, which have the same key text. The
 whole-file member and the tool.rs members are written as removed and added with their outgoing
 relations, and none cancels.
 
 ## Manifest
 
-`not_compared` is empty: syntax is `present` on both sides, calls `absent` on both (builds `[]`
-and `[]`). `packages_added` is `["cargo:std"]`: the new side reaches externals of core, dep, pair
-and std, the old side of core, dep and pair. `dep` 0.2.0 adds nothing (see Packages in diff.md). `packages_removed` is
-`[]`. Gap counts per kind on each side: `missing-layer` 1 (calls), `symbol-collision` 2.
+`not_compared` is `["calls"]`. Syntax is `present` on both sides and is compared. Calls is
+`present` on both sides too, but the build contexts are not equal as sets of whole rows: the
+old side has three, `diff-basic-bin-diff-basic`, `diff-basic-bin-tool` and
+`diff-basic-lib-diff_basic`, and the new side has a fourth, `diff-basic-bin-extra`, for its
+new binary `src/bin/extra.rs`. So the relations whose `src` is `adapter:rust/calls` are not
+compared, and they are left out of the candidate features and of the packages. They are the
+only relations the calls layer added to either side: on the old side `caller -> hidden`,
+`uses_moved -> mover` and `-> wander`; on the new side `caller -> hidden` and `-> callee`,
+`uses_moved -> util/mover` and `-> inner/meander`. Every other row of both sides' relations
+is as before, so `entities.jsonl`, `externals.jsonl`, `relations.jsonl` and
+`candidates.jsonl` are unchanged, and so are the row counts.
+
+Each side gives its `layers`, its `builds` and its `counts` as its snapshot records them: old
+33 relations and 4 gaps, new 52 relations and 5 gaps. Gap counts per kind: old
+`skipped-file` 2 (`callee-unresolved` for `src/bin/tool.rs` and `src/main.rs`, whose calls
+into the library the binaries only declare) and `symbol-collision` 2; new `skipped-file` 3
+(`src/bin/extra.rs` too) and `symbol-collision` 2. No `missing-layer` gap remains.
+
+`packages_added` is `["cargo:std"]`: the new side reaches externals of core, dep, pair and std,
+the old side of core, dep and pair. `dep` 0.2.0 adds nothing (see Packages in diff.md).
+`packages_removed` is `[]`.
 
 ## candidates.jsonl (12 rows)
 

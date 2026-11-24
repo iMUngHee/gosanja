@@ -87,7 +87,7 @@ fn snapshot_bytes(dir: &Path) -> Vec<(String, Vec<u8>)> {
 
 /// Every item the adapter describes in the fixture except the inactive one: file, name,
 /// entity kind and the position of its name token (all columns here are ASCII).
-const ITEMS: [(&str, &str, &str, u32, u32); 34] = [
+const ITEMS: [(&str, &str, &str, u32, u32); 36] = [
     (APP, "crate", "rust:module", 0, 0),
     (APP, "marker", "rust:macro", 5, 13),
     (APP, "Shell", "rust:struct", 8, 7),
@@ -122,6 +122,8 @@ const ITEMS: [(&str, &str, &str, u32, u32); 34] = [
     (KIT, "shared", "rust:function", 40, 18),
     (KIT, "one", "rust:macro", 48, 13),
     (KIT, "int", "rust:macro", 50, 13),
+    (KIT, "ping", "rust:function", 52, 7),
+    (KIT, "pong", "rust:function", 56, 3),
 ];
 
 /// The join on a snapshot of the fixture.
@@ -175,7 +177,21 @@ fn assert_joined(snapshot: &Path) {
 
 /// Every call relation of the fixture and the references the calls keep.
 fn assert_calls(relations: &[Value]) {
-    let calls: Vec<_> = relations.iter().filter(|r| r["rel"] == "call").collect();
+    // The calls layer gives one relation, the fixture's control: `ping` calls `pong`.
+    let compiled: Vec<_> = relations
+        .iter()
+        .filter(|r| r["src"] == "adapter:rust/calls")
+        .collect();
+    assert_eq!(
+        compiled,
+        [
+            &json!({"from": "cargo:flow-kit:ping().", "to": "cargo:flow-kit:pong().", "rel": "call", "mechanism": "static", "resolution": "direct", "evidence": [{"file": KIT, "line": 53, "col": 4, "build": "flow-kit-lib-flow_kit"}], "src": "adapter:rust/calls"})
+        ]
+    );
+    let calls: Vec<_> = relations
+        .iter()
+        .filter(|r| r["rel"] == "call" && r["src"] == "adapter:rust/syntax")
+        .collect();
     assert!(
         calls
             .iter()
@@ -213,6 +229,11 @@ fn assert_calls(relations: &[Value]) {
     assert_eq!(
         found,
         BTreeSet::from([
+            (
+                "cargo:flow-kit:ping().".to_owned(),
+                "cargo:flow-kit:pong().".to_owned(),
+                json!([{"file": KIT, "line": 53, "col": 4, "end": [53, 8]}]).to_string()
+            ),
             call(flow, "cargo:core:option/Option#Some#", &[(38, 4, 8)]),
             call(flow, "cargo:flow-app:outer().", &[(28, 16, 21), (33, 4, 9)]),
             call(flow, "cargo:flow-kit:impl#[Op]apply().", &[(32, 7, 12)]),
@@ -308,7 +329,7 @@ fn the_engine_finds_and_runs_the_adapter_and_gives_the_golden_snapshot() {
     assert_eq!(scope["adapter"]["contract"], "0.2");
     assert_eq!(
         scope["layers"],
-        json!({"base": "present", "syntax": "present", "calls": "absent"})
+        json!({"base": "present", "syntax": "present", "calls": "present"})
     );
     let list = case
         .command(engine())
@@ -490,7 +511,7 @@ fn files_the_layer_cannot_read_become_skipped_file_gaps() {
     assert_eq!(syntax_state(&out), "present");
     let skipped: Vec<_> = table(&out, "gaps.jsonl")
         .into_iter()
-        .filter(|g| g["gap"] == "skipped-file")
+        .filter(|g| g["gap"] == "skipped-file" && g["layer"] == "syntax")
         .map(|g| {
             (
                 g["file"].as_str().map(str::to_owned),
@@ -614,12 +635,370 @@ fn an_outline_too_deep_is_withheld_and_the_layer_kept() {
     assert!(row("cargo:flow-app:plain/plain().")["outline"].is_array());
     let skipped: Vec<_> = table(&out, "gaps.jsonl")
         .into_iter()
-        .filter(|g| g["gap"] == "skipped-file")
+        .filter(|g| g["gap"] == "skipped-file" && g["layer"] == "syntax")
         .collect();
     assert_eq!(
         skipped,
         [
             json!({"gap": "skipped-file", "file": "app/src/chain.rs", "layer": "syntax", "code": "outline-too-deep", "src": "adapter:rust/syntax"})
         ]
+    );
+}
+/// A case whose project is a copy of `fixtures/rust-calls`, as its golden was made.
+fn rust_calls() -> (Case, PathBuf) {
+    let case = Case::new();
+    let root = case.temp.path().join("rust-calls");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    support::copy_tree(&fixtures.join("rust-calls"), &root);
+    fs::remove_dir_all(root.join("expected")).expect("drop the golden from the copy");
+    symlink(
+        support::adapter_binary(),
+        case.bin.join("gosanja-adapter-rust"),
+    )
+    .expect("install the adapter");
+    (case, root)
+}
+
+// The fixture of the calls layer: the snapshot is the golden, and every case of the
+// fixture's note has the relations it says, and no others.
+/// A site of an evidence entry: file, one-based line and column.
+type Site = (String, u64, u64);
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one list of the note's cases, each beside the reason it holds"
+)]
+fn the_calls_of_the_fixture_reach_the_snapshot() {
+    let (case, root) = rust_calls();
+    let out = case.temp.path().join("snapshot");
+    ok(&index(&case, &root, &out));
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust-calls/expected");
+    assert_eq!(snapshot_bytes(&out), snapshot_bytes(&golden));
+
+    let relations = table(&out, "relations.jsonl");
+    let compiled: Vec<&Value> = relations
+        .iter()
+        .filter(|r| r["src"] == "adapter:rust/calls")
+        .collect();
+    for r in &compiled {
+        assert_eq!(r["rel"], "call");
+        assert_eq!(r["mechanism"], "static", "{r}");
+        assert_eq!(r["resolution"], "direct", "{r}");
+    }
+    let evidence = |from: &str, to: &str| -> Vec<Site> {
+        compiled
+            .iter()
+            .filter(|r| r["from"] == format!("cargo:{from}") && r["to"] == format!("cargo:{to}"))
+            .flat_map(|r| r["evidence"].as_array().expect("evidence").clone())
+            .map(|e| {
+                (
+                    e["file"].as_str().expect("a file").to_owned(),
+                    e["line"].as_u64().expect("a line") + 1,
+                    e["col"].as_u64().expect("a column") + 1,
+                )
+            })
+            .collect()
+    };
+    let lib = "calls-lib/src/lib.rs";
+    let at = |file: &str, sites: &[(u64, u64)]| -> Vec<Site> {
+        sites
+            .iter()
+            .map(|&(l, c)| (file.to_owned(), l, c))
+            .collect()
+    };
+    // Each relation the note expects, with its sites (one-based, compiler columns).
+    let expected: [(&str, &str, Vec<Site>); 24] = [
+        (
+            "calls-lib:direct().",
+            "calls-lib:leaf().",
+            at(lib, &[(17, 5)]),
+        ),
+        // The binary emits its own instance of the library's generic function.
+        (
+            "calls-app:main().~3",
+            "calls-lib:generic().",
+            at("calls-app/src/main.rs", &[(14, 13)]),
+        ),
+        (
+            "calls-lib:two_types().",
+            "calls-lib:generic().",
+            at(lib, &[(25, 6), (25, 21)]),
+        ),
+        (
+            "calls-lib:get_two().",
+            "calls-lib:impl#[`Wrapper<T>`]get().",
+            at(lib, &[(299, 19), (299, 40)]),
+        ),
+        // A closure's and an async body's calls belong to the function they are written in.
+        (
+            "calls-lib:make_adder().",
+            "calls-lib:leaf().",
+            at(lib, &[(39, 9)]),
+        ),
+        (
+            "calls-lib:after_await().",
+            "calls-lib:leaf().",
+            at(lib, &[(54, 5)]),
+        ),
+        (
+            "calls-lib:two_on_one_line().",
+            "calls-lib:leaf().",
+            at(lib, &[(312, 6), (312, 14)]),
+        ),
+        (
+            "calls-lib:use_operator().",
+            "calls-lib:impl#[Meters][`Add<Self>`]add().",
+            at(lib, &[(326, 5)]),
+        ),
+        (
+            "calls-lib:use_greet().",
+            "calls-lib:Greeter#greet().",
+            at(lib, &[(174, 11)]),
+        ),
+        // One generic caller emitted twice: two instructions at one site.
+        (
+            "calls-lib:twice().",
+            "calls-lib:leaf().",
+            at(lib, &[(29, 5), (29, 5)]),
+        ),
+        (
+            "calls-lib:use_shared_entry().",
+            "calls-lib:shared_entry().",
+            at(lib, &[(330, 5)]),
+        ),
+        // Each binary's `main` calls its own `helper`.
+        (
+            "calls-app:main().~2",
+            "calls-app:helper().~1",
+            at("calls-app/src/bin/twin.rs", &[(6, 13)]),
+        ),
+        (
+            "calls-app:main().~3",
+            "calls-app:helper().~2",
+            at("calls-app/src/main.rs", &[(17, 13)]),
+        ),
+        // A function that exists only under the configured `--cfg`.
+        (
+            "calls-lib:use_flag().",
+            "calls-lib:only_with_flag().",
+            at(lib, &[(308, 5)]),
+        ),
+        (
+            "calls-lib:only_with_flag().",
+            "calls-lib:leaf().",
+            at(lib, &[(304, 5)]),
+        ),
+        // A file mounted under two module names, and one the integration test also mounts.
+        (
+            "calls-lib:use_mounted().",
+            "calls-lib:under_test/mounted().",
+            at(lib, &[(295, 6)]),
+        ),
+        (
+            "calls-lib:under_test/mounted().",
+            "calls-lib:leaf().",
+            at("calls-lib/src/mounted.rs", &[(4, 5)]),
+        ),
+        (
+            "calls-lib:use_shared().",
+            "calls-lib:shared/shared_call().",
+            at(lib, &[(420, 5)]),
+        ),
+        (
+            "calls-lib:shared/shared_call().",
+            "calls-lib:shared/shared_leaf().",
+            at("calls-lib/src/shared.rs", &[(8, 5)]),
+        ),
+        (
+            "calls-lib:use_blanket().",
+            "calls-lib:impl#[T][Tagged]tag().",
+            at(lib, &[(261, 9)]),
+        ),
+        // Of two methods whose closures are on lines of their own, one row each.
+        (
+            "calls-lib:impl#[Apart][First]go().",
+            "calls-lib:leaf().",
+            at(lib, &[(512, 13)]),
+        ),
+        (
+            "calls-lib:impl#[Apart][Second]go().",
+            "calls-lib:leaf().",
+            at(lib, &[(518, 13)]),
+        ),
+        // Of the two whose bodies share a line, the second's own call only.
+        (
+            "calls-lib:impl#[Joined][Second]go().",
+            "calls-lib:leaf().",
+            at(lib, &[(526, 69)]),
+        ),
+        (
+            "calls-lib:drops/drop_lookalike().",
+            "fake-core:mem/drop().",
+            at("calls-lib/src/drops.rs", &[(77, 5)]),
+        ),
+    ];
+    for (from, to, sites) in &expected {
+        assert_eq!(&evidence(from, to), sites, "{from} -> {to}");
+    }
+    // The base reference of each `helper` call points to the two helpers' group.
+    for (from, file, line) in [
+        ("cargo:calls-app:main().~2", "calls-app/src/bin/twin.rs", 5),
+        ("cargo:calls-app:main().~3", "calls-app/src/main.rs", 16),
+    ] {
+        assert!(
+            relations.iter().any(|r| r["rel"] == "ref"
+                && r["from"] == from
+                && r["to"] == "cargo:calls-app:helper()."
+                && r["sites"][0][0] == file
+                && r["sites"][0][1] == line),
+            "the reference from {from} to the group"
+        );
+    }
+
+    // Only after those are found: what the layer withholds.
+    let ends = |key: &str| {
+        compiled
+            .iter()
+            .any(|r| r["from"] == format!("cargo:{key}") || r["to"] == format!("cargo:{key}"))
+    };
+    let from = |key: &str| compiled.iter().any(|r| r["from"] == format!("cargo:{key}"));
+    // A call through a trait object: no compiled relation, the syntax layer's stays.
+    assert!(!from("calls-lib:dyn_call()."));
+    assert!(
+        relations
+            .iter()
+            .any(|r| r["from"] == "cargo:calls-lib:dyn_call()."
+                && r["to"] == "cargo:calls-lib:Shape#area()."
+                && r["src"] == "adapter:rust/syntax")
+    );
+    // The returned closure, the function passed by name, and the generated method's helper.
+    assert_eq!(
+        evidence("calls-lib:use_adder().", "calls-lib:make_adder()."),
+        at(lib, &[(45, 5)])
+    );
+    assert_eq!(
+        compiled
+            .iter()
+            .filter(|r| r["from"] == "cargo:calls-lib:use_adder().")
+            .count(),
+        1
+    );
+    assert_eq!(
+        evidence("calls-lib:pass_by_name().", "calls-lib:leaf()."),
+        []
+    );
+    for key in [
+        "calls-lib:proxy_helper().",
+        "calls-lib:impl#[Engine]run().",
+        "calls-lib:use_proxy().",
+        // Both calls on the `Slot` line, and the written method of `a::Task`.
+        "calls-lib:use_slots().",
+        "calls-lib:impl#[`Slot<u8>`]run().",
+        "calls-lib:impl#[Local][Task]work().",
+        "calls-lib:use_chosen().",
+        // Lines a macro template or a derived local type takes.
+        "calls-lib:const_run/run().",
+        "calls-lib:const_run/nested().",
+        // A file with a byte order mark.
+        "calls-lib:bom/bom_call().",
+        "calls-lib:bom/bom_leaf().",
+        // Written methods that share a line with a derive's type.
+        "calls-lib:impl#[Panel]label().",
+        "calls-lib:impl#[Sheet]label().",
+        // Anything under an attribute macro, however named, or a `cfg_attr` holding one.
+        "calls-lib:kept().",
+        "calls-lib:impl#[Kept]kept_method().",
+        "calls-lib:spelled/impl#[ByTest]by_test().",
+        "calls-lib:impl#[ByClippy]by_clippy().",
+        "calls-lib:maybe_kept().",
+        // Two closure-bodied methods sharing a line, and the first of the joined pair.
+        "calls-lib:impl#[Shared][First]go().",
+        "calls-lib:impl#[Shared][Second]go().",
+        "calls-lib:impl#[Joined][First]go().",
+        // A written method and its generated copy, and the function written twice on a line.
+        "calls-lib:impl#[Original]work().",
+        "calls-lib:use_copies().",
+        "calls-lib:alt().",
+        // Functions that exist only under `cfg(test)`, and the binary that is not built.
+        "calls-lib:only_in_test().",
+        "calls-lib:call_only_in_test().",
+        "calls-app:main().~1",
+    ] {
+        // These are called, with rows, from `use_go` and the like; only their own calls are
+        // withheld.
+        let withheld = key.ends_with("use_chosen().")
+            || key.ends_with("use_copies().")
+            || key.contains("[Shared]")
+            || key.contains("[Joined][First]");
+        if withheld {
+            assert!(!from(key), "a compiled relation from {key}");
+        } else {
+            assert!(!ends(key), "a compiled relation at {key}");
+        }
+    }
+    // `nested_run::run` keeps exactly its own call, not the nested function's closure.
+    assert_eq!(
+        evidence("calls-lib:nested_run/run().", "calls-lib:leaf()."),
+        at(lib, &[(594, 48)])
+    );
+    // `templated::run`: the line of the template gives nothing, the next line its call.
+    assert_eq!(
+        evidence("calls-lib:templated/run().", "calls-lib:leaf()."),
+        at(lib, &[(615, 22)])
+    );
+    // `local_derive`: the line of the derived type gives nothing.
+    assert_eq!(
+        evidence("calls-lib:local_derive().", "calls-lib:leaf()."),
+        at(lib, &[(628, 18)])
+    );
+    // Nothing from a binary into the library other than through an instance it emits, and
+    // nothing to the function the binary only declares under the name `_Read`.
+    let into_lib: Vec<&Value> = compiled
+        .iter()
+        .filter(|r| {
+            r["from"]
+                .as_str()
+                .is_some_and(|f| f.starts_with("cargo:calls-app:"))
+                && r["to"]
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("cargo:calls-lib:"))
+        })
+        .copied()
+        .collect();
+    let targets: BTreeSet<&str> = into_lib
+        .iter()
+        .map(|r| r["to"].as_str().expect("a key"))
+        .collect();
+    assert_eq!(
+        targets,
+        BTreeSet::from(["cargo:calls-lib:generic().", "cargo:calls-lib:hinted()."])
+    );
+    assert!(!compiled.iter().any(|r| {
+        r["to"] == "cargo:calls-lib:read_value()."
+            && r["from"]
+                .as_str()
+                .is_some_and(|f| f.starts_with("cargo:calls-app:"))
+    }));
+    assert!(!compiled.iter().any(|r| {
+        r["to"] == "cargo:calls-lib:shared_entry()."
+            && r["from"]
+                .as_str()
+                .is_some_and(|f| f.starts_with("cargo:calls-app:"))
+    }));
+    // No relation says `mono-instantiated` or `drop`.
+    assert!(
+        !relations
+            .iter()
+            .any(|r| r["resolution"] == "mono-instantiated" || r["mechanism"] == "drop")
+    );
+    // Every entry of the note: 77 relations, 83 entries.
+    assert_eq!(compiled.len(), 77);
+    assert_eq!(
+        compiled
+            .iter()
+            .map(|r| r["evidence"].as_array().expect("evidence").len())
+            .sum::<usize>(),
+        83
     );
 }

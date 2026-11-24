@@ -4,7 +4,8 @@ Two versions of one small Rust crate, `old/` and `new/`, written for this reposi
 has its index (`index.scip`) and its snapshot (`expected/`), both made by
 `fixtures/regenerate.sh diff-basic` at the fixed paths `/tmp/gosanja-fixtures/diff-basic/old` and
 `/tmp/gosanja-fixtures/diff-basic/new`. The snapshot is written by the engine with the Rust adapter,
-whose syntax layer gives the visibility change and the declared calls. `deps/` holds the path
+whose syntax layer gives the visibility change and the declared calls, and whose calls layer
+gives the calls each side's build emitted. `deps/` holds the path
 dependencies of both sides. `expected/` at the top is the diff of the two snapshots, identical
 file for file to `spec/examples/diff-basic`, where the derivation of every row is written out.
 
@@ -27,6 +28,7 @@ file for file to `spec/examples/diff-basic`, where the derivation of every row i
 | a member in a changed file, at A on one side and B on the other | `src/bin/tool.rs` `main` on line 0 | a comment line above it moves `main` to line 1 |
 | a member spanning a changed file | the crate root of `src/lib.rs`, with `ref util/` | the same, grown |
 | a collision group gains a member in another file | `crate/` with 3 members, `main()` with 2 | `src/bin/extra.rs` adds one to each; `src/main.rs` is unchanged |
+| build contexts that differ | three targets built: the library and two binaries | `src/bin/extra.rs` is a fourth, so the calls layers are not compared (`not_compared: ["calls"]`) |
 
 ## The three candidates
 

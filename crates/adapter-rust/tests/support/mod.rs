@@ -15,7 +15,7 @@ pub struct Case {
     pub out: PathBuf,
     pub bin: PathBuf,
 }
-fn copy_tree(src: &Path, dest: &Path) {
+pub fn copy_tree(src: &Path, dest: &Path) {
     fs::create_dir(dest).unwrap();
     for entry in fs::read_dir(src).unwrap() {
         let e = entry.unwrap();
@@ -71,7 +71,8 @@ impl Case {
         let cargo = Path::new(env!("CARGO"));
         symlink(cargo, bin.join("cargo")).unwrap();
         symlink(cargo.with_file_name("rustc"), bin.join("rustc")).unwrap();
-        for name in ["cp", "env"] {
+        // `cc` links the binaries of the calls build; it finds `ld` on `PATH`.
+        for name in ["cp", "env", "cc", "ld"] {
             let target = std::env::split_paths(&std::env::var_os("PATH").unwrap())
                 .map(|d| d.join(name))
                 .find(|p| p.is_file())

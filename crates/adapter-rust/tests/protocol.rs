@@ -5,6 +5,7 @@ use protobuf::Message;
 use scip::types::{Document, Index};
 use serde_json::{Value, json};
 use std::{
+    fmt::Write as _,
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     process::Command,
@@ -40,10 +41,14 @@ fn failed(c: &Case, cmd: &mut Command, code: &str, tools: &[&str]) -> Vec<u8> {
     assert_eq!(r.get("tools").is_some(), !tools.is_empty());
     assert!(!c.out.join("index.scip").exists());
     assert!(!c.out.join("syntax.jsonl").exists());
-    assert_eq!(
-        r["layers"]["syntax"],
-        json!({"status":"failed","diagnostics":[{"code":"base-failed"}]})
-    );
+    for layer in ["syntax", "calls"] {
+        assert_eq!(
+            r["layers"][layer],
+            json!({"status":"failed","diagnostics":[{"code":"base-failed"}]})
+        );
+    }
+    assert!(r.get("builds").is_none());
+    assert!(!c.out.join("calls.jsonl").exists());
     assert_eq!(before, listing(&c.root));
     bytes
 }
@@ -56,7 +61,7 @@ fn manifest() {
     assert!(validator(Schema::AdapterManifest).is_valid(&r), "{r}");
     assert_eq!(
         r,
-        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.2","languages":["rust"],"layers":["base","syntax"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
+        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.2","languages":["rust"],"layers":["base","syntax","calls"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
     );
 }
 #[test]
@@ -330,6 +335,10 @@ fn optional_tool_environment() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "each mode's environment and writes are checked side by side"
+)]
 fn child_environment_and_workspace_writes() {
     for mode in ["readonly", "configured", "hostile"] {
         let c = Case::new();
@@ -423,7 +432,13 @@ fn child_environment_and_workspace_writes() {
         published.sort();
         assert_eq!(
             published,
-            ["index.scip", "result.json", "syntax.jsonl", "work"]
+            [
+                "calls.jsonl",
+                "index.scip",
+                "result.json",
+                "syntax.jsonl",
+                "work"
+            ]
         );
 
         assert_eq!(before, listing(&c.root));
@@ -582,4 +597,932 @@ fn isolated_adapter_binary() {
             .unwrap()
             .ino()
     );
+}
+
+// The calls layer. A probe package replaces the fixture: a library whose `caller` calls
+// `leaf`, with an index written here, so that a row exists when the layer succeeds.
+
+const PROBE_LIB: &str =
+    "pub fn leaf() -> u32 {\n    1\n}\n\npub fn caller() -> u32 {\n    leaf()\n}\n";
+
+/// A probe package at the case's root: `Cargo.toml` from `manifest` (a `[package]` named
+/// `probe` is written before it), the given files, its lock file and an index of
+/// `src/lib.rs` with `leaf`, `caller` and the reference between them.
+fn probe(c: &Case, manifest: &str, files: &[(&str, &str)]) {
+    fs::remove_dir_all(&c.root).unwrap();
+    fs::create_dir_all(c.root.join("src")).unwrap();
+    fs::write(
+        c.root.join("Cargo.toml"),
+        format!("[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{manifest}"),
+    )
+    .unwrap();
+    fs::write(c.root.join("src/lib.rs"), PROBE_LIB).unwrap();
+    for (path, text) in files {
+        let path = c.root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    lock(c);
+    write_index(c, &[("src/lib.rs", probe_document())]);
+}
+
+fn lock(c: &Case) {
+    let o = c
+        .command(&c.bin.join("cargo"))
+        .current_dir(&c.root)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}
+
+fn write_index(c: &Case, documents: &[(&str, Vec<scip::types::Occurrence>)]) {
+    let mut index = Index::new();
+    for (path, occurrences) in documents {
+        let mut doc = Document::new();
+        doc.relative_path.push_str(path);
+        doc.position_encoding =
+            scip::types::PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into();
+        doc.occurrences.clone_from(occurrences);
+        // Every defined symbol is a function, as `rust-analyzer` reports one.
+        let defined: std::collections::BTreeSet<&str> = occurrences
+            .iter()
+            .filter(|o| !o.enclosing_range.is_empty())
+            .map(|o| o.symbol.as_str())
+            .collect();
+        for symbol in defined {
+            let mut info = scip::types::SymbolInformation::new();
+            info.symbol.push_str(symbol);
+            info.kind = scip::types::symbol_information::Kind::Function.into();
+            info.display_name.push_str(
+                symbol
+                    .rsplit(' ')
+                    .next()
+                    .unwrap()
+                    .trim_end_matches("().")
+                    .rsplit('/')
+                    .next()
+                    .unwrap(),
+            );
+            doc.symbols.push(info);
+        }
+        index.documents.push(doc);
+    }
+    fs::write(c.root.join("index.scip"), index.write_to_bytes().unwrap()).unwrap();
+}
+
+fn occurrence(
+    symbol: &str,
+    range: [i32; 3],
+    enclosing: Option<[i32; 4]>,
+) -> scip::types::Occurrence {
+    let mut o = scip::types::Occurrence::new();
+    o.symbol.push_str(symbol);
+    o.range = range.to_vec();
+    if let Some(e) = enclosing {
+        o.symbol_roles = scip::types::SymbolRole::Definition as i32;
+        o.enclosing_range = e.to_vec();
+    }
+    o
+}
+
+/// `leaf` and `caller` of `PROBE_LIB`, and the reference on `caller`'s body line.
+fn probe_document() -> Vec<scip::types::Occurrence> {
+    let leaf = "rust-analyzer cargo probe 0.1.0 leaf().";
+    let caller = "rust-analyzer cargo probe 0.1.0 caller().";
+    vec![
+        occurrence(leaf, [0, 7, 11], Some([0, 0, 2, 1])),
+        occurrence(caller, [4, 7, 13], Some([4, 0, 6, 1])),
+        occurrence(leaf, [5, 4, 8], None),
+    ]
+}
+
+/// Replaces `name` on the case's `PATH` by a script that runs `body` with `$REAL` the
+/// program it replaces. The case's `PATH` holds few programs, so the script calls the
+/// host's `cat`, `grep`, `sed` and `rm` by their paths.
+fn wrap(c: &Case, name: &str, body: &str) {
+    let real = fs::canonicalize(c.bin.join(name)).unwrap();
+    let script = c.bin.join(format!("{name}.wrapper"));
+    let mut tools = String::new();
+    for tool in ["cat", "grep", "sed", "rm"] {
+        let path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|d| d.join(tool))
+            .find(|p| p.is_file())
+            .unwrap();
+        writeln!(tools, "{tool}() {{ '{}' \"$@\"; }}", path.display()).unwrap();
+    }
+    fs::write(
+        &script,
+        format!("#!/bin/sh\n{tools}REAL='{}'\n{body}\n", real.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::rename(script, c.bin.join(name)).unwrap();
+}
+
+/// Runs the adapter and gives `result.json`, after checking it against its schema.
+fn calls_run(c: &Case) -> (Value, String) {
+    let o = c.index().output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let r: Value = serde_json::from_slice(&fs::read(c.out.join("result.json")).unwrap()).unwrap();
+    assert!(validator(Schema::AdapterResult).is_valid(&r), "{r}");
+    (r, String::from_utf8_lossy(&o.stderr).into_owned())
+}
+
+/// The calls layer failed with `code` and left no rows and no build context; base and
+/// syntax succeeded.
+fn calls_failed(r: &Value, c: &Case, code: &str) {
+    assert_eq!(
+        r["layers"]["calls"],
+        json!({"status": "failed", "diagnostics": [{"code": code}]}),
+        "{r}"
+    );
+    assert_eq!(r["layers"]["base"]["status"], "ok", "{r}");
+    assert_eq!(r["layers"]["syntax"]["status"], "ok", "{r}");
+    assert!(r.get("builds").is_none(), "{r}");
+    assert!(!c.out.join("calls.jsonl").exists());
+}
+
+fn calls_rows(c: &Case) -> Vec<Value> {
+    fs::read_to_string(c.out.join("calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+fn tool_names(r: &Value) -> Vec<String> {
+    r["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn the_probe_gives_its_row() {
+    let c = Case::new();
+    probe(&c, "", &[]);
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    assert_eq!(tool_names(&r), ["cargo", "rust-analyzer", "rustc"]);
+    assert_eq!(
+        calls_rows(&c),
+        [json!({
+            "caller": {"file": "src/lib.rs", "line": 4, "col": 7},
+            "callee": {"file": "src/lib.rs", "line": 0, "col": 7},
+            "mechanism": "static",
+            "resolution": "direct",
+            "site": {"file": "src/lib.rs", "line": 5, "col": 4},
+            "build": "probe-lib-probe"
+        })]
+    );
+    let builds = r["builds"].as_array().unwrap();
+    assert_eq!(builds.len(), 1);
+    assert_eq!(builds[0]["id"], "probe-lib-probe");
+    assert_eq!(builds[0]["profile"], "dev");
+    assert_eq!(builds[0]["target"], "x86_64-unknown-linux-gnu");
+    assert!(
+        builds[0]["toolchain"]
+            .as_str()
+            .unwrap()
+            .starts_with("rustc 1.99.1 (")
+    );
+    assert_eq!(builds[0]["features"], json!([]));
+}
+
+#[test]
+fn calls_outcomes_before_any_module_is_read() {
+    // A binary that does not compile.
+    let c = Case::new();
+    probe(&c, "", &[("src/main.rs", "fn main() { missing() }\n")]);
+    write_index(
+        &c,
+        &[("src/lib.rs", probe_document()), ("src/main.rs", vec![])],
+    );
+    let (r, stderr) = calls_run(&c);
+    calls_failed(&r, &c, "build-failed");
+    assert!(stderr.contains("cargo fetch"), "{stderr}");
+
+    // Only a binary whose required features `default` does not enable: nothing to build.
+    let c = Case::new();
+    probe(
+        &c,
+        "autolib = false\n[features]\nextra = []\n[[bin]]\nname = \"gated\"\npath = \"src/main.rs\"\nrequired-features = [\"extra\"]\n",
+        &[("src/main.rs", "fn main() {}\n")],
+    );
+    write_index(&c, &[("src/main.rs", vec![])]);
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    assert!(r.get("builds").is_none(), "{r}");
+    assert_eq!(fs::read(c.out.join("calls.jsonl")).unwrap(), b"");
+
+    // A profile's optimisation level yields to the adapter's flag.
+    let c = Case::new();
+    probe(&c, "[profile.dev]\nopt-level = 3\n", &[]);
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    assert_eq!(calls_rows(&c).len(), 1);
+
+    // Configured flags after the adapter's raise it: the module says so.
+    let c = Case::new();
+    probe(
+        &c,
+        "",
+        &[(
+            ".cargo/config.toml",
+            "[build]\nrustflags = [\"-C\", \"opt-level=3\"]\n",
+        )],
+    );
+    let (r, _) = calls_run(&c);
+    calls_failed(&r, &c, "build-unsupported");
+    assert_eq!(tool_names(&r), ["cargo", "rust-analyzer", "rustc"]);
+
+    // Configured flags that send the IR elsewhere after the adapter's path.
+    let c = Case::new();
+    let elsewhere = c.temp.path().join("elsewhere.ll");
+    probe(
+        &c,
+        "",
+        &[(
+            ".cargo/config.toml",
+            &format!(
+                "[build]\nrustflags = [\"--emit=llvm-ir={}\"]\n",
+                elsewhere.display()
+            ),
+        )],
+    );
+    let (r, _) = calls_run(&c);
+    calls_failed(&r, &c, "ir-missing");
+}
+
+/// A probe with a binary beside the library: the binary is built first, then the library.
+fn probe_with_binary(c: &Case) {
+    probe(
+        c,
+        "",
+        &[("src/main.rs", "fn main() {\n    probe::caller();\n}\n")],
+    );
+    write_index(
+        c,
+        &[("src/lib.rs", probe_document()), ("src/main.rs", vec![])],
+    );
+}
+
+/// Wraps `cargo` so that the `n`th `cargo rustc` (from 1) has its standard output passed
+/// through `filter`, a shell pipeline over the JSON lines, and then runs `after`.
+fn wrap_cargo_rustc(c: &Case, n: u32, filter: &str, after: &str) {
+    let count = c.temp.path().join("rustc-count");
+    wrap(
+        c,
+        "cargo",
+        &format!(
+            r#"if [ "$1" != rustc ]; then exec "$REAL" "$@"; fi
+n=$(($(cat '{count}' 2>/dev/null || echo 0) + 1)); echo $n > '{count}'
+if [ $n -ne {n} ]; then exec "$REAL" "$@"; fi
+out=$("$REAL" "$@") || exit $?
+printf '%s\n' "$out" | {filter}
+{after}"#,
+            count = count.display()
+        ),
+    );
+}
+
+/// The IR path the `n`th target (from 0) is given.
+fn ir_path(c: &Case, n: u32) -> std::path::PathBuf {
+    c.out.join(format!("work/calls/{n}.ll"))
+}
+
+#[test]
+fn calls_outcomes_from_what_cargo_reports() {
+    let artifacts = r#"grep '"reason":"compiler-artifact"'"#;
+    // The second target's artifact message repeated, then dropped: no partial layer.
+    for (filter, code) in [
+        (
+            format!("{{ cat; printf '%s\\n' \"$out\" | {artifacts}; }}"),
+            "build-unsupported",
+        ),
+        (
+            r#"grep -v '"reason":"compiler-artifact"'"#.to_owned(),
+            "ir-missing",
+        ),
+    ] {
+        let c = Case::new();
+        probe_with_binary(&c);
+        wrap_cargo_rustc(&c, 2, &filter, "");
+        let (r, _) = calls_run(&c);
+        calls_failed(&r, &c, code);
+    }
+    // Two artifact messages and no file: the count is checked first.
+    let c = Case::new();
+    probe(&c, "", &[]);
+    let ir = ir_path(&c, 0);
+    wrap_cargo_rustc(
+        &c,
+        1,
+        &format!("{{ cat; printf '%s\\n' \"$out\" | {artifacts}; }}"),
+        &format!("rm -f '{}'", ir.display()),
+    );
+    let (r, _) = calls_run(&c);
+    calls_failed(&r, &c, "build-unsupported");
+
+    // The offline build lacks a dependency that the metadata command let through.
+    let c = Case::new();
+    probe(&c, "", &[]);
+    wrap(
+        &c,
+        "cargo",
+        r#"if [ "$1" = rustc ]; then echo 'error: no matching package named `gone` found (offline)' >&2; exit 101; fi
+exec "$REAL" "$@""#,
+    );
+    let (r, stderr) = calls_run(&c);
+    calls_failed(&r, &c, "build-failed");
+    assert!(stderr.contains("cargo fetch"), "{stderr}");
+}
+
+#[test]
+fn calls_outcomes_from_the_emitted_module() {
+    // A `rustc` that runs the real one and then cuts or removes the file it was told to
+    // write. Cut before the compile unit, the module is unreadable and names no compiler.
+    for (action, code) in [
+        (r#"sed -i '/DICompileUnit/,$d' "$ir""#, "ir-unreadable"),
+        (r#"rm -f "$ir""#, "ir-missing"),
+    ] {
+        let c = Case::new();
+        probe(&c, "", &[]);
+        wrap(
+            &c,
+            "rustc",
+            &format!(
+                r#""$REAL" "$@" || exit $?
+for a in "$@"; do case "$a" in --emit=llvm-ir=*) ir="${{a#--emit=llvm-ir=}}"; {action};; esac; done
+exit 0"#
+            ),
+        );
+        let (r, _) = calls_run(&c);
+        calls_failed(&r, &c, code);
+        assert_eq!(tool_names(&r), ["cargo", "rust-analyzer"], "{r}");
+    }
+}
+
+#[test]
+fn calls_outcomes_decided_before_compiling() {
+    // An output directory whose path holds a comma: no `cargo rustc` is run.
+    let c = Case::new();
+    probe(&c, "", &[]);
+    let log = c.temp.path().join("cargo-args");
+    wrap(
+        &c,
+        "cargo",
+        &format!("echo \"$1\" >> '{}'\nexec \"$REAL\" \"$@\"", log.display()),
+    );
+    let out = c.temp.path().join("a,b/out");
+    fs::create_dir_all(&out).unwrap();
+    let o = c
+        .adapter()
+        .arg("index")
+        .arg("--root")
+        .arg(&c.root)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let r: Value = serde_json::from_slice(&fs::read(out.join("result.json")).unwrap()).unwrap();
+    assert_eq!(
+        r["layers"]["calls"],
+        json!({"status": "failed", "diagnostics": [{"code": "build-unsupported"}]})
+    );
+    assert_eq!(r["layers"]["base"]["status"], "ok");
+    assert_eq!(r["layers"]["syntax"]["status"], "ok");
+    assert!(!out.join("calls.jsonl").exists());
+    let invoked = fs::read_to_string(&log).unwrap();
+    assert!(!invoked.lines().any(|l| l == "rustc"), "{invoked}");
+
+    // Two targets that give one build context id, the first of which does not compile.
+    let c = Case::new();
+    fs::remove_dir_all(&c.root).unwrap();
+    for (dir, manifest, path, text) in [
+        (
+            "a",
+            "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[[bin]]\nname = \"lib-x\"\npath = \"src/main.rs\"\n",
+            "src/main.rs",
+            "fn main() { missing() }\n",
+        ),
+        (
+            "a-bin",
+            "[package]\nname = \"a-bin\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[lib]\nname = \"x\"\n",
+            "src/lib.rs",
+            "pub fn f() {}\n",
+        ),
+    ] {
+        fs::create_dir_all(c.root.join(dir).join("src")).unwrap();
+        fs::write(c.root.join(dir).join("Cargo.toml"), manifest).unwrap();
+        fs::write(c.root.join(dir).join(path), text).unwrap();
+    }
+    fs::write(
+        c.root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"a\", \"a-bin\"]\nresolver = \"3\"\n",
+    )
+    .unwrap();
+    lock(&c);
+    write_index(
+        &c,
+        &[("a/src/main.rs", vec![]), ("a-bin/src/lib.rs", vec![])],
+    );
+    let (r, stderr) = calls_run(&c);
+    calls_failed(&r, &c, "build-context-ambiguous");
+    assert!(stderr.contains("a-bin-lib-x"), "{stderr}");
+}
+
+/// Two files of the probe: `src/lib.rs` (with a comment line on top) holding `leaf` and
+/// `caller`, and `src/other.rs` holding `other_leaf` and `other_caller`, each with its row.
+const PROBE_TWO: &str = "// a comment of the probe\npub mod other;\n\npub fn leaf() -> u32 {\n    1\n}\n\npub fn caller() -> u32 {\n    leaf()\n}\n";
+const PROBE_OTHER: &str = "pub fn other_leaf() -> u32 {\n    2\n}\n\npub fn other_caller() -> u32 {\n    other_leaf()\n}\n";
+
+fn probe_two(c: &Case, other_path: &str) {
+    let lib = PROBE_TWO.replace(
+        "pub mod other;",
+        &if other_path == "src/other.rs" {
+            "pub mod other;".to_owned()
+        } else {
+            format!(
+                "#[path = \"{}\"]\npub mod other;",
+                other_path.trim_start_matches("src/")
+            )
+        },
+    );
+    probe(c, "", &[(other_path, PROBE_OTHER)]);
+    fs::write(c.root.join("src/lib.rs"), &lib).unwrap();
+    let shift = i32::try_from(
+        lib.lines()
+            .position(|l| l.starts_with("pub fn leaf"))
+            .unwrap(),
+    )
+    .unwrap();
+    let at = |line: i32| line + shift;
+    let leaf = "rust-analyzer cargo probe 0.1.0 leaf().";
+    let caller = "rust-analyzer cargo probe 0.1.0 caller().";
+    let other_leaf = "rust-analyzer cargo probe 0.1.0 other/other_leaf().";
+    let other_caller = "rust-analyzer cargo probe 0.1.0 other/other_caller().";
+    write_index(
+        c,
+        &[
+            (
+                "src/lib.rs",
+                vec![
+                    occurrence(leaf, [at(0), 7, 11], Some([at(0), 0, at(2), 1])),
+                    occurrence(caller, [at(4), 7, 13], Some([at(4), 0, at(6), 1])),
+                    occurrence(leaf, [at(5), 4, 8], None),
+                ],
+            ),
+            (
+                other_path,
+                vec![
+                    occurrence(other_leaf, [0, 7, 17], Some([0, 0, 2, 1])),
+                    occurrence(other_caller, [4, 7, 19], Some([4, 0, 6, 1])),
+                    occurrence(other_leaf, [5, 4, 14], None),
+                ],
+            ),
+        ],
+    );
+}
+
+fn row_files(c: &Case) -> Vec<String> {
+    calls_rows(c)
+        .iter()
+        .map(|r| r["site"]["file"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// A tool of the host by its path, for scripts that run with the case's small `PATH`.
+fn host(tool: &str) -> String {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|d| d.join(tool))
+        .find(|p| p.is_file())
+        .unwrap()
+        .display()
+        .to_string()
+}
+
+#[test]
+fn a_file_changed_after_the_build_gives_no_rows() {
+    let c = Case::new();
+    probe_two(&c, "src/other.rs");
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    assert_eq!(row_files(&c), ["src/lib.rs", "src/other.rs"]);
+
+    // The indexer runs after the calls build. This one changes one byte of the comment,
+    // keeping the file's length, its modification time, the call's text and every position.
+    let c = Case::new();
+    probe_two(&c, "src/other.rs");
+    c.stub(&format!(
+        "if [ \"$1\" = --version ]; then echo 'rust-analyzer 0.3.3049-standalone'; exit 0; fi\n\
+         '{cp}' -p src/lib.rs \"$4.stamp\"\n\
+         '{sed}' -i 's/a comment/A comment/' src/lib.rs\n\
+         '{touch}' -r \"$4.stamp\" src/lib.rs\n\
+         '{rm}' \"$4.stamp\"\n\
+         '{cp}' index.scip \"$4\"",
+        cp = host("cp"),
+        sed = host("sed"),
+        touch = host("touch"),
+        rm = host("rm"),
+    ));
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"]["status"], "ok", "{r}");
+    assert_eq!(row_files(&c), ["src/other.rs"]);
+}
+
+#[test]
+fn modification_times_do_not_decide_rows() {
+    let mut outputs = Vec::new();
+    for stamp in ["200001010000", "209901010000"] {
+        let c = Case::new();
+        probe_two(&c, "src/other.rs");
+        let o = Command::new(host("touch"))
+            .args(["-t", stamp])
+            .arg(c.root.join("src/lib.rs"))
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        calls_run(&c);
+        outputs.push(fs::read(c.out.join("calls.jsonl")).unwrap());
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(
+        String::from_utf8(outputs[0].clone())
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_module_file_without_the_rs_ending_gives_rows() {
+    let c = Case::new();
+    probe_two(&c, "src/other.txt");
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    assert_eq!(row_files(&c), ["src/lib.rs", "src/other.txt"]);
+}
+
+#[test]
+fn an_unreadable_file_elsewhere_changes_nothing() {
+    let c = Case::new();
+    probe_two(&c, "src/other.rs");
+    let secret = c.root.join("notes/secret.rs");
+    fs::create_dir_all(secret.parent().unwrap()).unwrap();
+    fs::write(&secret, "fn hidden() {}\n").unwrap();
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).unwrap();
+    let (r, _) = calls_run(&c);
+    for layer in ["base", "syntax", "calls"] {
+        assert_eq!(r["layers"][layer]["status"], "ok", "{r}");
+    }
+    assert_eq!(row_files(&c), ["src/lib.rs", "src/other.rs"]);
+}
+
+#[test]
+fn remapped_sources_name_no_file_of_the_root() {
+    let mut outputs = Vec::new();
+    for (to, start) in [("/nowhere", None), (".", Some("a")), (".", Some("b"))] {
+        let c = Case::new();
+        probe(
+            &c,
+            "",
+            &[(
+                ".cargo/config.toml",
+                &format!(
+                    "[build]\nrustflags = [\"--remap-path-prefix={}={to}\"]\n",
+                    fs::canonicalize(c.temp.path())
+                        .unwrap()
+                        .join("project")
+                        .display()
+                ),
+            )],
+        );
+        let mut cmd = c.index();
+        if let Some(dir) = start {
+            let dir = c.temp.path().join(dir);
+            fs::create_dir_all(&dir).unwrap();
+            cmd.current_dir(dir);
+        }
+        let o = cmd.output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let r: Value =
+            serde_json::from_slice(&fs::read(c.out.join("result.json")).unwrap()).unwrap();
+        assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+        assert_eq!(fs::read(c.out.join("calls.jsonl")).unwrap(), b"");
+        if start.is_some() {
+            outputs.push((
+                fs::read(c.out.join("result.json")).unwrap(),
+                fs::read(c.out.join("calls.jsonl")).unwrap(),
+            ));
+        }
+    }
+    assert_eq!(outputs[0], outputs[1]);
+}
+
+/// The case's root replaced by a copy of `fixtures/<name>`.
+fn fixture_root(c: &Case, name: &str) {
+    fs::remove_dir_all(&c.root).unwrap();
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    support::copy_tree(&fixtures.join(name), &c.root);
+    let expected = c.root.join("expected");
+    if expected.exists() {
+        fs::remove_dir_all(expected).unwrap();
+    }
+}
+
+/// Every string in a JSON value.
+fn strings(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) => out.push(s.clone()),
+        Value::Array(a) => a.iter().for_each(|v| strings(v, out)),
+        Value::Object(o) => o.values().for_each(|v| strings(v, out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn build_contexts_say_what_was_built_and_hold_no_path() {
+    let mut runs = Vec::new();
+    for parent in ["plain", "@"] {
+        let c = Case::new();
+        let moved = c.temp.path().join(parent).join("project");
+        fixture_root(&c, "rust-calls");
+        fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        fs::rename(&c.root, &moved).unwrap();
+        let o = c
+            .adapter()
+            .arg("index")
+            .arg("--root")
+            .arg(&moved)
+            .arg("--out")
+            .arg(&c.out)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let result = fs::read(c.out.join("result.json")).unwrap();
+        let rows = fs::read(c.out.join("calls.jsonl")).unwrap();
+        let r: Value = serde_json::from_slice(&result).unwrap();
+        assert!(validator(Schema::AdapterResult).is_valid(&r), "{r}");
+        assert_eq!(r["layers"]["calls"]["status"], "ok", "{r}");
+        let builds = r["builds"].as_array().unwrap();
+        let ids: Vec<&str> = builds.iter().map(|b| b["id"].as_str().unwrap()).collect();
+        // calls-app needs `engine`, which `default` enables through `front`; calls-extra
+        // needs `extra`, which it does not, and is not built.
+        assert_eq!(
+            ids,
+            [
+                "calls-app-bin-calls-app",
+                "calls-app-bin-calls-twin",
+                "calls-derive-lib-calls_derive",
+                "calls-lib-lib-calls_lib"
+            ]
+        );
+        assert_eq!(builds[0]["features"], json!(["default", "engine", "front"]));
+        assert_eq!(builds[3]["features"], json!(["default", "fast"]));
+        for b in builds {
+            assert_eq!(b["profile"], "dev");
+            assert_eq!(b["target"], "x86_64-unknown-linux-gnu");
+            assert!(
+                b["toolchain"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("rustc 1.99.1 ("),
+                "{b}"
+            );
+        }
+        let scratch = c.temp.path().display().to_string();
+        let mut all = Vec::new();
+        strings(&r, &mut all);
+        for line in String::from_utf8(rows.clone()).unwrap().lines() {
+            strings(&serde_json::from_str(line).unwrap(), &mut all);
+        }
+        for s in &all {
+            assert!(!s.starts_with('/') && !s.contains(&scratch), "{s}");
+        }
+        assert_ne!(rows, b"");
+        runs.push((result, rows));
+    }
+    assert_eq!(runs[0], runs[1]);
+}
+
+#[test]
+fn a_library_of_two_crate_types_is_one_context() {
+    let c = Case::new();
+    probe(&c, "[lib]\ncrate-type = [\"rlib\", \"cdylib\"]\n", &[]);
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    let ids: Vec<&str> = r["builds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["probe-lib-probe"]);
+    assert_eq!(calls_rows(&c).len(), 1);
+}
+
+#[test]
+fn nothing_is_written_under_a_read_only_root() {
+    let c = Case::new();
+    fixture_root(&c, "rust-calls");
+    let original = listing(&c.root);
+    for (p, (mode, _)) in &original {
+        fs::set_permissions(c.root.join(p), fs::Permissions::from_mode(mode & !0o222)).unwrap();
+    }
+    let before = listing(&c.root);
+    let (r, _) = calls_run(&c);
+    for layer in ["base", "syntax", "calls"] {
+        assert_eq!(r["layers"][layer]["status"], "ok", "{r}");
+    }
+    assert_eq!(before, listing(&c.root));
+    let modules: Vec<_> = fs::read_dir(c.out.join("work/calls"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(modules.len(), 4, "{modules:?}");
+    for (p, (mode, _)) in original {
+        fs::set_permissions(c.root.join(p), fs::Permissions::from_mode(mode)).unwrap();
+    }
+}
+
+#[test]
+fn calls_stay_comparable_across_a_release() {
+    let mut builds = Vec::new();
+    for variant in ["v0.1.0", "v0.2.0", "no-default"] {
+        let c = Case::new();
+        fixture_root(&c, &format!("rust-calls-variants/{variant}"));
+        let (r, _) = calls_run(&c);
+        assert_eq!(r["layers"]["calls"]["status"], "ok", "{r}");
+        assert!(!calls_rows(&c).is_empty(), "{variant}");
+        builds.push(r["builds"].clone());
+    }
+    assert_eq!(builds[0], builds[1]);
+    assert_ne!(builds[0], builds[2]);
+    let without = |b: &Value| {
+        let mut b = b.clone();
+        b[0].as_object_mut().unwrap().remove("features");
+        b
+    };
+    assert_eq!(without(&builds[0]), without(&builds[2]));
+}
+#[test]
+fn a_second_compilation_by_a_build_script_is_not_read() {
+    let c = Case::new();
+    probe(
+        &c,
+        "build = \"build.rs\"\n",
+        &[(
+            "build.rs",
+            "use std::{env, path::Path, process::Command};\n\
+             fn main() {\n\
+             \x20   let out = env::var(\"OUT_DIR\").unwrap();\n\
+             \x20   let status = Command::new(env::var(\"RUSTC\").unwrap())\n\
+             \x20       .args([\"--crate-type\", \"lib\", \"--crate-name\", \"again\", \"--cfg\", \"again\", \"-g\", \"--emit=llvm-ir\", \"-o\"])\n\
+             \x20       .arg(Path::new(&out).join(\"again.ll\"))\n\
+             \x20       .arg(\"src/lib.rs\")\n\
+             \x20       .status()\n\
+             \x20       .unwrap();\n\
+             \x20   assert!(status.success());\n\
+             }\n",
+        )],
+    );
+    // A function only the second compilation has, calling `leaf`.
+    fs::write(
+        c.root.join("src/lib.rs"),
+        format!("{PROBE_LIB}\n#[cfg(again)]\npub fn again() -> u32 {{\n    leaf()\n}}\n"),
+    )
+    .unwrap();
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    let rows = calls_rows(&c);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["site"]["line"], 5);
+    let mut pending = vec![c.out.join("work")];
+    let mut again = false;
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            again |= path.file_name().is_some_and(|n| n == "again.ll");
+            if path.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    assert!(again, "the build script wrote its own module");
+}
+
+/// Runs the engine on the case's root with the adapter on its `PATH` and the adapter cache
+/// under `cache`, writing the snapshot to `out`.
+fn engine_run(c: &Case, cache: &std::path::Path, out: &std::path::Path) -> std::process::Output {
+    let link = c.bin.join("gosanja-adapter-rust");
+    if !link.exists() {
+        symlink(support::adapter_binary(), link).unwrap();
+    }
+    c.command(support::engine())
+        .env("XDG_CACHE_HOME", cache)
+        .arg("index")
+        .arg("--root")
+        .arg(&c.root)
+        .arg("--out")
+        .arg(out)
+        .output()
+        .unwrap()
+}
+
+fn snapshot_rows(out: &std::path::Path, file: &str) -> Vec<Value> {
+    fs::read_to_string(out.join(file))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+fn calls_state(out: &std::path::Path) -> Value {
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
+    manifest["scopes"][0]["layers"]["calls"].clone()
+}
+
+fn has_failed_calls_gap(out: &std::path::Path) -> bool {
+    snapshot_rows(out, "gaps.jsonl")
+        .iter()
+        .any(|g| g["gap"] == "failed-layer" && g["layer"] == "calls")
+}
+
+fn calls_relations(out: &std::path::Path) -> Vec<Value> {
+    snapshot_rows(out, "relations.jsonl")
+        .into_iter()
+        .filter(|r| r["src"] == "adapter:rust/calls")
+        .collect()
+}
+
+#[test]
+fn a_failed_calls_layer_reaches_the_snapshot_beside_the_syntax_facts() {
+    let c = Case::new();
+    probe(
+        &c,
+        "",
+        &[(
+            ".cargo/config.toml",
+            "[build]\nrustflags = [\"-C\", \"opt-level=3\"]\n",
+        )],
+    );
+    let out = c.temp.path().join("snapshot");
+    let o = engine_run(&c, &c.temp.path().join("cache"), &out);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(calls_state(&out), "failed");
+    assert!(has_failed_calls_gap(&out));
+    assert_ne!(snapshot_rows(&out, "syntax.jsonl"), [] as [Value; 0]);
+}
+
+#[test]
+fn a_comma_in_the_cache_path_and_not_in_the_destination_decides() {
+    // The adapter writes into the engine's cache: a comma there disables the layer.
+    let c = Case::new();
+    probe(&c, "", &[]);
+    let out = c.temp.path().join("snapshot");
+    let o = engine_run(&c, &c.temp.path().join("ca,che"), &out);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(calls_state(&out), "failed");
+    assert!(has_failed_calls_gap(&out));
+    assert_ne!(snapshot_rows(&out, "syntax.jsonl"), [] as [Value; 0]);
+    // A comma in the snapshot's destination only: every layer succeeds.
+    let c = Case::new();
+    probe(&c, "", &[]);
+    let out = c.temp.path().join("snap,shot");
+    let o = engine_run(&c, &c.temp.path().join("cache"), &out);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(calls_state(&out), "present");
+    assert_eq!(calls_relations(&out).len(), 1);
+}
+
+#[test]
+fn a_file_with_a_backslash_in_its_name_is_left_out() {
+    let c = Case::new();
+    probe(
+        &c,
+        "",
+        &[(
+            "src/odd\\name.rs",
+            "pub fn through(f: fn() -> u32) -> u32 {\n    f()\n}\n",
+        )],
+    );
+    fs::write(
+        c.root.join("src/lib.rs"),
+        format!("{PROBE_LIB}\n#[path = \"odd\\\\name.rs\"]\npub mod odd;\n"),
+    )
+    .unwrap();
+    let (r, _) = calls_run(&c);
+    assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
+    assert_eq!(row_files(&c), ["src/lib.rs"]);
+    let out = c.temp.path().join("snapshot");
+    let o = engine_run(&c, &c.temp.path().join("cache"), &out);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(calls_relations(&out).len(), 1);
 }

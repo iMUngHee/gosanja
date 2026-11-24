@@ -71,13 +71,9 @@ $ CARGO_TARGET_DIR=<scratch> cargo +1.99.1 test --locked --offline --workspace -
 
 Both commands exit 0 with no warnings. `calls-app` and `calls-twin` exit 0.
 
-`index.scip` was made by the steps of `index()` in `fixtures/regenerate.sh`, run for
-`rust-calls`:
-1. copy the fixture to `/tmp/gosanja-fixtures/rust-calls`;
-2. run `rust-analyzer scip .` there with `CARGO_TARGET_DIR` in a temporary directory;
-3. copy `index.scip` back.
-
-The script does not list `rust-calls` yet. The indexer was `rust-analyzer
+`index.scip` is made by `fixtures/regenerate.sh rust-calls`, which copies the fixture to
+`/tmp/gosanja-fixtures/rust-calls`, runs `rust-analyzer scip .` there in the environment the
+script makes, and copies the index back; the same run makes `expected/`. The indexer was `rust-analyzer
 0.3.3049-standalone`. The index is 119 582 bytes, with sha256
 `4511b063ccaafe062bc7c7d971588b030582ef694a9bfbe57e153cb3c0a428ab`. A second run gave the
 same bytes.

@@ -1,3 +1,5 @@
-{"gap":"missing-layer","layer":"calls","src":"adapter:rust/calls"}
+{"gap":"skipped-file","file":"src/bin/extra.rs","layer":"calls","code":"callee-unresolved","src":"adapter:rust/calls"}
+{"gap":"skipped-file","file":"src/bin/tool.rs","layer":"calls","code":"callee-unresolved","src":"adapter:rust/calls"}
+{"gap":"skipped-file","file":"src/main.rs","layer":"calls","code":"callee-unresolved","src":"adapter:rust/calls"}
 {"gap":"symbol-collision","keys":["cargo:diff-basic:crate/","cargo:diff-basic:crate/~1","cargo:diff-basic:crate/~2","cargo:diff-basic:crate/~3","cargo:diff-basic:crate/~4"],"src":"core:identity"}
 {"gap":"symbol-collision","keys":["cargo:diff-basic:main().","cargo:diff-basic:main().~1","cargo:diff-basic:main().~2","cargo:diff-basic:main().~3"],"src":"core:identity"}

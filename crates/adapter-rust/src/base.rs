@@ -101,7 +101,16 @@ fn check_documents(index: &Index, meta: &Value, root: &Path) -> Result<(), Probl
     Ok(())
 }
 
-pub fn build(root: &Path, out: &Path, tools: &mut Vec<Tool>) -> io::Result<Result<Index, Problem>> {
+/// The project's child environment and Cargo's locked metadata, handed to work that has to
+/// run once the base layer's preconditions hold and before its indexer.
+pub type BeforeIndex<'f> = dyn FnMut(&Project<'_>, &Value) + 'f;
+
+pub fn build(
+    root: &Path,
+    out: &Path,
+    tools: &mut Vec<Tool>,
+    before_index: &mut BeforeIndex<'_>,
+) -> io::Result<Result<Index, Problem>> {
     if !root.join("Cargo.toml").is_file() {
         return Ok(Err(Problem::new("manifest-missing", "")));
     }
@@ -113,13 +122,18 @@ pub fn build(root: &Path, out: &Path, tools: &mut Vec<Tool>) -> io::Result<Resul
         fs::create_dir_all(out.join("work").join(dir))?;
     }
     let staged = out.join("work/index.scip");
-    let indexed = prepare(&project, &staged, tools);
+    let indexed = prepare(&project, &staged, tools, before_index);
     if indexed.is_ok() {
         fs::rename(staged, out.join("index.scip"))?;
     }
     Ok(indexed)
 }
-fn prepare(project: &Project<'_>, staged: &Path, tools: &mut Vec<Tool>) -> Result<Index, Problem> {
+fn prepare(
+    project: &Project<'_>,
+    staged: &Path,
+    tools: &mut Vec<Tool>,
+    before_index: &mut BeforeIndex<'_>,
+) -> Result<Index, Problem> {
     for name in ["cargo", "rust-analyzer"] {
         let bytes = command(
             project,
@@ -149,6 +163,7 @@ fn prepare(project: &Project<'_>, staged: &Path, tools: &mut Vec<Tool>) -> Resul
         return Err(Problem::new("lockfile-missing", ""));
     }
     let meta = metadata(project, "--locked", "locked-metadata-failed")?;
+    before_index(project, &meta);
     let args = [
         OsStr::new("scip"),
         OsStr::new("."),
