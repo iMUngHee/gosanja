@@ -47,8 +47,12 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
 - Fixtures are small projects written for this repository. Never copy code, names or paths from
   a private project into a fixture, a test or a document.
 - Each fixture has a checked-in `index.scip` and one source-level fact a test asserts.
-  `fixtures/regenerate.sh` rebuilds the indexes, and for `diff-basic` each side's snapshot too;
-  the tests need no indexer.
+  `fixtures/regenerate.sh` rebuilds the indexes, and the snapshots that hold the Rust
+  adapter's output (`rust-flow`, `rust-calls`, both sides of `diff-basic`), in an environment
+  it makes and with the toolchain `rust-toolchain.toml` names. It replaces a snapshot only
+  when its calls layer is present and holds the control relation `fixtures/README.md` names.
+  With `--out` it writes elsewhere and touches nothing under `fixtures/`. The tests need no
+  indexer.
 - `fixtures/diff-public` is the exception: a frozen pair of snapshots of a public crate, kept as
   the measurement read them, with its provenance and licence in `NOTICE.md` and the pairs listed
   before any matcher ran in `truth.tsv`. It has no index of its own and is never rebuilt; a

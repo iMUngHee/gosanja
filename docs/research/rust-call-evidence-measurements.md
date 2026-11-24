@@ -346,6 +346,7 @@ adapter wall time 7.0 s, peak resident memory 14076 KiB, IR 749775 bytes
 | Adapter wall time, whole run | 7.0, 7.8 and 7.9 s in three runs |
 | IR read | one file of 749 775 bytes |
 | Peak resident memory of the adapter process | 13 680 to 14 076 KiB in the same three runs |
+| Disk under the adapter's output directory | 95 712 831 bytes (92 MiB), of which Cargo's build directory 94 336 145, the IR 749 879, the target directory 298 295, the index 531 319; the crate's own source is 183 093 bytes |
 
 The rows and the `skipped` entries were the same in every run, and they equal the 49 of 65
 that the scratch reader published for this crate above.
@@ -356,6 +357,30 @@ to its exit. The memory is the high-water mark of the adapter's own process (`Vm
 `/proc/<pid>/status`), read every 5 ms while it ran. It covers the reader and the rows, not
 Cargo, rustc or rust-analyzer, which run as separate processes. An earlier run on the same
 day, before the final rule fixes of `5c5b057`, took 12.6 s with the same counts.
+
+The disk was measured once more with the same adapter, crate, private Cargo home and
+environment, by running the adapter by hand and measuring its output directory before
+anything was deleted. The run gave the same 49 rows.
+
+~~~sh
+gosanja-adapter-rust index --root "$crate" --out "$out"
+du -sb "$out" "$out/work" "$out/work/build" "$out/work/target" "$out/work/calls" \
+    "$out/work/tmp" "$out/index.scip" "$crate"
+~~~
+
+~~~text
+95712831  out
+95086769  out/work
+94336145  out/work/build
+298295    out/work/target
+749879    out/work/calls
+0         out/work/tmp
+531319    out/index.scip
+183093    ryu-1.0.23
+~~~
+
+Nearly all of it is Cargo's intermediate build directory, `work/build`, which the adapter
+places in its output directory with everything else it writes.
 
 ### The thirty sampled rows
 
@@ -423,8 +448,6 @@ and `f2s_intrinsics`, without a `cfg` on either import.
 
 - regex-syntax with the finished adapter. Its numbers above are the scratch reader's.
 - The memory of Cargo, rustc and rust-analyzer during the run.
-- The disk the build leaves under the adapter's output directory. The test deletes it with
-  its scratch directory.
 - Whether the 19 packages missing from the local cache matter on another host. On this one,
   the build did not need them.
 - Other host targets than `x86_64-unknown-linux-gnu`, and other toolchains.

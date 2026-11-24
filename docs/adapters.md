@@ -5,7 +5,9 @@ from an adapter: a separate program that knows one language ecosystem and speaks
 [adapter contract](../spec/adapter-contract.md). Adapters are installed next to the engine,
 not built into it, so a language can be added without rebuilding the engine.
 
-One adapter is in this repository, [for Rust](adapters/rust.md). Adapters for Go and
+One adapter is in this repository, [for Rust](adapters/rust.md). It gives all three layers
+of the contract: the base layer from rust-analyzer's index, the syntax layer from the
+source, and the calls layer from the LLVM IR of a build of the project. Adapters for Go and
 TypeScript are planned. This page describes how the engine finds and uses whatever is
 installed.
 
@@ -38,7 +40,7 @@ gosanja adapter list
 
 ```text
 old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.1, this reader implements 0.2; 0.x versions are only compatible with themselves
-rust 1.2.3 contract=0.2 languages=rust layers=base,syntax markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
+rust 1.2.3 contract=0.2 languages=rust layers=base,syntax,calls markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
   requires rust-analyzer: found /usr/bin/rust-analyzer
   requires cargo: missing
 ```

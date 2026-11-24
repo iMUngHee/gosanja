@@ -106,7 +106,10 @@ Dependencies point one way: `cli` → `core` → `schema`.
 - No viewer. A viewer is a consumer of the snapshot.
 - No source text in a snapshot, only paths, sizes and digests.
 - No incremental indexing. Every row is tied to a file, which keeps that possible later.
-- No calls layer in the Rust adapter yet, and no adapter for another language.
+- No adapter for another language than Rust. The Rust adapter's calls layer covers direct
+  calls between definitions of the project that the calling target's own build defines;
+  destructor calls, dynamic dispatch and calls into another target's build are not recorded
+  (see [adapters/rust.md](adapters/rust.md)).
 - No assertion that something was renamed or moved, and no diff of gaps, of more than two
   snapshots or of snapshots with several scopes.
 - No defence against a tree that changes while it is being indexed. A path is resolved, checked

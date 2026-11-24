@@ -6,6 +6,43 @@ change may break compatibility, and an entry here says so when it does.
 
 ## Unreleased
 
+### Rust adapter: the calls layer
+
+`gosanja-adapter-rust` now gives the calls layer. Neither interface changes: the adapter
+contract stays 0.2 and the snapshot schema 0.2, so no reader or adapter has to change. What a
+snapshot of a Rust project now holds:
+
+- `call` relations with `src: adapter:rust/calls`, `mechanism: static` and
+  `resolution: direct`, one evidence entry per call instruction that passes the layer's five
+  checks (49 on ryu 1.0.23), each with its site and the build context it
+  was observed in;
+- one build context per compiled library and binary target under `scopes[].builds`, and
+  `layers.calls` `present`, or `failed` with a code when the build or its IR cannot be used;
+- `skipped-file` gaps of the calls layer, with one of the codes `indirect-call`,
+  `no-debug-location`, `callee-unresolved`, `parse-failed` and `uncorroborated`.
+
+Indexing a Rust project now compiles it, so it needs a linker and the time and disk of a debug
+build: on ryu 1.0.23, 7 to 8 seconds and 92 MiB under the adapter's output directory. When
+the build fails, only the calls layer fails. [docs/adapters/rust.md](docs/adapters/rust.md)
+says what a call relation claims, what is withheld and why.
+
+The snapshots checked in under `fixtures/` that hold the Rust adapter's output now carry the
+calls layer. `diff-basic`'s new side builds one binary more than its old side, so their build
+contexts differ, and the diff of the two (`fixtures/diff-basic/expected` and
+`spec/examples/diff-basic`) now has `not_compared: ["calls"]`; its other rows are unchanged.
+
+`fixtures/regenerate.sh` now indexes the Rust fixtures in an environment it makes:
+
+- the pinned toolchain;
+- a home and a Cargo home that hold no configuration;
+- of the caller's environment, only `PATH` (with the indexer's directory first) and rustup's
+  home, `RUSTUP_HOME` or the one under `HOME`.
+
+It takes `--out <dir>` to write elsewhere. It refuses a snapshot whose calls layer is not
+present or lacks the fixture's control relation, which `fixtures/README.md` names.
+`scripts/check-live.sh` compares a fresh run with the checked-in files and no longer writes
+them, and checks ryu 1.0.23's call counts.
+
 ### Diff schema 0.1
 
 A new interface, specified in [spec/diff.md](spec/diff.md): the directory `gosanja diff`
