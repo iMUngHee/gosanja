@@ -61,14 +61,22 @@ diff_basic() {
         bin=$cargo_target/tools/debug
     fi
     indexer_dir=$(dirname "$(command -v "$rust_analyzer")")
+    # Both sides are indexed and snapshotted into a staging directory first; the checked-in
+    # files are replaced only once all four exist, so a failed run leaves the fixture as it was.
+    stage=$cargo_target/stage
     for side in old new; do
         side_root=$root/diff-basic/$side
+        mkdir -p "$stage/$side"
         (cd "$side_root" && CARGO_TARGET_DIR=$cargo_target "$rust_analyzer" scip . >&2)
-        mv "$side_root/index.scip" "$here/diff-basic/$side/index.scip"
-        rm -rf "${here:?}/diff-basic/$side/expected"
+        mv "$side_root/index.scip" "$stage/$side/index.scip"
         PATH=$indexer_dir:$PATH XDG_CACHE_HOME=$cargo_target/cache \
             "$bin/gosanja" index --adapter "$bin/gosanja-adapter-rust" --root "$side_root" \
-            --out "$here/diff-basic/$side/expected" >&2
+            --out "$stage/$side/expected" >&2
+    done
+    for side in old new; do
+        rm -rf "${here:?}/diff-basic/$side/expected"
+        mv "$stage/$side/expected" "$here/diff-basic/$side/expected"
+        mv "$stage/$side/index.scip" "$here/diff-basic/$side/index.scip"
     done
     echo "diff-basic: $("$rust_analyzer" --version)"
 }
