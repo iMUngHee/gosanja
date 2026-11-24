@@ -590,3 +590,447 @@ fn a_pinned_toolchain_that_is_not_installed_is_not_installed() {
     );
     assert_eq!(toolchains(), listed);
 }
+
+/// The published crate of the live check: its archive's name and SHA-256.
+const RYU: &str = "ryu-1.0.23";
+const RYU_SHA256: &str = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f";
+
+/// What the first run of the finished adapter gave on the crate: the number of rows of
+/// `calls.jsonl`, the `skipped` entries of `result.json` as (file, code), and the rows that
+/// `sample` draws, each checked by hand against the source (see the research record).
+struct Baseline {
+    rows: usize,
+    skipped: &'static [(&'static str, &'static str)],
+    sample: &'static [&'static str],
+}
+
+/// The first run of the finished adapter, on 2026-11-25. `None` would make the test fail and
+/// print what it observed, as it did for that run.
+const RYU_BASELINE: Option<Baseline> = Some(Baseline {
+    rows: 49,
+    skipped: &[("src/pretty/mod.rs", "uncorroborated")],
+    sample: &[
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/common.rs","line":63,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":128,"col":43},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/common.rs","line":63,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":170,"col":16},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/common.rs","line":89,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":167,"col":16},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":23,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":152,"col":69},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":28,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":219,"col":27},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":28,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":236,"col":31},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":28,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":241,"col":31},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":28,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":279,"col":27},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":28,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":284,"col":27},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":33,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":262,"col":24},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":33,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":266,"col":28},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":55,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":159,"col":39},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":55,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":162,"col":22},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s.rs","line":90,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":77,"col":14},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s.rs","line":131,"col":12},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s_intrinsics.rs","line":55,"col":7},"callee":{"file":"src/d2s_intrinsics.rs","line":38,"col":14},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s_intrinsics.rs","line":57,"col":4},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s_intrinsics.rs","line":77,"col":14},"callee":{"file":"src/d2s_intrinsics.rs","line":70,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s_intrinsics.rs","line":85,"col":19},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/d2s_intrinsics.rs","line":77,"col":14},"callee":{"file":"src/d2s_intrinsics.rs","line":70,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/d2s_intrinsics.rs","line":87,"col":4},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/common.rs","line":63,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":107,"col":32},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/common.rs","line":63,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":73,"col":42},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/common.rs","line":80,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":71,"col":16},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":100,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":103,"col":13},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":100,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":104,"col":13},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":100,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":108,"col":34},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":43,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":92,"col":39},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":43,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":94,"col":22},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":74,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":75,"col":13},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":74,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":77,"col":13},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s.rs","line":39,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":74,"col":7},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s.rs","line":84,"col":17},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/f2s_intrinsics.rs","line":43,"col":7},"callee":{"file":"src/f2s_intrinsics.rs","line":26,"col":3},"mechanism":"static","resolution":"direct","site":{"file":"src/f2s_intrinsics.rs","line":44,"col":4},"build":"ryu-lib-ryu"}"#,
+        r#"{"caller":{"file":"src/pretty/mantissa.rs","line":4,"col":14},"callee":{"file":"src/pretty/mantissa.rs","line":27,"col":14},"mechanism":"static","resolution":"direct","site":{"file":"src/pretty/mantissa.rs","line":23,"col":4},"build":"ryu-lib-ryu"}"#,
+    ],
+});
+
+/// The local Cargo home, whose registry cache holds the crate archive.
+fn local_cargo_home() -> PathBuf {
+    std::env::var_os("CARGO_HOME").map_or_else(
+        || PathBuf::from(std::env::var_os("HOME").expect("HOME")).join(".cargo"),
+        PathBuf::from,
+    )
+}
+
+/// The registry of `home` whose cache holds the archive, by its directory name.
+fn registry_holding(home: &Path, archive: &str) -> String {
+    fs::read_dir(home.join("registry/cache"))
+        .expect("a registry cache in the local Cargo home")
+        .map(|e| {
+            e.expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .find(|name| {
+            home.join("registry/cache")
+                .join(name)
+                .join(archive)
+                .is_file()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{archive} is not in the local Cargo cache; `cargo fetch` in a project that \
+                 depends on it puts it there"
+            )
+        })
+}
+
+/// SHA-256 of a file, by `sha256sum`: the adapter's test dependencies hold no hash of that
+/// kind, and the live check runs on Linux only.
+fn sha256(path: &Path) -> String {
+    let output = Command::new("sha256sum")
+        .arg(path)
+        .output()
+        .expect("sha256sum runs");
+    assert!(output.status.success(), "sha256sum failed");
+    String::from_utf8(output.stdout).expect("UTF-8")[..64].to_owned()
+}
+
+/// Where a sparse registry index keeps the entry of a package.
+fn index_entry(name: &str) -> PathBuf {
+    let name = name.to_lowercase();
+    match name.len() {
+        1 => Path::new("1").join(&name),
+        2 => Path::new("2").join(&name),
+        3 => Path::new("3").join(&name[..1]).join(&name),
+        _ => Path::new(&name[..2]).join(&name[2..4]).join(&name),
+    }
+}
+
+/// Fills `home` with what the local Cargo home holds of the registry packages `lock` names:
+/// their index entries and archives, and the index's own `config.json`. Nothing else, so no
+/// configuration. Returns how many archives were copied and how many the local cache lacks.
+fn private_cargo_home(local: &Path, registry: &str, lock: &Path, home: &Path) -> (usize, usize) {
+    let index = local.join("registry/index").join(registry);
+    let cache = local.join("registry/cache").join(registry);
+    let to_index = home.join("registry/index").join(registry);
+    let to_cache = home.join("registry/cache").join(registry);
+    fs::create_dir_all(&to_cache).expect("mkdir");
+    fs::create_dir_all(&to_index).expect("mkdir");
+    fs::copy(index.join("config.json"), to_index.join("config.json")).expect("config.json");
+    let text = fs::read_to_string(lock).expect("Cargo.lock");
+    let (mut copied, mut absent) = (0, 0);
+    for package in text.split("[[package]]").skip(1) {
+        let field = |key: &str| {
+            package
+                .lines()
+                .find_map(|l| l.strip_prefix(&format!("{key} = \"")))
+                .map(|v| v.trim_end_matches('"').to_owned())
+        };
+        let (Some(name), Some(version)) = (field("name"), field("version")) else {
+            continue;
+        };
+        if !field("source").is_some_and(|s| s.starts_with("registry+")) {
+            continue;
+        }
+        let entry = Path::new(".cache").join(index_entry(&name));
+        if index.join(&entry).is_file() && !to_index.join(&entry).is_file() {
+            fs::create_dir_all(to_index.join(&entry).parent().expect("a parent")).expect("mkdir");
+            fs::copy(index.join(&entry), to_index.join(&entry)).expect("an index entry");
+        }
+        let archive = format!("{name}-{version}.crate");
+        if cache.join(&archive).is_file() {
+            fs::copy(cache.join(&archive), to_cache.join(&archive)).expect("an archive");
+            copied += 1;
+        } else {
+            absent += 1;
+        }
+    }
+    (copied, absent)
+}
+
+/// The first Cargo configuration file that a build in `dir` with `cargo_home` would read:
+/// `.cargo/config` or `.cargo/config.toml` in the resolved directory or any directory above
+/// it up to the root of the file system, or `config` or `config.toml` in the Cargo home.
+fn cargo_configuration(dir: &Path, cargo_home: &Path) -> Option<PathBuf> {
+    let resolved = dir.canonicalize().expect("a directory");
+    resolved
+        .ancestors()
+        .map(|d| d.join(".cargo"))
+        .chain(std::iter::once(cargo_home.to_owned()))
+        .flat_map(|d| [d.join("config"), d.join("config.toml")])
+        .find(|p| p.exists())
+}
+
+/// Thirty rows drawn from `rows`, which are sorted: indices floor(i × (N − 1) / 29) for i
+/// from 0 to 29, or every row when there are fewer than thirty.
+fn sample(rows: &[String]) -> Vec<String> {
+    if rows.len() < 30 {
+        return rows.to_vec();
+    }
+    (0..30)
+        .map(|i| rows[i * (rows.len() - 1) / 29].clone())
+        .collect()
+}
+
+/// Runs `command` to its end, reading the process's high-water mark of resident memory from
+/// `/proc` while it runs: the exit status, the wall time and the last mark read, in KiB. The
+/// mark is that of the process itself, not of the tools it starts.
+fn measured(command: &mut Command) -> (std::process::ExitStatus, Duration, Option<u64>) {
+    let start = std::time::Instant::now();
+    let mut child = command.spawn().expect("the process starts");
+    let status_file = PathBuf::from(format!("/proc/{}/status", child.id()));
+    let mut peak = None;
+    loop {
+        if let Some(mark) = fs::read_to_string(&status_file).ok().and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("VmHWM:"))
+                .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        }) {
+            peak = Some(mark);
+        }
+        if let Some(status) = child.try_wait().expect("waitable") {
+            return (status, start.elapsed(), peak);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The toolchain `rust-toolchain.toml` of this repository names.
+fn pinned_toolchain() -> String {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rust-toolchain.toml");
+    fs::read_to_string(file)
+        .expect("rust-toolchain.toml")
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("channel = \"")
+                .map(|v| v.trim_end_matches('"').to_owned())
+        })
+        .expect("a channel")
+}
+
+/// A command with only the environment the live check gives: the caller's `PATH` and home,
+/// rustup's home, the pinned toolchain, the private Cargo home, and Cargo offline.
+fn live_command(program: &Path, cargo_home: &Path, toolchain: &str) -> Command {
+    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
+    let rustup_home =
+        std::env::var_os("RUSTUP_HOME").map_or_else(|| home.join(".rustup"), PathBuf::from);
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").expect("PATH"))
+        .env("HOME", &home)
+        .env("RUSTUP_HOME", rustup_home)
+        .env("RUSTUP_TOOLCHAIN", toolchain)
+        .env("CARGO_HOME", cargo_home)
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("TMPDIR", "/var/tmp");
+    command
+}
+
+/// The crate unpacked in `temp` from the local Cargo cache, its archive's digest checked, and
+/// a private Cargo home beside it: the crate's directory, the Cargo home, and how many locked
+/// archives were copied and how many the local cache lacks.
+fn unpacked_ryu(temp: &Path) -> (PathBuf, PathBuf, usize, usize) {
+    let local = local_cargo_home();
+    let archive_name = format!("{RYU}.crate");
+    let registry = registry_holding(&local, &archive_name);
+    let archive = temp.join(&archive_name);
+    let cached = local
+        .join("registry/cache")
+        .join(&registry)
+        .join(&archive_name);
+    fs::copy(cached, &archive).expect("copy the archive");
+    assert_eq!(
+        sha256(&archive),
+        RYU_SHA256,
+        "the archive is not the published one"
+    );
+    let unpacked = Command::new("tar")
+        .arg("-xzf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(temp)
+        .status()
+        .expect("tar runs");
+    assert!(unpacked.success(), "tar failed");
+    let root = temp.join(RYU);
+    let cargo_home = temp.join("cargo-home");
+    let (copied, absent) =
+        private_cargo_home(&local, &registry, &root.join("Cargo.lock"), &cargo_home);
+    (root, cargo_home, copied, absent)
+}
+
+/// Stops when Cargo would read any configuration for the crate, after a control in which a
+/// configuration one directory above the crate has to be found, by name.
+fn no_configuration_above(temp: &Path, root: &Path, cargo_home: &Path) {
+    let above = temp.join(".cargo/config.toml");
+    fs::create_dir_all(above.parent().expect("a parent")).expect("mkdir");
+    fs::write(&above, "[build]\n").expect("write");
+    assert_eq!(
+        cargo_configuration(root, cargo_home),
+        Some(above.canonicalize().expect("written")),
+        "the control configuration was not found"
+    );
+    fs::remove_dir_all(above.parent().expect("a parent")).expect("remove the control");
+    if let Some(file) = cargo_configuration(root, cargo_home) {
+        panic!(
+            "{} would be in force for the build of {RYU}; the counts are not compared",
+            file.display()
+        );
+    }
+}
+
+/// What one run of the adapter on the crate gave.
+struct Observed {
+    builds: Value,
+    rows: Vec<String>,
+    skipped: Vec<(String, String)>,
+    ir_bytes: u64,
+    elapsed: Duration,
+    peak: Option<u64>,
+}
+
+/// Runs the adapter on `root` into `out`, measured, and reads what it wrote.
+fn observed(root: &Path, out: &Path, cargo_home: &Path, toolchain: &str) -> Observed {
+    let (status, elapsed, peak) = measured(
+        live_command(adapter_binary(), cargo_home, toolchain)
+            .arg("index")
+            .arg("--root")
+            .arg(root)
+            .arg("--out")
+            .arg(out)
+            .stdout(Stdio::null()),
+    );
+    assert!(status.success(), "the adapter exited with {status}");
+    let result: Value =
+        serde_json::from_slice(&fs::read(out.join("result.json")).expect("result.json"))
+            .expect("JSON");
+    for layer in ["base", "syntax", "calls"] {
+        assert_eq!(result["layers"][layer]["status"], "ok", "{result}");
+    }
+    let skipped = result["layers"]["calls"]["skipped"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|e| {
+                    (
+                        e["file"].as_str().expect("a file").to_owned(),
+                        e["code"].as_str().expect("a code").to_owned(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Observed {
+        builds: result["builds"].clone(),
+        rows: fs::read_to_string(out.join("calls.jsonl"))
+            .expect("calls.jsonl")
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+        skipped,
+        ir_bytes: fs::read_dir(out.join("work/calls"))
+            .expect("the IR directory")
+            .map(|e| e.expect("an entry").metadata().expect("metadata").len())
+            .sum(),
+        elapsed,
+        peak,
+    }
+}
+
+/// `gosanja index` with the adapter on `root`, then `gosanja validate`: the snapshot's call
+/// relations, their evidence entries, and its gaps counted by kind and code.
+fn snapshot_summary(
+    root: &Path,
+    cache: &Path,
+    cargo_home: &Path,
+    toolchain: &str,
+) -> (usize, usize, BTreeMap<String, usize>) {
+    fs::create_dir_all(cache).expect("mkdir");
+    let snapshot = cache.join("snapshot");
+    let indexed = live_command(engine(), cargo_home, toolchain)
+        .env("XDG_CACHE_HOME", cache.join("cache"))
+        .arg("index")
+        .arg("--adapter")
+        .arg(adapter_binary())
+        .arg("--root")
+        .arg(root)
+        .arg("--out")
+        .arg(&snapshot)
+        .output()
+        .expect("gosanja runs");
+    assert!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let validated = Command::new(engine())
+        .arg("validate")
+        .arg(&snapshot)
+        .arg("--root")
+        .arg(root)
+        .output()
+        .expect("gosanja validate runs");
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    let calls: Vec<Value> = table(&snapshot, "relations.jsonl")
+        .into_iter()
+        .filter(|r| r["src"] == "adapter:rust/calls")
+        .collect();
+    let evidence = calls
+        .iter()
+        .map(|r| r["evidence"].as_array().map_or(0, Vec::len))
+        .sum();
+    let mut gaps = BTreeMap::new();
+    for gap in table(&snapshot, "gaps.jsonl") {
+        let kind = format!(
+            "{} {}",
+            gap["gap"].as_str().unwrap_or_default(),
+            gap["code"].as_str().unwrap_or_default()
+        );
+        *gaps.entry(kind.trim().to_owned()).or_insert(0) += 1;
+    }
+    (calls.len(), evidence, gaps)
+}
+
+#[test]
+#[ignore = "needs the real rust-analyzer; run by scripts/check-live.sh"]
+fn a_public_crate_keeps_its_counts() {
+    let temp = scratch();
+    let (root, cargo_home, copied, absent) = unpacked_ryu(temp.path());
+    no_configuration_above(temp.path(), &root, &cargo_home);
+    let toolchain = pinned_toolchain();
+    let out = temp.path().join("out");
+    fs::create_dir(&out).expect("mkdir");
+    let run = observed(&root, &out, &cargo_home, &toolchain);
+    let (relations, evidence, gaps) =
+        snapshot_summary(&root, &temp.path().join("engine"), &cargo_home, &toolchain);
+    let drawn = sample(&run.rows);
+    eprintln!(
+        "{RYU}: archives copied {copied}, absent from the local cache {absent}\n\
+         builds {}\nrows {}\nskipped {:?}\n\
+         call relations {relations} with {evidence} evidence entries\ngaps {gaps:?}\n\
+         adapter wall time {:.1} s, peak resident memory {} KiB, IR {} bytes\nsample:\n{}",
+        run.builds,
+        run.rows.len(),
+        run.skipped,
+        run.elapsed.as_secs_f64(),
+        run.peak
+            .map_or_else(|| "not read".to_owned(), |p| p.to_string()),
+        run.ir_bytes,
+        drawn.join("\n")
+    );
+
+    let Some(baseline) = RYU_BASELINE else {
+        panic!("no baseline is recorded for {RYU}; the observed values are printed above");
+    };
+    assert_eq!(run.rows.len(), baseline.rows, "rows of calls.jsonl");
+    let expected: Vec<(String, String)> = baseline
+        .skipped
+        .iter()
+        .map(|(f, c)| ((*f).to_owned(), (*c).to_owned()))
+        .collect();
+    assert_eq!(run.skipped, expected, "skipped entries");
+    assert_eq!(drawn.len(), baseline.sample.len(), "sampled rows");
+    for row in baseline.sample {
+        assert!(
+            run.rows.iter().any(|r| r == row),
+            "a sampled row is missing: {row}"
+        );
+    }
+}

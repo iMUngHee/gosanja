@@ -144,7 +144,7 @@ A separate regex-syntax trial on **rustc 1.100.0** submitted 2,094 definition-an
 
 ## Measurement limits
 
-The public-crate runs used a scratch reader and a relay for the existing engine. They do not measure finished-adapter wall time, peak memory, IR footprint, or its final omission codes. The final-fixture multiset check depends on the frozen fixture and its independently recorded source expectations. Windows, macOS and runtime call frequency were outside these trials.
+The public-crate runs above used a scratch reader and a relay for the existing engine. They do not measure finished-adapter wall time, peak memory, IR footprint, or its final omission codes; for ryu these are in "Finished adapter on ryu 1.0.23, 2026-11-25" below. The final-fixture multiset check depends on the frozen fixture and its independently recorded source expectations. Windows, macOS and runtime call frequency were outside these trials.
 
 ## Frozen fixture comparison, 2026-11-25
 
@@ -287,3 +287,145 @@ A Rust source branch guarded by `cfg(target_feature = "a")` can differ between
 these builds. The calls-layer context records the module triple and Cargo
 features. With the same package target ID, compiler, profile and Cargo features,
 the two contexts compare equal.
+
+## Finished adapter on ryu 1.0.23, 2026-11-25
+
+These are measurements of the production reader: the calls layer of `gosanja-adapter-rust`
+built at commit `5c5b057` (the working tree's only other changes to its sources were unit
+tests under `#[cfg(test)]`, which the binary does not contain), run by the ignored test `a_public_crate_keeps_its_counts` in
+`crates/adapter-rust/tests/live.rs`, which `scripts/check-live.sh` runs. They are not the
+scratch reader's of the sections above.
+
+Input: the published archive `ryu-1.0.23.crate`, taken from the local Cargo cache, with
+SHA-256 `9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f`. The test checks
+that digest. Its `.cargo_vcs_info.json` names commit f0b52bb194befe6fd242154f2182fafd43a819b8.
+The crate is unpacked under `/var/tmp` and built with the lock file the archive carries.
+
+Host and settings:
+- `x86_64-unknown-linux-gnu`, an AMD Ryzen 7 9850X3D with 16 threads and 30 GiB of memory;
+- rustc 1.99.1 (58cf8f9c3 2026-10-13), Cargo 1.99.1 (5f94df478 2026-08-27) and
+  rust-analyzer 0.3.3049-standalone;
+- the toolchain named in `rust-toolchain.toml`, through `RUSTUP_TOOLCHAIN`;
+- a Cargo home made for the test, holding no configuration, only the index entries and
+  archives that the local cache has of the registry packages in the crate's lock file. That is
+  67 of 86. The other 19 are the wasi and wasm tooling and its dependencies, `hermit-abi` and
+  `no-panic`, and the build needs none of them;
+- Cargo offline (`CARGO_NET_OFFLINE=true`);
+- of the caller's environment, only `PATH` and `HOME`.
+
+Before anything is compared, the test checks every place Cargo reads configuration from:
+`.cargo/config` and `.cargo/config.toml` in the crate's resolved directory and every
+directory above it up to `/`, and `config` and `config.toml` in the private Cargo home. A
+control places `.cargo/config.toml` one directory above the crate and requires that the check
+names it. On this run the control was found and no other file existed.
+
+~~~sh
+scripts/check-live.sh
+cargo test --locked -p gosanja-adapter-rust --test live -- --ignored --test-threads=1 \
+    --nocapture a_public_crate_keeps_its_counts
+~~~
+
+~~~text
+ryu-1.0.23: archives copied 67, absent from the local cache 19
+builds [{"features":[],"id":"ryu-lib-ryu","profile":"dev","target":"x86_64-unknown-linux-gnu","toolchain":"rustc 1.99.1 (58cf8f9c3 2026-10-13)"}]
+rows 49
+skipped [("src/pretty/mod.rs", "uncorroborated")]
+call relations 22 with 49 evidence entries
+gaps {"opaque-region": 414, "open-call": 4, "skipped-file uncorroborated": 1, "symbol-collision": 18}
+adapter wall time 7.0 s, peak resident memory 14076 KiB, IR 749775 bytes
+~~~
+
+| Measure | Value |
+| --- | --- |
+| Targets built | one, the library (`ryu-lib-ryu`); the crate has no binary, and its tests and example are not built |
+| Rows of `calls.jsonl` | 49 |
+| Call relations of the calls layer in the snapshot | 22, with 49 evidence entries |
+| `skipped` | `src/pretty/mod.rs` `uncorroborated`; no other code |
+| Gaps of the snapshot | `opaque-region` 414, `symbol-collision` 18, `open-call` 4, `skipped-file` 1 (the entry above) |
+| `gosanja validate` on the snapshot | passes |
+| Adapter wall time, whole run | 7.0, 7.8 and 7.9 s in three runs |
+| IR read | one file of 749 775 bytes |
+| Peak resident memory of the adapter process | 13 680 to 14 076 KiB in the same three runs |
+
+The rows and the `skipped` entries were the same in every run, and they equal the 49 of 65
+that the scratch reader published for this crate above.
+
+The wall time covers everything the adapter does: the calls build, rust-analyzer's index, the
+syntax layer and the rows. It was measured in the test, from the start of the adapter process
+to its exit. The memory is the high-water mark of the adapter's own process (`VmHWM` in
+`/proc/<pid>/status`), read every 5 ms while it ran. It covers the reader and the rows, not
+Cargo, rustc or rust-analyzer, which run as separate processes. An earlier run on the same
+day, before the final rule fixes of `5c5b057`, took 12.6 s with the same counts.
+
+### The thirty sampled rows
+
+`calls.jsonl` is sorted by the bytes of its rows. The sample takes the rows at indices
+floor(i × (N − 1) / 29) for i from 0 to 29, with N = 49, which are thirty distinct rows. The
+test holds them as literals and requires each in a fresh run's `calls.jsonl`.
+
+Each was checked by hand against the source of the archive, unpacked separately:
+1. The caller's anchor is the name token of a written `fn`, and the site's line lies inside
+   that function's extent from its attribute to its closing brace.
+2. The callee's anchor is the name token of a `fn` of that name, and the crate defines no
+   other function of that name.
+3. At the site's column, the text is the callee's name followed by `(`.
+4. The name is in scope at the site, either through a `use` with no `cfg` in the calling file
+   or because both functions are in one module.
+
+Every row passed all four checks. Lines and columns are one-based. The callers' extents are:
+
+| Caller | Lines |
+| --- | --- |
+| `d2d` | 90-302 |
+| `f2d` | 39-177 |
+| `multiple_of_power_of_5` | 55-59 |
+| `mul_shift_all_64` | 77-89 |
+| `multiple_of_power_of_5_32` | 43-46 |
+| `write_mantissa_long` | 4-25 |
+
+`d2s.rs` imports its callees from `common` and `d2s_intrinsics`, and `f2s.rs` from `common`
+and `f2s_intrinsics`, without a `cfg` on either import.
+
+| # | Caller | Callee | Site | Checks 1-4 |
+| --- | --- | --- | --- | --- |
+| 1 | `d2d` src/d2s.rs:91 | `pow5bits` src/common.rs:64 | src/d2s.rs:129:44 | yes |
+| 2 | `d2d` src/d2s.rs:91 | `pow5bits` src/common.rs:64 | src/d2s.rs:171:17 | yes |
+| 3 | `d2d` src/d2s.rs:91 | `log10_pow5` src/common.rs:90 | src/d2s.rs:168:17 | yes |
+| 4 | `d2d` src/d2s.rs:91 | `div5` src/d2s_intrinsics.rs:24 | src/d2s.rs:153:70 | yes |
+| 5 | `d2d` src/d2s.rs:91 | `div10` src/d2s_intrinsics.rs:29 | src/d2s.rs:220:28 | yes |
+| 6 | `d2d` src/d2s.rs:91 | `div10` src/d2s_intrinsics.rs:29 | src/d2s.rs:237:32 | yes |
+| 7 | `d2d` src/d2s.rs:91 | `div10` src/d2s_intrinsics.rs:29 | src/d2s.rs:242:32 | yes |
+| 8 | `d2d` src/d2s.rs:91 | `div10` src/d2s_intrinsics.rs:29 | src/d2s.rs:280:28 | yes |
+| 9 | `d2d` src/d2s.rs:91 | `div10` src/d2s_intrinsics.rs:29 | src/d2s.rs:285:28 | yes |
+| 10 | `d2d` src/d2s.rs:91 | `div100` src/d2s_intrinsics.rs:34 | src/d2s.rs:263:25 | yes |
+| 11 | `d2d` src/d2s.rs:91 | `div100` src/d2s_intrinsics.rs:34 | src/d2s.rs:267:29 | yes |
+| 12 | `d2d` src/d2s.rs:91 | `multiple_of_power_of_5` src/d2s_intrinsics.rs:56 | src/d2s.rs:160:40 | yes |
+| 13 | `d2d` src/d2s.rs:91 | `multiple_of_power_of_5` src/d2s_intrinsics.rs:56 | src/d2s.rs:163:23 | yes |
+| 14 | `d2d` src/d2s.rs:91 | `mul_shift_all_64` src/d2s_intrinsics.rs:78 | src/d2s.rs:132:13 | yes |
+| 15 | `multiple_of_power_of_5` src/d2s_intrinsics.rs:56 | `pow5_factor` src/d2s_intrinsics.rs:39 | src/d2s_intrinsics.rs:58:5 | yes |
+| 16 | `mul_shift_all_64` src/d2s_intrinsics.rs:78 | `mul_shift_64` src/d2s_intrinsics.rs:71 | src/d2s_intrinsics.rs:86:20 | yes |
+| 17 | `mul_shift_all_64` src/d2s_intrinsics.rs:78 | `mul_shift_64` src/d2s_intrinsics.rs:71 | src/d2s_intrinsics.rs:88:5 | yes |
+| 18 | `f2d` src/f2s.rs:40 | `pow5bits` src/common.rs:64 | src/f2s.rs:108:33 | yes |
+| 19 | `f2d` src/f2s.rs:40 | `pow5bits` src/common.rs:64 | src/f2s.rs:74:43 | yes |
+| 20 | `f2d` src/f2s.rs:40 | `log10_pow2` src/common.rs:81 | src/f2s.rs:72:17 | yes |
+| 21 | `f2d` src/f2s.rs:40 | `mul_pow5_div_pow2` src/f2s_intrinsics.rs:101 | src/f2s.rs:104:14 | yes |
+| 22 | `f2d` src/f2s.rs:40 | `mul_pow5_div_pow2` src/f2s_intrinsics.rs:101 | src/f2s.rs:105:14 | yes |
+| 23 | `f2d` src/f2s.rs:40 | `mul_pow5_div_pow2` src/f2s_intrinsics.rs:101 | src/f2s.rs:109:35 | yes |
+| 24 | `f2d` src/f2s.rs:40 | `multiple_of_power_of_5_32` src/f2s_intrinsics.rs:44 | src/f2s.rs:93:40 | yes |
+| 25 | `f2d` src/f2s.rs:40 | `multiple_of_power_of_5_32` src/f2s_intrinsics.rs:44 | src/f2s.rs:95:23 | yes |
+| 26 | `f2d` src/f2s.rs:40 | `mul_pow5_inv_div_pow2` src/f2s_intrinsics.rs:75 | src/f2s.rs:76:14 | yes |
+| 27 | `f2d` src/f2s.rs:40 | `mul_pow5_inv_div_pow2` src/f2s_intrinsics.rs:75 | src/f2s.rs:78:14 | yes |
+| 28 | `f2d` src/f2s.rs:40 | `mul_pow5_inv_div_pow2` src/f2s_intrinsics.rs:75 | src/f2s.rs:85:18 | yes |
+| 29 | `multiple_of_power_of_5_32` src/f2s_intrinsics.rs:44 | `pow5factor_32` src/f2s_intrinsics.rs:27 | src/f2s_intrinsics.rs:45:5 | yes |
+| 30 | `write_mantissa_long` src/pretty/mantissa.rs:5 | `write_mantissa` src/pretty/mantissa.rs:28 | src/pretty/mantissa.rs:24:5 | yes |
+
+### Not measured
+
+- regex-syntax with the finished adapter. Its numbers above are the scratch reader's.
+- The memory of Cargo, rustc and rust-analyzer during the run.
+- The disk the build leaves under the adapter's output directory. The test deletes it with
+  its scratch directory.
+- Whether the 19 packages missing from the local cache matter on another host. On this one,
+  the build did not need them.
+- Other host targets than `x86_64-unknown-linux-gnu`, and other toolchains.
+- How often the published calls run at run time. A row is one instruction of one static build.
