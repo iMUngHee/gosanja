@@ -21,7 +21,8 @@ Early. The engine reads a [SCIP](https://github.com/scip-code/scip) index, or ru
 installed adapter, and writes a snapshot; it compares two snapshots and writes what differs
 between them. A Rust adapter gives the base graph, syntactic facts and compiler-backed call
 evidence: calls that a build of the project emitted and that a reference in the source on the
-same line corroborates. Adapters for Go and TypeScript are planned and not yet here. The
+same line corroborates. A Go adapter gives the base graph and syntactic facts of a Go module.
+An adapter for TypeScript is planned and not yet here. The
 snapshot and the adapter contract are at version 0.3 and the diff at 0.2, and all three may
 change.
 
@@ -70,6 +71,7 @@ says how to read it.
 | [docs/research/](docs/research/README.md) | The papers, tools and measurements behind the design |
 | [docs/adapters.md](docs/adapters.md) | How the engine finds and chooses installed adapters |
 | [docs/adapters/rust.md](docs/adapters/rust.md) | The Rust adapter: what it needs, builds, reports and cannot see |
+| [docs/adapters/go.md](docs/adapters/go.md) | The Go adapter: what it does to a module, needs, reports and cannot see |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, including writing an adapter |
 
 ## Licence

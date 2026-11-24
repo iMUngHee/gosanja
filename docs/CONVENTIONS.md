@@ -49,8 +49,10 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
 - Each fixture has a checked-in `index.scip` and one source-level fact a test asserts.
   `fixtures/regenerate.sh` rebuilds the indexes, and the snapshots that hold the Rust
   adapter's output (`rust-flow`, `rust-calls`, both sides of `diff-basic`), in an environment
-  it makes and with the toolchain `rust-toolchain.toml` names. It replaces a snapshot only
+  it makes and with the toolchain `rust-toolchain.toml` names. It replaces such a snapshot only
   when its calls layer is present and holds the control relation `fixtures/README.md` names.
+  It also rebuilds `go-flow/expected` with the Go adapter, which it replaces only when the base
+  and syntax layers are present.
   With `--out` it writes elsewhere and touches nothing under `fixtures/`. The tests need no
   indexer.
 - `fixtures/diff-public` is the exception: a frozen pair of snapshots of a public crate, kept as
@@ -80,6 +82,18 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
   memory. A new dependency's licence must be in `deny.toml`; adding a licence there needs a
   reason in a comment.
 
+## Go
+
+The Go adapter in `adapters/go` is a Go module of its own.
+
+- `gofmt` formats it, and `go vet` passes.
+- Its tests that run the adapter or the engine build the environment of every process they
+  start, as the Rust tests do, and run against the stub `scip-go` in `fixtures/stub-tools`.
+  A test that needs the engine fails, and is never skipped, when the engine does not build.
+- Before using a dependency's API, read the version `go.mod` requires (`go list -m <module>`),
+  not memory. A new module in the build list needs its licence recorded in
+  `docs/research/go-adapter-measurements.md`; there is no Go counterpart of `cargo deny`.
+
 ## The gate
 
 ```sh
@@ -87,6 +101,10 @@ scripts/check.sh
 ```
 
 It runs the format check, clippy with `-D warnings`, the tests, the doctests and `cargo deny`.
+Then, for `adapters/go` and with `GOFLAGS=-mod=readonly GOPROXY=off GOTOOLCHAIN=local
+GOWORK=off`, it checks that `go version` is Go 1.27.3, that `gofmt -l` prints nothing, and
+runs `go vet`, `go test -count=1 -v` and `go mod verify`. The only tests it may skip are the
+case-alias cases, which need a case-insensitive volume.
 There is no hosted CI yet, so this script is what a change has to pass.
 
 ## Commits

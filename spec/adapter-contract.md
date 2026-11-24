@@ -363,6 +363,15 @@ method. If the calls layer knows that `File.Write` is what can run because `File
 to the interface somewhere in the build, it adds a row to `File.Write` with
 `mechanism: dynamic`, `resolution: coercion-filtered`. Both relations are kept.
 
+**A conversion in Go.** For `score := int(meter.Double(int32(n)))` inside `func Flow`, the Go
+adapter reports one `call` node, with `callee` on `Double`. `int(…)` and `int32(…)` are
+conversions: Go writes them like calls, but they call no declaration, and the index records no
+occurrence on the type name that could close the call. A builtin such as `len(s)` or
+`append(s, v)` is the same. The Go adapter reports no node for either, so the snapshot gets a
+`declared` call from `Flow` to `Double` and no `open-call` gap at the conversions. This is the
+Go adapter's reporting policy for what a call node is in Go's grammar; `call` keeps its meaning
+for every adapter.
+
 **Scheduling and dispatch together.** For Go's `go x.M()` the calls layer reports the dispatch,
 `mechanism: dynamic`. The scheduling is syntax: the outline holds a `spawn` node with the `call`
 node inside it.

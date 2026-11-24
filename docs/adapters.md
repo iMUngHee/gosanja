@@ -5,11 +5,13 @@ from an adapter: a separate program that knows one language ecosystem and speaks
 [adapter contract](../spec/adapter-contract.md). Adapters are installed next to the engine,
 not built into it, so a language can be added without rebuilding the engine.
 
-One adapter is in this repository, [for Rust](adapters/rust.md). It gives all three layers
-of the contract: the base layer from rust-analyzer's index, the syntax layer from the
-source, and the calls layer from the LLVM IR of a build of the project. Adapters for Go and
-TypeScript are planned. This page describes how the engine finds and uses whatever is
-installed.
+Two adapters are in this repository. [The Rust adapter](adapters/rust.md) gives all three
+layers of the contract: the base layer from rust-analyzer's index, the syntax layer from the
+source, and the calls layer from the LLVM IR of a build of the project. [The Go
+adapter](adapters/go.md), a Go program under `adapters/go`, gives the base layer from
+scip-go's index and the syntax layer from `go/packages`; it has no calls layer yet. An
+adapter for TypeScript is planned. This page describes how the engine finds and uses
+whatever is installed.
 
 ## What an installed adapter is
 
@@ -161,7 +163,8 @@ cargo run -q -p gosanja -- index --root fixtures/go-basic --out /tmp/gosanja-dem
 
 The first command lists `demo`. The second finds `Cargo.toml` in the fixture, runs `demo` and
 writes a snapshot whose manifest names that adapter. The last one is refused with exit code
-2, because the Go fixture has no `Cargo.toml`:
+2, because the Go fixture has no `Cargo.toml` and no installed adapter knows `go.mod`; with
+the Go adapter installed, the engine would choose it there:
 
 ```text
 gosanja: no installed adapter has a marker file in fixtures/go-basic

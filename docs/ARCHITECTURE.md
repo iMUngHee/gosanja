@@ -83,6 +83,12 @@ evidence they were ranked by. See [diff.md](diff.md) and
 | `gosanja` | `crates/cli` | The command line. Reads files, finds installed adapters (`discover`), calls the core, sets exit codes. |
 | `gosanja-adapter-rust` | `crates/adapter-rust` | The Rust adapter, a separate program: runs `rust-analyzer scip` for the base layer and reads source with `syn` for the syntax layer. Of this workspace's crates it depends on `gosanja-schema` only; its tests also use the core. |
 
+The Go adapter, `gosanja-adapter-go`, is a Go module of its own in `adapters/go`, not a crate
+of the workspace: it runs `scip-go` for the base layer and reads source with `go/packages` and
+`go/types` for the syntax layer. It shares no code with the workspace. Its contract types are
+Go structs in `adapters/go/internal/contract`, and its tests check every file it writes against
+`spec/schema` and run the engine, built from the workspace, as a process.
+
 Core modules:
 
 | Module | Responsibility |
@@ -108,7 +114,8 @@ Dependencies point one way: `cli` → `core` → `schema`.
 - No viewer. A viewer is a consumer of the snapshot.
 - No source text in a snapshot, only paths, sizes and digests.
 - No incremental indexing. Every row is tied to a file, which keeps that possible later.
-- No adapter for another language than Rust. The Rust adapter's calls layer covers direct
+- No adapter for a language other than Rust and Go, and no calls layer for Go (see
+  [adapters/go.md](adapters/go.md)). The Rust adapter's calls layer covers direct
   calls between definitions of the project that the calling target's own build defines;
   destructor calls, dynamic dispatch and calls into another target's build are not recorded
   (see [adapters/rust.md](adapters/rust.md)).

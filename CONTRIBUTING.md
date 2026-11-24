@@ -6,15 +6,21 @@ and holds the rules the code cannot show.
 
 ## Getting started
 
-You need the Rust toolchain named in `rust-toolchain.toml` (rustup installs it on first use) and
-[`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny).
+You need the Rust toolchain named in `rust-toolchain.toml` (rustup installs it on first use),
+[`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny), and Go 1.27.3 for the Go adapter
+in `adapters/go`. The gate never downloads a Go module, so fill the module cache once, the one
+step that needs the network:
 
 ```sh
+(cd adapters/go && go mod download)
 scripts/check.sh
 ```
 
 This is the gate every change has to pass. The tests need no indexer; they read the indexes
-checked in under `fixtures/`.
+checked in under `fixtures/`. Run it as an unprivileged user: one Go test needs an output
+directory it cannot write to, which the super-user can. The only tests it skips are the
+case-alias cases, which need a case-insensitive volume, as macOS's default one is; on Linux
+they skip with that reason.
 
 ## Kinds of contribution
 
