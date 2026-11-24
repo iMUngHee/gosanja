@@ -26,9 +26,18 @@ struct Function {
     extent: Range,
 }
 
+/// The attribute's name when its path is one identifier, a raw `r#` spelling read as the name
+/// it spells, as the compiler reads it.
+fn name(meta: &Meta) -> Option<String> {
+    meta.path()
+        .get_ident()
+        .map(|n| syn::ext::IdentExt::unraw(n).to_string())
+}
+
 fn allowed(meta: &Meta, inner: bool) -> bool {
-    let path = meta.path();
-    if path.is_ident("cfg_attr") {
+    let name = name(meta);
+    let is = |n: &str| name.as_deref() == Some(n);
+    if is("cfg_attr") {
         let Meta::List(list) = meta else { return false };
         // A group is one token tree, so a comma in all(...), for example, ends no predicate.
         let mut tokens = list.tokens.clone().into_iter().peekable();
@@ -42,25 +51,24 @@ fn allowed(meta: &Meta, inner: bool) -> bool {
             .parse2(tokens.collect())
             .is_ok_and(|attrs| attrs.iter().all(|attr| allowed(attr, inner)));
     }
-    if path.is_ident("unsafe") {
+    if is("unsafe") {
         let Meta::List(list) = meta else { return false };
         return syn::parse2::<Meta>(list.tokens.clone()).is_ok_and(|attr| allowed(&attr, inner));
     }
-    if inner && path.is_ident("feature") {
+    if inner && is("feature") {
         let Meta::List(list) = meta else { return false };
         return Punctuated::<syn::Ident, Token![,]>::parse_terminated
             .parse2(list.tokens.clone())
             .is_ok_and(|gates| {
                 gates.iter().all(|gate| {
                     matches!(
-                        gate.to_string().as_str(),
+                        syn::ext::IdentExt::unraw(gate).to_string().as_str(),
                         "doc_cfg" | "doc_notable_trait" | "doc_auto_cfg"
                     )
                 })
             });
     }
-    path.get_ident().is_some_and(|n| {
-        let name = n.to_string();
+    name.is_some_and(|name| {
         matches!(
             name.as_str(),
             "cfg"
