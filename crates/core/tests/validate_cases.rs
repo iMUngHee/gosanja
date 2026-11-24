@@ -685,6 +685,63 @@ fn symbols_are_global_in_both_tables() {
     }
 }
 
+/// The first external row of the golden, with `edit` applied to its JSON object.
+fn first_external(edit: impl Fn(&mut serde_json::Value)) -> SnapshotFiles {
+    with(golden(), "externals.jsonl", |text| {
+        let (line, rest) = text.split_once('\n').unwrap();
+        let mut row: serde_json::Value = serde_json::from_str(line).unwrap();
+        edit(&mut row);
+        format!("{row}\n{rest}")
+    })
+}
+
+#[test]
+fn an_external_package_must_be_the_one_its_symbol_states() {
+    for field in ["manager", "name", "version"] {
+        let files = first_external(|row| row["package"][field] = "other".into());
+        let diagnostics = validate::validate(&files, None).expect("own version");
+        let found: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == "package-mismatch")
+            .map(|d| (d.file, d.line))
+            .collect();
+        assert_eq!(found, [("externals.jsonl", Some(1))], "{field}");
+    }
+}
+
+#[test]
+fn a_package_part_is_compared_unescaped() {
+    let symbol = "rust-analyzer a  b alloc https://github.com/rust-lang/rust/library/alloc fmt/";
+    let agreeing = first_external(|row| {
+        row["symbol"] = symbol.into();
+        row["package"]["manager"] = "a b".into();
+    });
+    assert!(!check(&agreeing).contains(&("externals.jsonl", "package-mismatch")));
+    let escaped = first_external(|row| {
+        row["symbol"] = symbol.into();
+        row["package"]["manager"] = "a  b".into();
+    });
+    assert!(check(&escaped).contains(&("externals.jsonl", "package-mismatch")));
+}
+
+#[test]
+fn every_row_of_a_repeated_symbol_is_compared() {
+    let text = String::from_utf8(golden().externals.unwrap()).unwrap();
+    let first = text.lines().next().unwrap();
+    let mut copy: serde_json::Value = serde_json::from_str(first).unwrap();
+    copy["key"] = "zzz:repeated:fmt/".into();
+    copy["package"]["name"] = "other".into();
+    let rows = text.lines().count();
+    let files = appended(golden(), "externals.jsonl", &[&copy.to_string()]);
+    let diagnostics = validate::validate(&files, None).expect("own version");
+    let found: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == "package-mismatch")
+        .map(|d| d.line)
+        .collect();
+    assert_eq!(found, [Some(rows + 1)]);
+}
+
 #[test]
 fn a_parent_cycle_is_diagnosed() {
     let files = with(golden(), "entities.jsonl", |s| {

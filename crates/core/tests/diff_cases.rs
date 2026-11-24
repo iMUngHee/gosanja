@@ -322,7 +322,7 @@ fn unsupported_version_precedes_the_other_inputs_row_diagnostic() {
 }
 
 #[test]
-fn diff_packages_use_the_global_symbol_even_when_row_metadata_disagrees() {
+fn diff_packages_follow_the_symbol_and_a_disagreeing_row_is_refused() {
     use serde_json::{Value, json};
     let root = fixture("diff-basic");
     let old = root.join("old/expected");
@@ -346,8 +346,26 @@ fn diff_packages_use_the_global_symbol_even_when_row_metadata_disagrees() {
             .find(|row| row["package"]["name"] == "std")
             .unwrap();
         row["symbol"] = format!("ra {manager} {name} 1 crate/").into();
-        row["package"]["manager"] = "".into();
-        row["package"]["name"] = "wrong".into();
+        row["package"] = json!({"manager":manager,"name":name,"version":"1"});
+        let mut disagreeing = rows.clone();
+        if let Some(row) = disagreeing
+            .iter_mut()
+            .find(|row| row["symbol"] == format!("ra {manager} {name} 1 crate/"))
+        {
+            row["package"]["name"] = "wrong".into();
+        }
+        new.externals = Some(jsonl(&disagreeing));
+        let refused = materialize(&new);
+        let code = if manager.is_empty() {
+            "invalid-symbol"
+        } else {
+            "package-mismatch"
+        };
+        assert!(
+            matches!(compare(&old, refused.path()).unwrap_err(),
+                gosanja_core::diff::CompareError::Invalid(d) if d.code == code),
+            "{manager} {name}: {code}"
+        );
         new.externals = Some(jsonl(&rows));
         let new = materialize(&new);
         let result = compare(&old, new.path());

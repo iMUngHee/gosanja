@@ -202,6 +202,10 @@ documents which of these it runs or leaves in force.
 - `gosanja validate` also reports `parent-cycle`, a chain of `parent` or `member_of` that
   returns to itself, and `invalid-symbol`, a `symbol` that is not a global SCIP symbol. A
   snapshot that holds either now fails validation; the engine writes neither.
+- `gosanja validate` also reports `package-mismatch`, an `externals.jsonl` row whose
+  `package` manager, name or version is not the one its `symbol` states, as
+  `spec/snapshot.md` requires. A snapshot that holds one now fails validation, and
+  `gosanja diff` refuses it; the engine writes none.
 - Rust API: `AdapterManifest` and `LayerResult` have new fields that a struct literal must
   give; `GapKind` has a new variant that an exhaustive `match` must handle;
   `adapter::describe` takes an `Invocation` and returns a `Described`, and running the adapter

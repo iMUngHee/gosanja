@@ -357,6 +357,25 @@ pub(crate) fn symbol_parts(snap: &ReadSnapshot, diagnostics: &mut Vec<Diagnostic
             });
         }
     }
+    // Per row, not per symbol: two rows may carry one symbol, and each states its own package.
+    for (line, external) in &snap.externals {
+        let Some(parts) = index.get(&external.symbol) else {
+            continue;
+        };
+        let package = &external.package;
+        let (manager, name) = &parts.package;
+        if (&package.manager, &package.name, &package.version) != (manager, name, &parts.version) {
+            diagnostics.push(Diagnostic {
+                file: "externals.jsonl",
+                line: Some(*line),
+                code: "package-mismatch",
+                detail: format!(
+                    "`package` {}:{}:{} is not the symbol's {manager}:{name}:{}",
+                    package.manager, package.name, package.version, parts.version
+                ),
+            });
+        }
+    }
     index
 }
 
