@@ -26,6 +26,7 @@ const USAGE: &str = "usage:
   gosanja adapter list
   gosanja adapter describe <name or path>
   gosanja validate <snapshot> [--root <dir>]
+  gosanja diff <old> <new> --out <dir>
 An adapter argument that is absolute or holds a path separator is a program; any other is the
 name of an installed adapter. To run a program found on PATH, give its path.";
 
@@ -85,6 +86,7 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
             )),
         },
         Some("validate") => validate(&Options::parse(rest, &["--root"])?),
+        Some("diff") => diff(&Options::parse(rest, &["--out"])?),
         _ => Err(usage(&format!(
             "unknown command {}",
             command.to_string_lossy()
@@ -451,4 +453,27 @@ fn validate(options: &Options) -> Result<(), Failure> {
         VALIDATION_FAILED,
         format!("{} problem(s) in {}", diagnostics.len(), snapshot.display()),
     ))
+}
+
+/// Compares two snapshots and publishes the diff. Nothing is written unless both inputs are
+/// readable, of this engine's schema, valid and of one scope each.
+fn diff(options: &Options) -> Result<(), Failure> {
+    let [old, new] = options.positional.as_slice() else {
+        return Err(usage("diff takes two snapshot directories"));
+    };
+    let out = options.require("--out")?;
+    let comparison =
+        gosanja_core::diff::compare(&SnapshotFiles::read(old), &SnapshotFiles::read(new)).map_err(
+            |e| {
+                let code = match e {
+                    gosanja_core::diff::CompareError::Invalid(_) => INPUT_FAILED,
+                    _ => REFUSED,
+                };
+                fail(code, e.to_string())
+            },
+        )?;
+    publish::publish_guarded(&[old, new], gosanja_schema::diff::FORMAT, out, |stage| {
+        write::write_diff(stage, &comparison)
+    })
+    .map_err(|e| fail(e.exit_code(), e.to_string()))
 }

@@ -2,7 +2,8 @@
 //! snapshots and sources.
 //!
 //! [`serialise`] is pure: it sorts every table as `spec/snapshot.md` states and writes fields
-//! in schema order, so equal snapshots give equal bytes. [`write_snapshot`] and
+//! in schema order, so equal snapshots give equal bytes; [`serialise_diff`] does the same for a
+//! diff as `spec/diff.md` states. [`write_snapshot`], [`write_diff`] and
 //! [`SnapshotFiles::read`] move those bytes to and from a directory, and [`FsSource`] is the
 //! one reader through which source text reaches the core.
 
@@ -16,7 +17,12 @@ use gosanja_schema::snapshot::{
 };
 use serde::Serialize;
 
+use crate::diff::Comparison;
 use crate::graph::Snapshot;
+use gosanja_schema::diff::{
+    EntityRow as DiffEntityRow, ExternalRow as DiffExternalRow, RelationKind,
+    RelationRow as DiffRelationRow,
+};
 
 /// Where a source path leads once links are resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,6 +207,94 @@ pub fn write_snapshot(dir: &Path, snapshot: &Snapshot) -> io::Result<()> {
     Ok(())
 }
 
+/// The five files of a diff, in the order `spec/diff.md` lists them.
+pub const DIFF_FILES: [&str; 5] = [
+    "manifest.json",
+    "entities.jsonl",
+    "externals.jsonl",
+    "relations.jsonl",
+    "candidates.jsonl",
+];
+
+/// Writes the five files of `comparison` into `dir`.
+///
+/// # Errors
+///
+/// Returns the I/O error of the first file that cannot be written.
+pub fn write_diff(dir: &Path, comparison: &Comparison) -> io::Result<()> {
+    for (name, bytes) in serialise_diff(comparison) {
+        fs::write(dir.join(name), bytes)?;
+    }
+    Ok(())
+}
+
+/// The bytes of the five files of a diff, named as in [`DIFF_FILES`].
+///
+/// Every table is sorted as `spec/diff.md` states, an absent key after any key and ties broken
+/// by the serialised row. The manifest is written as `comparison` holds it: its counts and its
+/// sorted lists are the comparison's.
+#[must_use]
+pub fn serialise_diff(comparison: &Comparison) -> Vec<(&'static str, Vec<u8>)> {
+    let entities = table(&comparison.entities, |r| {
+        let (old, new) = diff_entity_keys(r);
+        (absent_last(old), absent_last(new))
+    });
+    let externals = table(&comparison.externals, |r| {
+        let (old, new) = diff_external_keys(r);
+        (absent_last(old), absent_last(new))
+    });
+    let relations = table(&comparison.relations, diff_relation_order);
+    let candidates = table(&comparison.candidates, |r| (r.old.clone(), r.rank));
+    let mut manifest_bytes = to_line(&comparison.manifest);
+    manifest_bytes.push(b'\n');
+    vec![
+        (DIFF_FILES[0], manifest_bytes),
+        (DIFF_FILES[1], entities.0),
+        (DIFF_FILES[2], externals.0),
+        (DIFF_FILES[3], relations.0),
+        (DIFF_FILES[4], candidates.0),
+    ]
+}
+
+/// A sort key part under which an absent key comes after any key.
+fn absent_last(key: Option<&str>) -> (bool, String) {
+    (key.is_none(), key.unwrap_or_default().to_owned())
+}
+
+fn diff_entity_keys(row: &DiffEntityRow) -> (Option<&str>, Option<&str>) {
+    match row {
+        DiffEntityRow::Added { new, .. } => (None, Some(new)),
+        DiffEntityRow::Removed { old, .. } => (Some(old), None),
+        DiffEntityRow::Changed { old, new, .. } | DiffEntityRow::Rekeyed { old, new } => {
+            (Some(old), Some(new))
+        }
+    }
+}
+
+fn diff_external_keys(row: &DiffExternalRow) -> (Option<&str>, Option<&str>) {
+    match row {
+        DiffExternalRow::Added { new, .. } => (None, Some(new)),
+        DiffExternalRow::Removed { old, .. } => (Some(old), None),
+        DiffExternalRow::Rekeyed { old, new } => (Some(old), Some(new)),
+    }
+}
+
+/// Sort key of a diff's `relations.jsonl`: `from.old`, `from.new`, `to.old`, `to.new`, `rel`.
+fn diff_relation_order(row: &DiffRelationRow) -> [(bool, String); 5] {
+    let rel = match row.kind {
+        RelationKind::Ref { .. } => "ref",
+        RelationKind::Call { .. } => "call",
+        RelationKind::Implements => "implements",
+    };
+    [
+        absent_last(row.from.old.as_deref()),
+        absent_last(row.from.new.as_deref()),
+        absent_last(row.to.old.as_deref()),
+        absent_last(row.to.new.as_deref()),
+        (false, rel.to_owned()),
+    ]
+}
+
 /// The bytes of every file of `snapshot`, sorted and counted.
 #[must_use]
 pub fn serialise(snapshot: &Snapshot) -> SnapshotFiles {
@@ -352,5 +446,67 @@ mod tests {
             "read opens only what resolves inside the root"
         );
         let _missing = source.read("src/missing.rs").unwrap_err();
+    }
+
+    /// The hand-derived example read back into rows with every table reversed, so that only the
+    /// writer can put them back in order.
+    fn shuffled_example() -> (crate::diff::Comparison, Vec<(&'static str, Vec<u8>)>) {
+        fn rows<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Vec<T> {
+            let mut rows: Vec<T> = std::str::from_utf8(bytes)
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            rows.reverse();
+            rows
+        }
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spec/examples/diff-basic");
+        let files: Vec<(&'static str, Vec<u8>)> = DIFF_FILES
+            .iter()
+            .map(|name| (*name, fs::read(dir.join(name)).unwrap()))
+            .collect();
+        let manifest: gosanja_schema::diff::Manifest = serde_json::from_slice(&files[0].1).unwrap();
+        let comparison = crate::diff::Comparison {
+            manifest,
+            entities: rows(&files[1].1),
+            externals: rows(&files[2].1),
+            relations: rows(&files[3].1),
+            candidates: rows(&files[4].1),
+            pairs: std::collections::BTreeMap::new(),
+        };
+        (comparison, files)
+    }
+
+    #[test]
+    fn a_diff_is_written_in_the_orders_of_the_specification() {
+        let (comparison, example) = shuffled_example();
+        let written = serialise_diff(&comparison);
+        assert_eq!(written.len(), 5);
+        for ((name, bytes), (expected_name, expected)) in written.iter().zip(&example) {
+            assert_eq!(name, expected_name);
+            assert!(
+                bytes == expected,
+                "{name}: got\n{}",
+                String::from_utf8_lossy(bytes)
+            );
+        }
+    }
+
+    #[test]
+    fn writing_a_diff_puts_exactly_its_five_files_in_the_directory() {
+        let (comparison, example) = shuffled_example();
+        let dir = tempfile::tempdir().unwrap();
+        write_diff(dir.path(), &comparison).unwrap();
+        let mut names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let mut expected: Vec<String> = DIFF_FILES.iter().map(|n| (*n).to_owned()).collect();
+        expected.sort();
+        assert_eq!(names, expected);
+        for (name, bytes) in example {
+            assert_eq!(fs::read(dir.path().join(name)).unwrap(), bytes, "{name}");
+        }
     }
 }
