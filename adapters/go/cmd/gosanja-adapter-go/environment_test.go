@@ -461,7 +461,7 @@ func TestEnvironmentVendor(t *testing.T) {
 	// the fixture calls. The stub serves the checked-in index, so the row's attribution is the
 	// real indexer's; the live check runs that.
 	snap := filepath.Join(w.dir, "snapshot")
-	if code, stderr := w.engineWith(empty, "index", "--root", root, "--out", snap); code != 0 {
+	if code, stderr := w.engineWith(map[string]string{"GOMODCACHE": empty}, "index", "--root", root, "--out", snap); code != 0 {
 		t.Fatalf("gosanja index exit %d: %s", code, stderr)
 	}
 	found := false

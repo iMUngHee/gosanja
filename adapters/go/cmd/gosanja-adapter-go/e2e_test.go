@@ -80,22 +80,25 @@ func build(scratch string) (engine, adapters string, err error) {
 // exit status and its standard output and error together.
 func (w *world) engine(args ...string) (int, string) {
 	w.t.Helper()
-	return w.engineWith("", args...)
+	return w.engineWith(nil, args...)
 }
 
-// engineWith is engine with another module cache, when cache is not empty.
-func (w *world) engineWith(cache string, args ...string) (int, string) {
+// engineWith is engine with the variables of extra set as well, replacing its own.
+func (w *world) engineWith(extra map[string]string, args ...string) (int, string) {
 	w.t.Helper()
 	if buildErr != nil {
 		w.t.Fatalf("the engine or the adapter did not build: %v", buildErr)
 	}
-	if cache == "" {
-		cache = moduleCache(w.t)
+	vars := map[string]string{"PATH": w.bin + ":/usr/bin:/bin", "HOME": w.home, "GOPROXY": "off",
+		"GOMODCACHE": moduleCache(w.t), "GOSANJA_ADAPTER_PATH": adapterDir}
+	for k, v := range extra {
+		vars[k] = v
 	}
 	cmd := exec.Command(engineBin, args...)
 	cmd.Dir = w.dir
-	cmd.Env = []string{"PATH=" + w.bin + ":/usr/bin:/bin", "HOME=" + w.home, "GOPROXY=off",
-		"GOMODCACHE=" + cache, "GOSANJA_ADAPTER_PATH=" + adapterDir}
+	for k, v := range vars {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	err := cmd.Run()
