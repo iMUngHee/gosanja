@@ -489,4 +489,67 @@ mod tests {
     fn a_constant_operand_does_not_parse() {
         callee("void 0(i32 1)", 1).unwrap_err();
     }
+
+    #[test]
+    fn an_error_names_the_line_it_is_on() {
+        assert_eq!(Unreadable::new(0, "whole").to_string(), "whole");
+        assert_eq!(Unreadable::new(3, "part").to_string(), "line 3: part");
+        // A metadata line and a function line, each the second line of its text.
+        let e = read("; first\n!1 = !DIFile(filename \"x\")\n").unwrap_err();
+        assert_eq!(e.line, 2, "{e}");
+        let e = read("; first\ndefine void @f() !dbg !1\n").unwrap_err();
+        assert_eq!(e.line, 2, "{e}");
+        let e = read("; first\ndeclare void f()\n").unwrap_err();
+        assert_eq!(e.line, 2, "{e}");
+    }
+
+    #[test]
+    fn one_target_triple_with_nothing_after_it() {
+        let triple = "target triple = \"x86_64-unknown-linux-gnu\"";
+        assert_eq!(
+            read(triple).unwrap().triple.as_deref(),
+            Some("x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(read(&format!("{triple}\n{triple}\n")).unwrap_err().line, 2);
+        assert_eq!(read(&format!("{triple} x\n")).unwrap_err().line, 1);
+    }
+
+    #[test]
+    fn a_global_name_is_bare_characters_or_one_quoted_string() {
+        assert_eq!(global("_R1a.b$c-d"), Some("_R1a.b$c-d".to_owned()));
+        assert_eq!(global(""), None);
+        assert_eq!(global("a<b"), None);
+        assert_eq!(global("\"q\" x"), None);
+        let text = "define void @\"a b\"() unnamed_addr {\n}\ndeclare i32 @\"c(d\"(i32)\n";
+        let t = read(text).unwrap();
+        assert_eq!(t.functions[0].symbol, "a b");
+        assert!(t.declared.contains("c(d"));
+    }
+
+    #[test]
+    fn an_attachment_inside_brackets_or_a_string_is_not_the_instructions() {
+        assert_eq!(
+            dbg("void @f(metadata !5, !dbg !6) #2, !dbg !9", 1),
+            Ok(Some(9))
+        );
+        assert_eq!(dbg("void @\"!dbg !6\"(), !dbg !9", 1), Ok(Some(9)));
+        assert_eq!(dbg("void @f()", 1), Ok(None));
+        dbg("void @f(), !dbg !1, !dbg !2", 1).unwrap_err();
+    }
+
+    #[test]
+    fn escapes_decode_wherever_they_stand() {
+        assert_eq!(string(r#""a\\b""#), Some(("a\\b".to_owned(), "")));
+        assert_eq!(string(r#""\5Cx\22""#), Some(("\\x\"".to_owned(), "")));
+        assert_eq!(string(r#""ab\\\\c""#), Some(("ab\\\\c".to_owned(), "")));
+        assert_eq!(string(r#""\FF""#), None, "not UTF-8");
+    }
+
+    #[test]
+    fn a_field_has_a_plain_key() {
+        assert!(fields("line: 3, name: \"x\"").is_some());
+        assert_eq!(fields(": 3"), None);
+        assert_eq!(fields("a-b: 3"), None);
+        assert_eq!(fields("line: 3, line: 4"), None);
+    }
 }

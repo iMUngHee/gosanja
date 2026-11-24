@@ -764,9 +764,33 @@ fn tool_names(r: &Value) -> Vec<String> {
 fn the_probe_gives_its_row() {
     let c = Case::new();
     probe(&c, "", &[]);
+    let log = c.temp.path().join("cargo-args");
+    wrap(
+        &c,
+        "cargo",
+        &format!("echo \"$*\" >> '{}'\nexec \"$REAL\" \"$@\"", log.display()),
+    );
     let (r, _) = calls_run(&c);
     assert_eq!(r["layers"]["calls"], json!({"status": "ok"}), "{r}");
     assert_eq!(tool_names(&r), ["cargo", "rust-analyzer", "rustc"]);
+    let rustc = &r["tools"][2]["version"];
+    assert!(rustc.as_str().unwrap().starts_with("1.99.1 ("), "{rustc}");
+    // The calls build runs offline and locked, with the explicit IR path.
+    let invoked = fs::read_to_string(&log).unwrap();
+    let build: Vec<&str> = invoked
+        .lines()
+        .filter(|l| l.starts_with("rustc "))
+        .collect();
+    assert_eq!(build.len(), 1, "{invoked}");
+    let ir = c.out.join("work/calls/0.ll");
+    assert_eq!(
+        build[0],
+        format!(
+            "rustc --locked --offline --message-format=json -p probe@0.1.0 --lib -- \
+             --emit=llvm-ir={} -C codegen-units=1 -C debuginfo=2 -C opt-level=0",
+            ir.display()
+        )
+    );
     assert_eq!(
         calls_rows(&c),
         [json!({

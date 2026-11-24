@@ -466,3 +466,46 @@ fn carried(path: &str) -> bool {
             .split('/')
             .all(|s| !s.is_empty() && s != "." && s != "..")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const APP: &str = include_str!("../../../../fixtures/ir/reader/app.ll");
+
+    fn with_md5(text: &str) -> usize {
+        Module::read(text)
+            .unwrap()
+            .files()
+            .filter(|(_, f)| f.md5.is_some())
+            .count()
+    }
+
+    #[test]
+    fn only_an_md5_checksum_is_kept() {
+        let all = with_md5(APP);
+        assert!(all > 1, "{all}");
+        let other = APP.replacen("checksumkind: CSK_MD5", "checksumkind: CSK_SHA256", 1);
+        assert_eq!(with_md5(&other), all - 1);
+    }
+
+    #[test]
+    fn a_carried_path_is_the_contracts() {
+        for ok in ["a.rs", "src/lib.rs", "a:b.rs", "x/C:/y.rs", "ab:/c.rs"] {
+            assert!(carried(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "/a.rs",
+            "C:/a.rs",
+            "c:/a.rs",
+            "a\\b.rs",
+            "a//b.rs",
+            "./a.rs",
+            "a/../b.rs",
+            "a/",
+        ] {
+            assert!(!carried(bad), "{bad}");
+        }
+    }
+}
