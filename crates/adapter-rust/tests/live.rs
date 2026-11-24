@@ -123,7 +123,10 @@ fn adapter(root: &Path, env: &[(&str, &OsStr)]) -> (Value, tempfile::TempDir) {
     (result, out)
 }
 
-/// Runs `gosanja index` with the adapter on `root`; the snapshot directory.
+/// Runs `gosanja index` with the adapter on `root`; the snapshot directory. The Cargo home
+/// is made for the run and holds no configuration, as for the goldens, so that flags in the
+/// contributor's own Cargo home cannot decide the calls layer; the projects run here have
+/// path dependencies only.
 fn snapshot(root: &Path, cache: &Path) -> PathBuf {
     let out = cache.join("snapshot");
     let output = Command::new(engine())
@@ -135,6 +138,7 @@ fn snapshot(root: &Path, cache: &Path) -> PathBuf {
         .arg("--out")
         .arg(&out)
         .env("XDG_CACHE_HOME", cache.join("cache"))
+        .env("CARGO_HOME", cache.join("cargo-home"))
         .output()
         .expect("gosanja runs");
     assert!(

@@ -135,6 +135,8 @@ copy() {
     copies="$copies $1"
     (cd "$here/$1" && tar --exclude=./index.scip --exclude='./*/index.scip' --exclude=./expected \
         --exclude='./*/expected' -cf - .) | (cd "$root/$1" && tar -xf -)
+    # The checkout may be read-only; the copy is the script's own and is removed at the end.
+    chmod -R u+w "$root/$1"
 }
 
 # rust_index <copy directory> <staged index>
