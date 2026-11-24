@@ -395,17 +395,28 @@ The calls layer is optional. When it fails and the base layer succeeded, the bas
 layers are published as usual, the snapshot records a `failed-layer` gap for calls, and no
 row and no build context of the run is kept. When the base layer fails, the engine writes no
 snapshot at all (see "When it cannot index"), and the calls layer's `base-failed` is seen only
-in the adapter's own `result.json`. The first situation that holds, for the first target in
-build order, decides the code:
+in the adapter's own `result.json`.
 
-| Code | Meaning |
+The situations are checked in the order of this table. The first that holds decides the code,
+for the first target in build order it holds for; a later situation is not looked at, even
+for an earlier target. So an output path with a comma in a project whose two targets share a
+build context id gives `build-unsupported`, while two such targets whose modules say they
+were optimised give `build-context-ambiguous`. The comma, the metadata, an empty selection
+and a shared id are decided before anything is compiled; a base layer that fails gives
+`base-failed` even when the calls build has already run.
+
+| Situation, in the order it is checked | Code |
 | --- | --- |
-| `base-failed` | the base layer failed, so no row could be made |
-| `build-unsupported` | the adapter's output directory has a comma in its path, which the compiler's `--emit` option cannot name; Cargo reports several artifacts for a target, as a `build.target` naming several platforms gives; or a module reports itself as optimised |
-| `build-context-ambiguous` | two selected targets give one build context id |
-| `build-failed` | a selected target does not compile |
-| `ir-missing` | Cargo reports no artifact for a target, or no IR file is at the path the adapter gave |
-| `ir-unreadable` | the reader cannot follow an IR file, or the file is not a module of rustc for one target |
+| the base layer failed, so no row can be made | `base-failed` |
+| the adapter's output directory has a comma in its path, which the compiler's `--emit` option cannot name | `build-unsupported` |
+| Cargo's metadata lacks what the selection of targets needs | `build-failed` |
+| no target is selected | none: the layer succeeds, empty |
+| two selected targets give one build context id | `build-context-ambiguous` |
+| a selected target does not compile | `build-failed` |
+| Cargo reports more than one artifact for a target, as a `build.target` naming several platforms gives | `build-unsupported` |
+| Cargo reports no artifact for a target, or no IR file is at the path the adapter gave | `ir-missing` |
+| the reader cannot follow an IR file, or the file is not a module of rustc for one target | `ir-unreadable` |
+| a module reports itself as optimised | `build-unsupported` |
 
 **A comma in the output path.** For `gosanja index` the directory the adapter writes to is
 the engine's cache directory, not the snapshot's destination; for an adapter run by hand it
