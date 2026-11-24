@@ -43,6 +43,15 @@ if ! go_version_ok "$word"; then
 fi
 echo "go version: $word"
 
+# Offline whatever the caller's Go settings say: the go command fetches a module that
+# GONOPROXY or GOPRIVATE matches straight from version control even with GOPROXY=off, and an
+# empty exported value does not override the env file. So the module cache and GOPATH are
+# read once and kept, and every other setting of the env file and the caller is dropped.
+GOMODCACHE=$(go env GOMODCACHE)
+GOPATH=$(go env GOPATH)
+export GOMODCACHE GOPATH GOENV=off GOSUMDB=off
+unset GOPRIVATE GONOPROXY GONOSUMDB GOINSECURE
+
 unformatted=$(gofmt -l adapters/go)
 if [ -n "$unformatted" ]; then
     echo "check.sh: gofmt -l adapters/go lists files that are not formatted:" >&2

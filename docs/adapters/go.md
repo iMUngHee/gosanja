@@ -5,9 +5,12 @@
 - the base layer, an index made by `scip-go`;
 - the syntax layer, read from the source with `go/packages` and `go/types`.
 
-It has no calls layer: a snapshot of a Go module records the calls layer `absent`, with one
-`missing-layer` gap. Every call the syntax layer finds is a `declared` call: the callee name is
-bound to that declaration, and nothing is claimed about what runs.
+It has no calls layer. A snapshot made without `--layers`, or with `calls` among them,
+records the calls layer `absent` with one `missing-layer` gap; one made with
+`--layers base,syntax` records it `not-requested`, with no gap. A call of the syntax layer
+becomes a `declared` call when the base layer holds a reference on its callee's name: the call
+is bound to that declaration, and nothing is claimed about what runs. A call without such a
+reference is an `open-call` gap.
 
 ## What it does to your project
 
@@ -26,8 +29,10 @@ project, and each is tested:
   your `GOENV`, a relative one taken from where you started the adapter) and with any of the
   eight you exported. Every later Go command gets those eight values and `GOENV=off`, so no
   env file is read again and nothing else of it is in force.
-- Go's build cache, its temporary files, and the `HOME` and `XDG_CONFIG_HOME` that its
-  telemetry writes under go to `work/` in the adapter's output directory. When `GOPATH` and
+- Go's build cache, its temporary files, and the `HOME` and `XDG_CONFIG_HOME` its tools see
+  go to `work/` in the adapter's output directory, and Go telemetry is off there: the
+  adapter's Go processes write no counters and start no telemetry process, and your own
+  telemetry settings and files are not touched. When `GOPATH` and
   `GOMODCACHE` are set nowhere, the tools still get Go's defaults for you, `$HOME/go` and
   `$HOME/go/pkg/mod`.
 - It refuses to run when a directory the go command may write to is the project or lies
@@ -56,9 +61,13 @@ These stay in force, outside the measures, and you should know them:
   queries, run in the project.
 - **A link you placed inside the module cache**, pointing into the project, is followed. The
   adapter checks the cache's directories, not every path beneath them.
-- **Your `GOPROXY` is used.** A dependency missing from the module cache is downloaded into
-  the cache, which lies outside the project. Set `GOPROXY=off` to keep a run offline; it then
-  fails with `dependencies-missing` instead.
+- **Your `GOPROXY`, `GOPRIVATE` and `GONOPROXY` are used.** A dependency missing from the
+  module cache is downloaded into the cache, which lies outside the project. `GOPROXY=off`
+  alone does not keep a run offline: the go command fetches a module that `GONOPROXY` (by
+  default `GOPRIVATE`) matches straight from its version control, whatever `GOPROXY` says. For
+  an offline run, set `GOPROXY=off` and leave `GOPRIVATE` and `GONOPROXY` empty, in your
+  environment and in your env file; a missing dependency then fails the run with
+  `dependencies-missing`.
 
 ## What it needs
 
@@ -154,7 +163,8 @@ states them. Three of them read differently from what a Go programmer may expect
   receiver. Read it as "`T` or `*T` implements `I`".
 - **The names of one declaration share an enclosing range.** scip-go gives `var A, B = f(), g()`
   one extent for both names, so the engine reports an `overlapping-bodies` gap for each such
-  pair, and a reference inside the initializers belongs to both.
+  pair and leaves both extents out of reference ownership: a reference inside the initializers
+  belongs to neither name, and is counted with the file's `unattributed-references`.
 - **A package is defined once in each of its files.** Its symbol becomes a
   `symbol-collision` group with one entity per file.
 

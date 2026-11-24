@@ -8,8 +8,9 @@ and holds the rules the code cannot show.
 
 You need the Rust toolchain named in `rust-toolchain.toml` (rustup installs it on first use),
 [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny), and Go 1.27.3 for the Go adapter
-in `adapters/go`. The gate never downloads a Go module, so fill the module cache once, the one
-step that needs the network:
+in `adapters/go`. The gate never downloads a Go module: it keeps your module cache and
+`GOPATH` and drops every other Go setting of yours, `GOPRIVATE` and `GONOPROXY` included. So
+fill the module cache once, the one step that needs the network:
 
 ```sh
 (cd adapters/go && go mod download)

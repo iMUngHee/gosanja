@@ -170,6 +170,30 @@ func TestOutlineUntypedCallKeepsArguments(t *testing.T) {
 	}
 }
 
+func TestOutlineQualifiedBuiltinKeepsArguments(t *testing.T) {
+	const filename = "p.go"
+	const body = "func F(p unsafe.Pointer) { _ = unsafe.Add(p, amount()); _ = (unsafe.Add)(p, amount()) }"
+	in := tempModule(t, map[string]string{
+		filename: "package p\nimport \"unsafe\"\nfunc amount() int { return 1 }\n" + body + "\n",
+	}, "")
+	in.Index = outlineIndex(filename,
+		testDefinition("amount", []int32{2, 5, 11}, []int32{2, 0, 2, 30}),
+		testDefinition("F", []int32{3, 5, 6}, []int32{3, 0, 3, int32(len(body))}),
+	)
+	status, rows := Layer(t.Context(), in)
+	wantLayer(t, status, rows, nil, []string{filename})
+	calls := outlineAt(t, rows, filename, 3, 5)
+	if len(calls) != 2 {
+		t.Fatalf("wanted only the two argument calls, got:\n%s", renderOutline(calls))
+	}
+	for _, call := range calls {
+		if call.K != "call" || call.Callee == nil || len(call.Children) != 0 ||
+			body[call.Callee[1]:call.Callee[3]] != "amount" {
+			t.Fatalf("wanted a call to amount, got:\n%s", renderOutline(calls))
+		}
+	}
+}
+
 func TestDefinitionExtents(t *testing.T) {
 	index := outlineIndex("p.go",
 		testDefinition("F", []int32{2, 5, 6}, []int32{2, 0, 2, 12}),

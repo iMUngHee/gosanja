@@ -50,14 +50,13 @@ func (w *world) xmod(name string) string {
 	return root
 }
 
-// goIn runs the real go in dir, offline, with the test's module cache.
+// goIn runs the real go in dir, offline, isolated, with the test's module cache.
 func (w *world) goIn(dir string, extra []string, args ...string) {
 	w.t.Helper()
 	cmd := exec.Command(realGo(w.t), args...)
 	cmd.Dir = dir
-	cmd.Env = append([]string{"PATH=/usr/bin:/bin", "HOME=" + w.home, "GOPROXY=off", "GOSUMDB=off",
-		"GOTOOLCHAIN=local", "GOWORK=off", "GOMODCACHE=" + moduleCache(w.t),
-		"GOCACHE=" + filepath.Join(w.dir, "test-gocache")}, extra...)
+	cmd.Env = append(isolated([]string{"PATH=/usr/bin:/bin", "GOPROXY=off", "GOSUMDB=off",
+		"GOTOOLCHAIN=local", "GOWORK=off", "GOCACHE=" + filepath.Join(w.dir, "test-gocache")}), extra...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		w.t.Fatalf("go %v: %v\n%s", args, err, out)
 	}
@@ -82,6 +81,7 @@ func failing() []precondition {
 	native := runtime.GOOS
 	return []precondition{
 		{"windows", "platform-unsupported", func(w *world) (string, env.Caller, string) {
+			w.recordingGo()
 			return w.simple("m", nil), w.caller(nil), "windows"
 		}},
 		{"no go.mod", "manifest-missing", func(w *world) (string, env.Caller, string) {
@@ -93,6 +93,14 @@ func failing() []precondition {
 		}},
 		{"go env prints no JSON", "toolchain-missing", func(w *world) (string, env.Caller, string) {
 			w.fakeGo(`if [ "$1" = env ]; then echo not json; exit 0; fi; exec REALGO "$@"`)
+			return w.simple("m", nil), w.caller(nil), native
+		}},
+		{"go env prints null", "toolchain-missing", func(w *world) (string, env.Caller, string) {
+			w.fakeGo(`if [ "$1" = env ]; then echo null; exit 0; fi; exec REALGO "$@"`)
+			return w.simple("m", nil), w.caller(nil), native
+		}},
+		{"go env prints its object and more", "toolchain-missing", func(w *world) (string, env.Caller, string) {
+			w.fakeGo(`if [ "$1" = env ]; then REALGO "$@"; echo ']'; exit 0; fi; exec REALGO "$@"`)
 			return w.simple("m", nil), w.caller(nil), native
 		}},
 		{"no scip-go", "toolchain-missing", func(w *world) (string, env.Caller, string) {
@@ -158,6 +166,18 @@ func failing() []precondition {
 			}
 			w.write(modules, strings.Replace(string(text), "## explicit", "", 1), 0o644)
 			return root, w.caller(nil), native
+		}},
+		{"go list -m prints null", "manifest-invalid", func(w *world) (string, env.Caller, string) {
+			w.fakeGo(`if [ "$1 $2" = "list -m" ]; then echo null; exit 0; fi; exec REALGO "$@"`)
+			return w.simple("m", nil), w.caller(nil), native
+		}},
+		{"go list -m prints its object and more", "manifest-invalid", func(w *world) (string, env.Caller, string) {
+			w.fakeGo(`if [ "$1 $2" = "list -m" ]; then REALGO "$@"; echo ']'; exit 0; fi; exec REALGO "$@"`)
+			return w.simple("m", nil), w.caller(nil), native
+		}},
+		{"go mod edit prints its object and more", "manifest-invalid", func(w *world) (string, env.Caller, string) {
+			w.fakeGo(`if [ "$1 $2" = "mod edit" ]; then REALGO "$@"; echo ']'; exit 0; fi; exec REALGO "$@"`)
+			return w.simple("m", nil), w.caller(nil), native
 		}},
 		{"a broken go.mod", "manifest-invalid", func(w *world) (string, env.Caller, string) {
 			return w.simple("m", map[string]string{"go.mod": "module example.com/m\n\ngo 1.26\nrequire (\n"}), w.caller(nil), native
@@ -237,6 +257,11 @@ func TestPreconditions(t *testing.T) {
 			}
 			if indexRuns(t, w) != 0 {
 				t.Error("the indexer ran")
+			}
+			if c.code == "platform-unsupported" {
+				if record := readRecord(t, w.gorec); len(record) != 0 {
+					t.Errorf("%d go commands ran before the platform check: %v", len(record), record[0].args)
+				}
 			}
 			if e := result(t, outs[0]).Layers["syntax"]; e.Status != "failed" || len(e.Diagnostics) != 1 || e.Diagnostics[0].Code != "base-failed" {
 				t.Errorf("syntax %+v, want failed with base-failed", e)

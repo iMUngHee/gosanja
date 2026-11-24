@@ -88,6 +88,9 @@ func TestSkipped(t *testing.T) {
 		{name: "a directory go.mod ignores", files: map[string]string{
 			"go.mod": "module " + skipModule + "\n\ngo 1.26\n\nignore ./skipme\n", "skipme/x.go": "package skipme\nfunc X() {}\n"},
 			leave: []string{"skipme/x.go"}, rows: []string{keep}, noRows: []string{"skipme/x.go"}},
+		{name: "an unprefixed ignore at any depth", files: map[string]string{
+			"go.mod": "module " + skipModule + "\n\ngo 1.26\n\nignore generated\n", "pkg/generated/a.go": "package generated\nfunc A() {}\n"},
+			leave: []string{"pkg/generated/a.go"}, rows: []string{keep}, noRows: []string{"pkg/generated/a.go"}},
 		{name: "an enclosing range narrower than the body", source: "package p\nfunc step(v int) int { return v }\nfunc Short() int { return step(1) }\n",
 			narrow: []string{"Short"}, syntax: []string{src + " outline-outside-definition"}, rows: []string{keep, src}},
 		{name: "33 nested calls", source: nested(33), syntax: []string{src + " outline-too-deep"}, rows: []string{keep, src}},

@@ -30,6 +30,9 @@ var (
 
 func TestMain(m *testing.M) {
 	scratch, err := os.MkdirTemp("", "gosanja-adapter-go-e2e-")
+	if err == nil {
+		err = isolate(scratch)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -68,7 +71,7 @@ func build(scratch string) (engine, adapters string, err error) {
 	}
 	adapters = filepath.Join(scratch, "adapters")
 	gobuild := exec.Command("go", "build", "-o", filepath.Join(adapters, "gosanja-adapter-go"), ".")
-	gobuild.Env = append(os.Environ(), "CGO_ENABLED=0")
+	gobuild.Env = isolated(append(os.Environ(), "CGO_ENABLED=0"))
 	if out, err := gobuild.CombinedOutput(); err != nil {
 		return "", "", fmt.Errorf("go build: %v\n%s", err, out)
 	}

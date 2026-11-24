@@ -1257,7 +1257,112 @@ The Go modules a Go adapter would use, as their `LICENSE` files in the module ca
 `golang.org/x/tools`' `go.mod` also requires `golang.org/x/mod`, `x/net`, `x/sync`,
 `x/telemetry`, `github.com/google/go-cmp` and `github.com/yuin/goldmark`. The bindings' module
 requires `github.com/fatih/color`, `github.com/hexops/gotextdiff` and
-`github.com/sourcegraph/beaut`. The licences of these were not read for this record.
+`github.com/sourcegraph/beaut`. The preliminary inventory stopped at the four modules above.
+
+### Resolved Go adapter build list
+
+Observed on 2026-11-25 at gosanja commit `ee4535cc0a914b0714207d70cc05bf5b3cb9b6e0`
+with `go1.27.3-X:nodwarf5` on Linux amd64. The inventory covers the local module
+and the 29 dependency modules returned by `go list -m all`. The scope column
+records which modules supply packages for the executable or its tests in this
+build context. The remaining modules appear in the build list.
+
+The commands ran from `adapters/go` in a scratch checkout with network fetches
+disabled. The `Dir` field in the download output identifies the cached sources
+for the licence files. `go mod verify` reported `all modules verified`.
+
+```sh
+export GOENV=off GOWORK=off GOTOOLCHAIN=local GOFLAGS=-mod=readonly
+export GOPROXY=off GOSUMDB=off
+go list -m all
+go mod verify
+go mod download -json all
+format='{{if and .Module (not .Standard)}}{{.Module.Path}}{{end}}'
+go list -deps -f "$format" ./cmd/gosanja-adapter-go | sed '/^$/d' | LC_ALL=C sort -u
+go list -deps -test -f "$format" ./... | sed '/^$/d' | LC_ALL=C sort -u
+```
+
+`go mod download -json all` added checksum entries in the scratch checkout's
+`go.sum` while resolving the licence files.
+
+| Module | Version | Scope | Licence | Source files |
+| --- | --- | --- | --- | --- |
+| `gosanja/adapters/go` | local | executable | MIT OR Apache-2.0 | Repository root `LICENSE-MIT`, `LICENSE-APACHE`, `Cargo.toml` |
+| `github.com/davecgh/go-spew` | `v1.1.1` | build list | ISC | `LICENSE` |
+| `github.com/dlclark/regexp2` | `v1.11.0` | adapter tests | MIT | `LICENSE` |
+| `github.com/fatih/color` | `v1.19.0` | build list | MIT | `LICENSE.md` |
+| `github.com/golang/protobuf` | `v1.5.0` | build list | BSD-3-Clause | `LICENSE` |
+| `github.com/google/go-cmp` | `v0.7.0` | build list | BSD-3-Clause | `LICENSE` |
+| `github.com/google/gofuzz` | `v1.2.0` | build list | Apache-2.0 | `LICENSE` |
+| `github.com/hexops/gotextdiff` | `v1.0.3` | build list | BSD-3-Clause | `LICENSE` |
+| `github.com/kr/pretty` | `v0.3.1` | build list | MIT | `License` |
+| `github.com/mattn/go-colorable` | `v0.1.14` | build list | MIT | `LICENSE` |
+| `github.com/mattn/go-isatty` | `v0.0.20` | build list | MIT | `LICENSE` |
+| `github.com/pmezard/go-difflib` | `v1.0.0` | build list | BSD-3-Clause | `LICENSE` |
+| `github.com/rogpeppe/go-internal` | `v1.11.0` | build list | BSD-3-Clause | `LICENSE` |
+| `github.com/santhosh-tekuri/jsonschema/v6` | `v6.0.2` | adapter tests | Apache-2.0 | `LICENSE` |
+| `github.com/scip-code/scip/bindings/go/scip` | `v0.10.0` | executable | Apache-2.0 | `LICENSE` |
+| `github.com/sourcegraph/beaut` | `v0.0.0-20240611013027-627e4c25335a` | executable | Apache-2.0 | `LICENSE` |
+| `github.com/stretchr/testify` | `v1.12.1` | build list | MIT | `LICENSE` |
+| `github.com/yuin/goldmark` | `v1.4.13` | build list | MIT | `LICENSE` |
+| `go.yaml.in/yaml/v3` | `v3.0.5` | build list | MIT AND Apache-2.0, by file | `LICENSE`, `NOTICE` |
+| `golang.org/x/mod` | `v0.43.0` | executable | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `golang.org/x/net` | `v0.63.0` | build list | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `golang.org/x/sync` | `v0.25.0` | executable | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `golang.org/x/sys` | `v0.50.0` | build list | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `golang.org/x/telemetry` | `v0.0.0-20261116191925-e77a43154acb` | build list | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `golang.org/x/text` | `v0.14.0` | adapter tests | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `golang.org/x/tools` | `v0.53.0` | executable | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `google.golang.org/protobuf` | `v1.36.12` | executable | BSD-3-Clause | `LICENSE`, `PATENTS` |
+| `gopkg.in/check.v1` | `v1.0.0-20201130134442-10cb98267c6c` | build list | BSD-2-Clause | `LICENSE` |
+| `gopkg.in/yaml.v3` | `v3.0.1` | build list | MIT AND Apache-2.0, by file | `LICENSE`, `NOTICE` |
+| `pgregory.net/rapid` | `v1.3.0` | build list | MPL-2.0 | `LICENSE` |
+
+The two YAML modules assign MIT to the listed ports of libyaml files and
+Apache-2.0 to the remaining files. The MPL-2.0 entry, `pgregory.net/rapid`,
+appeared in the build list with no packages in either dependency query.
+
+## Gate timings
+
+Observed on 2026-11-25 on an x86-64 Linux host with 16 hardware threads and 31 GiB of
+memory, with rustc and cargo 1.99.1 (the toolchain `rust-toolchain.toml` pins), Go
+`go1.27.3-X:nodwarf5`, and no compiler cache (`RUSTC_WRAPPER` unset). The tree was a fresh
+copy of the branch's working tree, made by `git ls-files -co --exclude-standard | tar` into
+a scratch directory and not a git checkout, at commit `37fb030` plus the uncommitted fixes to
+the Go adapter's environment, inventory, syntax layer and tests. The module cache and Cargo's
+registry were warm, as the gate requires; nothing was downloaded.
+
+Each run was `scripts/check.sh` with `CARGO_TARGET_DIR`, `GOCACHE` and `TMPDIR` pointing at
+three scratch directories. The cold run started with all three empty and the warm runs
+followed it without clearing them. A copy of the script printed the time after
+`cargo deny`, the last Cargo step, so the Cargo part (format check, clippy, tests, doctests,
+`cargo deny`) and the Go part (version check, `gofmt -l`, `go mod download`, `go vet`,
+`go test -count=1 -v`, `go mod verify`) are timed separately. A loop recorded `du -sk` of
+the three directories once a second.
+
+| Run | Cargo part | Go part | Whole gate | Exit |
+| --- | --- | --- | --- | --- |
+| cold | 23.4 s | 64.0 s | 87.4 s | 0 |
+| warm 1 | 5.8 s | 59.8 s | 65.6 s | 0 |
+| warm 2 | 5.7 s | 60.0 s | 65.7 s | 0 |
+| warm 3 | 5.7 s | 59.8 s | 65.5 s | 0 |
+
+The cold Cargo part compiled 114 crates. A warm Go part is dominated by the command tests of
+`adapters/go/cmd/gosanja-adapter-go` (about 59 s of `go test` time). They run the adapter and
+the engine many times, each with its own `GOCACHE` under its output directory, and that
+directory starts empty, so a warm `GOCACHE` saves little. Their end-to-end tests build
+`gosanja` with cargo into the same `CARGO_TARGET_DIR`, which the Cargo part has already
+filled.
+
+Peak sizes over the four runs: 4.07 GiB for `CARGO_TARGET_DIR`, 189 MiB for `GOCACHE` and
+358 MiB for `TMPDIR`. The temporary directory was empty after every run. A first run of the
+same kind on `37fb030` alone failed in `TestEnvironmentGoSum`: its cleanup found a file
+written after the test's last go command had exited, by Go telemetry's detached process. Its
+times (Cargo part 23.7 s cold and 5.7 s warm, Go part 58.2 s cold and 53.9 s warm) are not
+those of a passing gate.
+
+Not measured: a cold module cache or Cargo registry, which the gate does not support offline;
+other hosts; the live check.
 
 ## Not measured
 

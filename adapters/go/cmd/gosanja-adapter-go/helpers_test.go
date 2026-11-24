@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -43,15 +44,61 @@ func realGo(t *testing.T) string {
 	return path
 }
 
-// moduleCache is the test process's module cache, which holds the adapter's build list and so
+// The go commands a test runs itself, outside the adapter, see a home of their own with Go
+// telemetry off (directHome), so that none writes into the caller's home, and none leaves a
+// detached telemetry process writing in a directory a test is about to remove. They keep the
+// caller's module cache and GOPATH (cache, gopath), read once from the caller's own settings.
+var directHome, cache, gopath string
+
+// isolate prepares directHome under scratch and reads the caller's module cache and GOPATH.
+// The query reads the caller's env file but writes its telemetry under directHome: on Linux
+// Go takes its configuration directory from XDG_CONFIG_HOME.
+func isolate(scratch string) error {
+	directHome = filepath.Join(scratch, "direct-home")
+	mode := filepath.Join(directHome, ".config", "go", "telemetry", "mode")
+	if err := os.MkdirAll(filepath.Dir(mode), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(mode, []byte("off\n"), 0o644); err != nil {
+		return err
+	}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+	envFile := os.Getenv("GOENV")
+	if envFile == "" {
+		envFile = filepath.Join(config, "go", "env")
+	}
+	cmd := exec.Command("go", "env", "GOMODCACHE", "GOPATH")
+	cmd.Env = append(os.Environ(), "GOENV="+envFile, "XDG_CONFIG_HOME="+filepath.Join(directHome, ".config"))
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("go env GOMODCACHE GOPATH: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 2 {
+		return fmt.Errorf("go env GOMODCACHE GOPATH printed %q", out)
+	}
+	cache, gopath = lines[0], lines[1]
+	return nil
+}
+
+// isolated is env with the isolated home and the caller's module cache and GOPATH, which
+// replace any earlier value (exec keeps the last of a duplicated name).
+func isolated(env []string) []string {
+	return append(env, "HOME="+directHome, "XDG_CONFIG_HOME="+filepath.Join(directHome, ".config"),
+		"GOMODCACHE="+cache, "GOPATH="+gopath)
+}
+
+// moduleCache is the caller's module cache, which holds the adapter's build list and so
 // golang.org/x/mod, which the fixture requires.
 func moduleCache(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command(realGo(t), "env", "GOMODCACHE").Output()
-	if err != nil {
-		t.Fatal(err)
+	if cache == "" {
+		t.Fatal("TestMain did not read the module cache")
 	}
-	return strings.TrimSpace(string(out))
+	return cache
 }
 
 // world is one test's temporary directories: a bin directory first on PATH, a caller home, and
@@ -149,7 +196,7 @@ func (w *world) recordingGo() {
 	_ = os.Remove(path)
 	cmd := exec.Command(realGo(w.t), "build", "-o", path, src)
 	cmd.Dir = filepath.Dir(src)
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0")
+	cmd.Env = isolated(append(os.Environ(), "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		w.t.Fatalf("build the recorder: %v\n%s", err, out)
 	}

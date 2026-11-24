@@ -218,6 +218,7 @@ func TestEnvironment(t *testing.T) {
 			if c.proxy != nil {
 				proxy = c.proxy(w)
 			}
+			checkTelemetryOff(t, out)
 			checkGo(t, record[1:], root, out, false)
 			for _, inv := range readRecord(t, w.record) {
 				checkChild(t, inv, root, out, false, stubAdded)
@@ -268,12 +269,51 @@ func TestEnvironmentTelemetry(t *testing.T) {
 			if entries, _ := os.ReadDir(into); len(entries) != 0 {
 				t.Errorf("%d files appeared in the root", len(entries))
 			}
-			telemetry, _ := os.ReadDir(filepath.Join(out, "work", "config", "go", "telemetry", "local"))
-			if len(telemetry) == 0 {
-				t.Errorf("no telemetry under <out>/work/config")
-			}
+			checkTelemetryOff(t, out)
 		})
 	}
+}
+
+// checkTelemetryOff checks that the adapter's Go processes kept telemetry off: the mode file
+// it wrote, no counters or upload directory under <out>/work, and no process left that runs
+// with that configuration directory.
+func checkTelemetryOff(t *testing.T, out string) {
+	t.Helper()
+	telemetry := filepath.Join(out, "work", "config", "go", "telemetry")
+	if mode, err := os.ReadFile(filepath.Join(telemetry, "mode")); err != nil || strings.TrimSpace(string(mode)) != "off" {
+		t.Errorf("telemetry mode %q: %v", mode, err)
+	}
+	for _, dir := range []string{"local", "upload"} {
+		if _, err := os.Lstat(filepath.Join(telemetry, dir)); err == nil {
+			t.Errorf("telemetry wrote %s under <out>/work/config", dir)
+		}
+	}
+	if pids := lingering(t, "XDG_CONFIG_HOME="+filepath.Join(out, "work", "config")); len(pids) != 0 {
+		t.Errorf("processes still run with the adapter's configuration directory: %v", pids)
+	}
+}
+
+// lingering lists the processes of this user whose environment holds the variable, as /proc
+// shows them on Linux.
+func lingering(t *testing.T, variable string) []string {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatalf("this check reads /proc: %v", err)
+	}
+	var pids []string
+	for _, e := range entries {
+		environ, err := os.ReadFile(filepath.Join("/proc", e.Name(), "environ"))
+		if err != nil {
+			continue
+		}
+		for _, v := range bytes.Split(environ, []byte{0}) {
+			if string(v) == variable {
+				pids = append(pids, e.Name())
+			}
+		}
+	}
+	return pids
 }
 
 func TestEnvironmentGoSum(t *testing.T) {
@@ -406,8 +446,8 @@ func TestEnvironmentGit(t *testing.T) {
 	stale()
 	cmd := exec.Command(realGo(t), "list", "-e", "-test", "-deps", "-json", "./...")
 	cmd.Dir = root
-	cmd.Env = []string{"PATH=" + w.bin + ":/usr/bin:/bin", "HOME=" + w.home, "GOPROXY=off", "GOTOOLCHAIN=local", "GOWORK=off",
-		"GOMODCACHE=" + moduleCache(t), "GOCACHE=" + filepath.Join(w.dir, "control-cache"), "CGO_ENABLED=0"}
+	cmd.Env = isolated([]string{"PATH=" + w.bin + ":/usr/bin:/bin", "GOPROXY=off", "GOTOOLCHAIN=local", "GOWORK=off",
+		"GOCACHE=" + filepath.Join(w.dir, "control-cache"), "CGO_ENABLED=0"})
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("control go list: %v\n%s", err, out)
 	}
@@ -470,5 +510,71 @@ func TestEnvironmentVendor(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no external row for semver.IsValid")
+	}
+}
+
+// A module cache spelled through a link and `..` is the directory the link resolves to; the go
+// command, which joins paths lexically, would read the same spelling as a directory in the
+// root. Downloading into a cold cache must fill the resolved directory and leave the root as
+// it was.
+func TestEnvironmentLinkDotDot(t *testing.T) {
+	w := newWorld(t)
+	root := w.flow("go-flow")
+	outside := filepath.Join(w.dir, "outside", "deep")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link(t, outside, filepath.Join(root, "sub", "link"))
+	// Read lexically, the spelling names root/sub/cache, whose cache entry links out of the
+	// root, so the cache/download and cache/vcs beneath that reading pass the check too.
+	elsewhere := filepath.Join(w.dir, "elsewhere")
+	if err := os.Mkdir(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link(t, elsewhere, filepath.Join(root, "sub", "cache", "cache"))
+	spelled := filepath.Join(root, "sub", "link") + "/../cache"
+	resolved := filepath.Join(w.dir, "outside", "cache")
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				_ = os.Chmod(path, 0o755)
+			}
+			return nil
+		})
+	})
+	before := listing(t, root)
+	proxy := "file://" + filepath.Join(moduleCache(t), "cache", "download")
+	out, code, stderr := w.index(w.caller(map[string]string{"GOMODCACHE": spelled, "GOPROXY": proxy}), root)
+	if code != 0 || baseEntry(t, out).Status != "ok" {
+		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+	}
+	if after := listing(t, root); !reflect.DeepEqual(before, after) {
+		t.Errorf("the root changed:\n%v\n%v", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(resolved, "golang.org", "x", "mod@v0.43.0")); err != nil {
+		t.Errorf("the dependency is not in the resolved cache: %v", err)
+	}
+}
+
+// vendor/modules.txt turns vendor mode on only when it is a regular file.
+func TestVendorMarkerNotAFile(t *testing.T) {
+	w := newWorld(t)
+	w.recordingGo()
+	root := w.simple("m", nil)
+	if err := os.MkdirAll(filepath.Join(root, "vendor", "modules.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code, stderr := w.index(w.caller(nil), root)
+	if code != 0 || baseEntry(t, out).Status != "ok" {
+		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+	}
+	record := readRecord(t, w.gorec)
+	if len(record) < 2 {
+		t.Fatalf("record %+v", record)
+	}
+	for _, inv := range record[1:] {
+		if inv.vars["GOFLAGS"] != "-buildvcs=false -mod=readonly" {
+			t.Errorf("%v: GOFLAGS=%q", inv.args, inv.vars["GOFLAGS"])
+		}
 	}
 }

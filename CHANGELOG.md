@@ -15,14 +15,16 @@ change may break compatibility, and an entry here says so when it does.
 
 `gosanja-adapter-go`, a Go program in `adapters/go`, gives the base layer from `scip-go` and
 the syntax layer from `go/packages` and `go/types` for one Go module; it changes neither
-interface. It has no calls layer, so a snapshot of a Go module records the calls layer
-`absent` with a `missing-layer` gap. What such a snapshot holds that a reader should know,
-which [docs/adapters/go.md](docs/adapters/go.md) explains:
+interface. It has no calls layer, so a snapshot of a Go module made without `--layers`
+records the calls layer `absent` with a `missing-layer` gap, and one made with
+`--layers base,syntax` records it `not-requested`. What such a snapshot holds that a reader
+should know, which [docs/adapters/go.md](docs/adapters/go.md) explains:
 
 - `implements` rows in scip-go's two forms, type to interface and method to interface method;
   `T implements I` is also written when only `*T` has the methods;
 - `overlapping-bodies` gaps for the names of one multi-name declaration such as
-  `var A, B = f(), g()`, which scip-go gives one shared extent;
+  `var A, B = f(), g()`, which scip-go gives one shared extent; references inside it belong to
+  neither name;
 - no `call` node, and so no `open-call` gap, at a conversion or a builtin call;
 - `skipped-file` gaps of the base layer with the code `build-constraint` for the files the
   build context leaves out: the host's `GOOS` and `GOARCH`, cgo disabled, tests included.
@@ -30,7 +32,9 @@ which [docs/adapters/go.md](docs/adapters/go.md) explains:
 The adapter runs on Linux and macOS and fails on Windows with `platform-unsupported`. The gate
 now needs Go 1.27.3 and a module cache that holds the adapter's build list (`go mod download`
 in `adapters/go` once); `scripts/check.sh` checks the Go version and runs `gofmt -l`,
-`go vet`, `go test` and `go mod verify` offline. `fixtures/go-flow` gains `expected/`, the
+`go vet`, `go test` and `go mod verify` offline, with the module cache and `GOPATH` it reads
+once and none of the caller's other Go settings, so a `GOPRIVATE` or `GONOPROXY` cannot send
+the go command to the network. `fixtures/go-flow` gains `expected/`, the
 snapshot of the fixture through the Go adapter, which `fixtures/regenerate.sh` now rebuilds;
 it builds `gosanja-adapter-go` beside the engine, and a `GOSANJA_BIN` directory has to hold
 it too.

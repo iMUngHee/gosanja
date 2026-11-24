@@ -90,11 +90,12 @@ func run(ctx context.Context, cfg Config, out *Outcome) error {
 	if err != nil {
 		return fail("toolchain-missing", "%v", err)
 	}
-	if err := checkDestinations(cfg, values); err != nil {
+	values, err = checkDestinations(cfg, values)
+	if err != nil {
 		return err
 	}
-	_, vendorErr := os.Stat(filepath.Join(cfg.Root, "vendor", "modules.txt"))
-	out.Env = env.Child(cfg.Caller, values, work, vendorErr == nil)
+	marker, err := os.Stat(filepath.Join(cfg.Root, "vendor", "modules.txt"))
+	out.Env = env.Child(cfg.Caller, values, work, err == nil && marker.Mode().IsRegular())
 	goTool := env.Go(cfg.Caller)
 	scipGo := lookScipGo(cfg.Caller)
 
@@ -168,7 +169,7 @@ func index(ctx context.Context, cfg Config, out *Outcome, inv *Inventory, ignore
 	for _, i := range ignore {
 		ignored = append(ignored, i.Path)
 	}
-	constrained, missed, err := unnamed(cfg.Root, inv, ignored)
+	constrained, missed, err := unnamed(cfg.Root, inv, ignored, out.Tools[0].Version)
 	if err != nil {
 		return err
 	}
@@ -189,6 +190,24 @@ func index(ctx context.Context, cfg Config, out *Outcome, inv *Inventory, ignore
 	idx, err := scipindex.Read(output)
 	if err != nil {
 		return fail("index-unreadable", "%v", err)
+	}
+	// A document of a file outside the inventory's Go files, such as one the build context
+	// excludes, is no fact of this build and is dropped before the index is published.
+	var extra []string
+	for _, p := range idx.Paths() {
+		if _, ok := out.Reads[p]; !ok {
+			extra = append(extra, p)
+		}
+	}
+	if len(extra) > 0 {
+		fmt.Fprintf(cfg.Stderr, "dropped from the index, not a Go file of the build context: %s\n", strings.Join(extra, ", "))
+		admitted := func(p string) bool { _, ok := out.Reads[p]; return ok }
+		if err := scipindex.Keep(output, admitted); err != nil {
+			return err
+		}
+		if idx, err = scipindex.Read(output); err != nil {
+			return err
+		}
 	}
 	out.Index = idx
 	out.Documents = map[string]bool{}
@@ -231,39 +250,63 @@ func sortSkipped(s []contract.Skipped) []contract.Skipped {
 	return out
 }
 
-// checkDestinations refuses a write destination of the go tool that is the root or lies
-// beneath it, judged by file identity.
-func checkDestinations(cfg Config, v env.Values) error {
+// checkDestinations resolves GOPATH and GOMODCACHE, checks them and the directories the go
+// command writes beneath them, and returns the values with the resolved paths, which the
+// children then get. The go command joins these paths lexically, so a `link/..` in the value
+// as written could otherwise name a directory other than the one that was checked.
+func checkDestinations(cfg Config, v env.Values) (env.Values, error) {
 	root, err := os.Stat(cfg.Root)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var candidates []string
-	for _, entry := range filepath.SplitList(v["GOPATH"]) {
-		if entry != "" {
-			candidates = append(candidates, entry)
-		}
-	}
-	if first := env.FirstGOPATH(v["GOPATH"]); first != "" {
-		candidates = append(candidates, filepath.Join(first, "pkg", "sumdb"))
-	}
-	if cache := v["GOMODCACHE"]; cache != "" {
-		candidates = append(candidates, cache, filepath.Join(cache, "cache", "download"), filepath.Join(cache, "cache", "vcs"))
-	}
-	for _, c := range candidates {
-		resolved, err := paths.Resolve(c, cfg.Caller.Cwd)
+	check := func(path string) (string, error) {
+		resolved, err := paths.Resolve(path, cfg.Caller.Cwd)
 		if err != nil {
-			return fail("tool-home-unresolvable", "%v", err)
+			return "", fail("tool-home-unresolvable", "%v", err)
 		}
 		inside, err := paths.Within(root, resolved)
 		if err != nil {
-			return fail("tool-home-unresolvable", "%v", err)
+			return "", fail("tool-home-unresolvable", "%v", err)
 		}
 		if inside {
-			return fail("tool-home-inside-root", "%s lies in the root %s", c, cfg.Root)
+			return "", fail("tool-home-inside-root", "%s lies in the root %s", path, cfg.Root)
 		}
+		return resolved, nil
 	}
-	return nil
+	resolved := env.Values{}
+	for k, value := range v {
+		resolved[k] = value
+	}
+	var entries []string
+	for _, entry := range filepath.SplitList(v["GOPATH"]) {
+		if entry == "" {
+			continue
+		}
+		r, err := check(entry)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, r)
+	}
+	if len(entries) > 0 {
+		if _, err := check(filepath.Join(entries[0], "pkg", "sumdb")); err != nil {
+			return nil, err
+		}
+		resolved["GOPATH"] = strings.Join(entries, string(filepath.ListSeparator))
+	}
+	if cache := v["GOMODCACHE"]; cache != "" {
+		r, err := check(cache)
+		if err != nil {
+			return nil, err
+		}
+		for _, sub := range []string{"download", "vcs"} {
+			if _, err := check(filepath.Join(r, "cache", sub)); err != nil {
+				return nil, err
+			}
+		}
+		resolved["GOMODCACHE"] = r
+	}
+	return resolved, nil
 }
 
 func lookScipGo(c env.Caller) string {
@@ -311,7 +354,6 @@ func runIn(ctx context.Context, dir string, vars []string, tool string, args ...
 }
 
 func oneObject(b []byte) bool {
-	dec := json.NewDecoder(bytes.NewReader(b))
 	var v map[string]any
-	return dec.Decode(&v) == nil && !dec.More()
+	return env.DecodeObject(b, &v) == nil
 }

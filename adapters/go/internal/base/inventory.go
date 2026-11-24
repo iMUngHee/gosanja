@@ -33,9 +33,17 @@ type Package struct {
 // Main reports whether the package belongs to the main module.
 func (p Package) Main() bool { return p.Module != nil && p.Module.Main }
 
-// Project reports whether `./...` names the package: a main-module package that is not only a
-// dependency, such as a package imported from a directory an `ignore` directive names.
-func (p Package) Project() bool { return p.Main() && !p.DepOnly }
+// Project reports whether `./...` names the package as a source package.
+func (p Package) Project() bool {
+	return p.Main() && !p.DepOnly && !p.testRunner()
+}
+
+// go list names the synthetic runner's source _testmain.go or an absolute
+// build-cache path. A real package ending in .test has relative source names.
+func (p Package) testRunner() bool {
+	return strings.HasSuffix(p.ImportPath, ".test") && len(p.GoFiles) == 1 &&
+		(p.GoFiles[0] == "_testmain.go" || filepath.IsAbs(p.GoFiles[0]))
+}
 
 // Inventory is the decoded output of the inventory command.
 type Inventory struct {
@@ -82,7 +90,7 @@ func (inv *Inventory) moduleFiles(root string, lists func(Package) [][]string) [
 	seen := map[string]bool{}
 	var out []file
 	for _, p := range inv.Packages {
-		if !p.Project() || strings.HasSuffix(p.ImportPath, ".test") {
+		if !p.Project() {
 			continue
 		}
 		for _, list := range lists(p) {
@@ -116,6 +124,9 @@ func excluded(p Package) [][]string { return [][]string{p.IgnoredGoFiles, p.CgoF
 func (inv *Inventory) named() map[string]bool {
 	names := map[string]bool{}
 	for _, p := range inv.Packages {
+		if p.testRunner() {
+			continue
+		}
 		for _, list := range [][]string{p.GoFiles, p.TestGoFiles, p.XTestGoFiles, p.IgnoredGoFiles,
 			p.IgnoredOtherFiles, p.CgoFiles, p.InvalidGoFiles} {
 			for _, name := range list {
@@ -126,16 +137,17 @@ func (inv *Inventory) named() map[string]bool {
 	return names
 }
 
-// Owned maps each project package, by the import path go list prints for it (a test variant
-// included), to its module files relative to the root.
+// Owned maps each project package ID to its sources and invalid files.
+// GoFiles contains tests only in their compiling variant. InvalidGoFiles
+// keeps diagnostics for files Go could not read or parse with that package.
 func (inv *Inventory) Owned(root string) map[string][]string {
 	owned := map[string][]string{}
 	for _, p := range inv.Packages {
-		if !p.Project() || strings.HasSuffix(p.ImportPath, ".test") {
+		if !p.Project() {
 			continue
 		}
-		for _, list := range sources(p) {
-			for _, name := range list {
+		for _, members := range [][]string{p.GoFiles, p.InvalidGoFiles} {
+			for _, name := range members {
 				rel, err := filepath.Rel(root, filepath.Join(p.Dir, name))
 				if err == nil && !strings.HasPrefix(rel, "..") {
 					owned[p.ImportPath] = append(owned[p.ImportPath], filepath.ToSlash(rel))

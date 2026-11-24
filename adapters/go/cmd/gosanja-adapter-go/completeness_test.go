@@ -145,3 +145,48 @@ func TestDecoderAllocation(t *testing.T) {
 		}
 	}
 }
+
+// A document for a file the build context excludes is dropped before the index is published,
+// so the snapshot is the one without it.
+func TestExtraDocument(t *testing.T) {
+	idx := flowIndex(t)
+	idx.Documents = append(idx.Documents, &scip.Document{
+		RelativePath: "ignored.go", Language: "go",
+		PositionEncoding: scip.PositionEncoding_UTF8CodeUnitOffsetFromLineStart,
+		Occurrences: []*scip.Occurrence{{
+			Symbol:      "scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Ignored().",
+			SymbolRoles: int32(scip.SymbolRole_Definition), Range: []int32{4, 5, 12},
+		}},
+		Symbols: []*scip.SymbolInformation{{
+			Symbol: "scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Ignored().",
+			Kind:   scip.SymbolInformation_Function,
+		}},
+	})
+	w := newWorld(t)
+	root := w.flow("go-flow")
+	served := filepath.Join(w.dir, "extra.scip")
+	if err := os.WriteFile(served, marshal(t, idx), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.stub(served)
+	out, code, stderr := w.index(w.caller(nil), root)
+	if code != 0 || baseEntry(t, out).Status != "ok" {
+		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
+	}
+	published, err := scipindex.Read(filepath.Join(out, "index.scip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range published.Paths() {
+		if p == "ignored.go" {
+			t.Errorf("the published index has a document for ignored.go")
+		}
+	}
+	snap := filepath.Join(w.dir, "snapshot")
+	if code, output := w.engine("index", "--root", root, "--out", snap); code != 0 {
+		t.Fatalf("gosanja index exit %d: %s", code, output)
+	}
+	if differ := sameTree(t, snap, filepath.Join(repo(t), "fixtures", "go-flow", "expected")); len(differ) != 0 {
+		t.Errorf("the snapshot differs from fixtures/go-flow/expected in %v", differ)
+	}
+}

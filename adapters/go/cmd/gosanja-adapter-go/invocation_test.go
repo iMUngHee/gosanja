@@ -170,3 +170,11 @@ func caseAlias(t *testing.T, w *world, root string) (string, bool) {
 	}
 	return alias, true
 }
+
+func TestTrailingOptionWithoutValue(t *testing.T) {
+	w := newWorld(t)
+	code, stderr := w.run(w.caller(nil), runtime.GOOS, "index", "--root", w.dir, "--out")
+	if code != 2 || !strings.Contains(stderr, "--out needs a value") {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+}

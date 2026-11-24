@@ -86,11 +86,41 @@ func watch(t *testing.T, dirs ...string) func() []string {
 	}
 }
 
-// configDir is the caller's Go configuration directory, os.UserConfigDir()/go for the world's
-// home, created so that it can be watched.
-func configDir(t *testing.T, w *world) string {
+// liveHome is a caller's home with Go telemetry on, as a contributor's is. It is made outside
+// the test's temporary directory: a go command started with it leaves a detached telemetry
+// process that may still write there after the command exits, which would fail the removal of
+// a t.TempDir. At cleanup the home is removed once its telemetry directory has stopped
+// changing, and a failure to remove it is ignored.
+func liveHome(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(w.home, ".config", "go")
+	home, err := os.MkdirTemp("", "gosanja-live-home-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		telemetry := filepath.Join(home, ".config", "go", "telemetry")
+		last := ""
+		for range 30 {
+			if _, err := os.Stat(telemetry); err != nil {
+				break
+			}
+			time.Sleep(time.Second)
+			now := strings.Join(listing(t, telemetry), "\n")
+			if now == last {
+				break
+			}
+			last = now
+		}
+		_ = os.RemoveAll(home)
+	})
+	return home
+}
+
+// configDir is a home's Go configuration directory, os.UserConfigDir()/go on Linux, created
+// so that it can be watched.
+func configDir(t *testing.T, home string) string {
+	t.Helper()
+	dir := filepath.Join(home, ".config", "go")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -107,13 +137,14 @@ func TestLiveGolden(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(root, "expected")); err != nil {
 		t.Fatal(err)
 	}
-	config := configDir(t, w)
+	home := liveHome(t)
+	config := configDir(t, home)
 
 	// Control: a bare go command in the copy writes under the config directory.
 	stop := watch(t, root, config)
 	control := exec.Command(realGo(t), "env", "GOPROXY")
 	control.Dir = root
-	control.Env = []string{"PATH=" + w.bin + ":/usr/bin:/bin", "HOME=" + w.home}
+	control.Env = []string{"PATH=" + w.bin + ":/usr/bin:/bin", "HOME=" + home}
 	if out, err := control.CombinedOutput(); err != nil {
 		t.Fatalf("control go env: %v\n%s", err, out)
 	}
@@ -125,7 +156,7 @@ func TestLiveGolden(t *testing.T) {
 	before := listing(t, root)
 	stop = watch(t, root, config)
 	out := filepath.Join(w.dir, "snapshot")
-	code, output := w.engine("index", "--root", root, "--out", out)
+	code, output := w.engineWith(map[string]string{"HOME": home}, "index", "--root", root, "--out", out)
 	events := stop()
 	if code != 0 {
 		t.Fatalf("gosanja index exit %d: %s", code, output)
@@ -186,8 +217,8 @@ func TestLiveToolchainLine(t *testing.T) {
 	// Control: under GOTOOLCHAIN=auto, go env in the copy asks the proxy for that toolchain.
 	control := exec.Command(realGo(t), "env", "-json")
 	control.Dir = root
-	control.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + w.home, "GOTOOLCHAIN=auto", "GOPROXY=" + proxy.URL,
-		"GOMODCACHE=" + filepath.Join(w.dir, "control-cache"), "GOSUMDB=off"}
+	control.Env = append(isolated([]string{"PATH=/usr/bin:/bin"}), "GOTOOLCHAIN=auto", "GOPROXY="+proxy.URL,
+		"GOMODCACHE="+filepath.Join(w.dir, "control-cache"), "GOSUMDB=off")
 	_, _ = control.CombinedOutput()
 	if proxy.count() == 0 {
 		t.Fatal("control: go env -json under GOTOOLCHAIN=auto did not reach the listener")

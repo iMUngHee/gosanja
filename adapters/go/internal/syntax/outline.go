@@ -108,16 +108,16 @@ func (w *outline) describe(n ast.Node) contract.OutlineNode {
 		if w.info == nil {
 			return node
 		}
-		callee := calleeName(n.Fun, w.info)
 		typed := w.info.Types[n.Fun]
 		if typed.IsType() {
 			return contract.OutlineNode{}
 		}
+		if _, builtin := w.info.Uses[writtenName(ast.Unparen(n.Fun))].(*types.Builtin); builtin {
+			return contract.OutlineNode{}
+		}
+		callee := calleeName(n.Fun, w.info)
 		if callee == nil {
 			return node
-		}
-		if _, builtin := w.info.Uses[callee].(*types.Builtin); builtin {
-			return contract.OutlineNode{}
 		}
 		if typed.Type != nil {
 			_, signature := typed.Type.Underlying().(*types.Signature)

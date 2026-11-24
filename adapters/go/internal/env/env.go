@@ -91,10 +91,22 @@ func (w Work) Config() string { return filepath.Join(w.Dir, "config") }
 func (w Work) Cache() string  { return filepath.Join(w.Dir, "cache") }
 func (w Work) Tmp() string    { return filepath.Join(w.Dir, "tmp") }
 
-// Create makes the directories.
+// Create makes the directories, with Go telemetry off in the configuration directory the Go
+// processes see (XDG_CONFIG_HOME on Linux, the home's Library on Darwin). Telemetry left on
+// starts a detached process that can outlive the adapter and still write under the output
+// directory.
 func (w Work) Create() error {
 	for _, dir := range []string{w.Home(), w.Config(), w.Cache(), w.Tmp()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	for _, config := range []string{w.Config(), filepath.Join(w.Home(), "Library", "Application Support")} {
+		mode := filepath.Join(config, "go", "telemetry", "mode")
+		if err := os.MkdirAll(filepath.Dir(mode), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(mode, []byte("off\n"), 0o644); err != nil {
 			return err
 		}
 	}
@@ -146,9 +158,8 @@ func Bootstrap(ctx context.Context, c Caller, w Work) (Values, error) {
 		return nil, fmt.Errorf("%w: %v: %s", ErrBootstrap, err, strings.TrimSpace(stderr.String()))
 	}
 	var got map[string]string
-	dec := json.NewDecoder(&stdout)
-	if err := dec.Decode(&got); err != nil || dec.More() {
-		return nil, fmt.Errorf("%w: its output is not one JSON object", ErrBootstrap)
+	if err := DecodeObject(stdout.Bytes(), &got); err != nil {
+		return nil, fmt.Errorf("%w: its output is not one JSON object: %v", ErrBootstrap, err)
 	}
 	if len(got) != len(Settings) {
 		return nil, fmt.Errorf("%w: it answered %d settings", ErrBootstrap, len(got))
@@ -169,6 +180,24 @@ func Bootstrap(ctx context.Context, c Caller, w Work) (Values, error) {
 		}
 	}
 	return Values(got), nil
+}
+
+// DecodeObject decodes data, the output of a go command's -json flag, into v when it is exactly
+// one JSON object with nothing but white space around it: not null, not another value, and
+// nothing after the object.
+func DecodeObject(data []byte, v any) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return errors.New("not a JSON object")
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if dec.InputOffset() != int64(len(trimmed)) {
+		return errors.New("data after the JSON object")
+	}
+	return nil
 }
 
 // FirstGOPATH is the entry of a GOPATH list the go tool writes under.

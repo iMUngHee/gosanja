@@ -36,6 +36,31 @@ func Decode(data []byte) (*Index, error) {
 	return &Index{Documents: index.Documents}, nil
 }
 
+// Keep rewrites the index file at path with only the documents whose path keep accepts,
+// keeping its metadata and external symbols.
+func Keep(path string, keep func(string) bool) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var index scip.Index
+	if err := proto.Unmarshal(data, &index); err != nil {
+		return fmt.Errorf("not a SCIP index: %w", err)
+	}
+	var kept []*scip.Document
+	for _, d := range index.Documents {
+		if keep(d.RelativePath) {
+			kept = append(kept, d)
+		}
+	}
+	index.Documents = kept
+	out, err := proto.MarshalOptions{Deterministic: true}.Marshal(&index)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
 // Paths lists the documents' relative paths, sorted, each once.
 func (x *Index) Paths() []string {
 	seen := map[string]bool{}
