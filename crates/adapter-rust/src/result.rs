@@ -38,7 +38,7 @@ impl Problem {
         }
     }
 }
-fn failed(code: &str) -> LayerResult {
+pub fn failed(code: &str) -> LayerResult {
     LayerResult {
         status: LayerStatus::Failed,
         diagnostics: Some(vec![Diagnostic {
@@ -48,47 +48,52 @@ fn failed(code: &str) -> LayerResult {
         skipped: None,
     }
 }
-/// What each layer gave.
+/// What the requested layers gave.
 pub struct Layers {
-    /// The syntax layer's entry, or why the base layer failed.
-    pub syntax: Result<LayerResult, Problem>,
-    pub calls: Outcome,
+    pub base: Result<(), Problem>,
+    pub syntax: Option<LayerResult>,
+    pub calls: Option<Outcome>,
 }
 
 pub fn publish(out: &Path, layers: Layers, mut tools: Vec<Tool>) -> io::Result<()> {
-    let Layers { syntax, calls } = layers;
-    if let Some(version) = calls.rustc {
-        tools.push(Tool {
-            name: "rustc".into(),
-            version,
-        });
-    }
-    let (base, syntax) = match syntax {
-        Ok(layer) => (
-            LayerResult {
-                status: LayerStatus::Ok,
-                diagnostics: None,
-                skipped: None,
-            },
-            layer,
-        ),
+    let Layers {
+        base,
+        syntax,
+        calls,
+    } = layers;
+    let base = match base {
+        Ok(()) => LayerResult {
+            status: LayerStatus::Ok,
+            diagnostics: None,
+            skipped: None,
+        },
         Err(p) => {
             eprintln!("{}", p.code);
             if !p.detail.is_empty() {
                 eprintln!("{}", p.detail);
             }
-            (failed(p.code), failed("base-failed"))
+            failed(p.code)
         }
     };
+    let mut entries = BTreeMap::from([("base".into(), base)]);
+    if let Some(syntax) = syntax {
+        entries.insert("syntax".into(), syntax);
+    }
+    let builds = calls.and_then(|calls| {
+        if let Some(version) = calls.rustc {
+            tools.push(Tool {
+                name: "rustc".into(),
+                version,
+            });
+        }
+        entries.insert("calls".into(), calls.layer);
+        calls.builds
+    });
     let result = AdapterResult {
         contract: CONTRACT_VERSION.to_string(),
-        layers: BTreeMap::from([
-            ("base".into(), base),
-            ("calls".into(), calls.layer),
-            ("syntax".into(), syntax),
-        ]),
+        layers: entries,
         tools: (!tools.is_empty()).then_some(tools),
-        builds: calls.builds,
+        builds,
     };
     serde_json::to_writer(File::create(out.join(RESULT_FILE))?, &result)?;
     Ok(())

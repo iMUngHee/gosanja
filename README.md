@@ -22,7 +22,7 @@ installed adapter, and writes a snapshot; it compares two snapshots and writes w
 between them. A Rust adapter gives the base graph, syntactic facts and compiler-backed call
 evidence: calls that a build of the project emitted and that a reference in the source on the
 same line corroborates. Adapters for Go and TypeScript are planned and not yet here. The
-snapshot and the adapter contract are at version 0.2 and the diff at 0.1, and all three may
+snapshot and the adapter contract are at version 0.3 and the diff at 0.2, and all three may
 change.
 
 ## Try it
@@ -36,6 +36,17 @@ cargo run -p gosanja -- validate /tmp/gosanja-demo --root fixtures/rust-basic
 The output directory holds seven files, described in [spec/snapshot.md](spec/snapshot.md). To
 index your own project, produce a SCIP index for it first, for example with
 `rust-analyzer scip .`, and pass it the same way. The output path must be outside the project.
+
+With the Rust adapter installed (see [docs/adapters/rust.md](docs/adapters/rust.md)), the
+engine runs it on a Cargo workspace itself. To leave out the calls layer and the build it
+needs:
+
+```sh
+gosanja index --root <workspace> --out <dir> --layers base,syntax
+```
+
+The snapshot then records the calls layer as not requested; [docs/adapters.md](docs/adapters.md)
+says what the option does and does not change.
 
 To compare two snapshots of one project:
 

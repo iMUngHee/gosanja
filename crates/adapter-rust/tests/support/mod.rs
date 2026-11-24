@@ -15,7 +15,10 @@ pub struct Case {
     pub out: PathBuf,
     pub bin: PathBuf,
 }
+/// Copies a tree and leaves every copied file writable by its owner, since `fs::copy` keeps
+/// the source's mode and a test run from a read-only checkout still edits its copies.
 pub fn copy_tree(src: &Path, dest: &Path) {
+    use std::os::unix::fs::PermissionsExt;
     fs::create_dir(dest).unwrap();
     for entry in fs::read_dir(src).unwrap() {
         let e = entry.unwrap();
@@ -23,7 +26,9 @@ pub fn copy_tree(src: &Path, dest: &Path) {
         if e.file_type().unwrap().is_dir() {
             copy_tree(&e.path(), &to);
         } else {
-            fs::copy(e.path(), to).unwrap();
+            fs::copy(e.path(), &to).unwrap();
+            let mode = fs::metadata(&to).unwrap().permissions().mode();
+            fs::set_permissions(&to, fs::Permissions::from_mode(mode | 0o200)).unwrap();
         }
     }
 }

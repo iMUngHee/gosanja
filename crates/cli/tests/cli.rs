@@ -108,7 +108,7 @@ fn corrupted_goldens_fail_validation_with_a_named_diagnostic() {
         (
             "major",
             "manifest.json",
-            Box::new(|t| t.replace(r#""schema":"0.2""#, r#""schema":"7.0""#)),
+            Box::new(|t| t.replace(r#""schema":"0.3""#, r#""schema":"7.0""#)),
             2,
             "7.0",
         ),
@@ -146,7 +146,7 @@ fn corrupted_goldens_fail_validation_with_a_named_diagnostic() {
 #[test]
 fn another_unstable_minor_is_refused() {
     let dir = corrupted("minor", "manifest.json", |t| {
-        t.replace(r#""schema":"0.2""#, r#""schema":"0.1""#)
+        t.replace(r#""schema":"0.3""#, r#""schema":"0.1""#)
     });
     let output = gosanja(&[&"validate", &dir]);
     assert_eq!(code(&output), 2, "{}", stderr(&output));
@@ -210,7 +210,7 @@ fn usage_errors_exit_2_and_input_failures_exit_3() {
 #[test]
 fn the_version_is_checked_before_any_table_is_read() {
     let dir = corrupted("order", "manifest.json", |t| {
-        t.replace(r#""schema":"0.2""#, r#""schema":"0.1""#)
+        t.replace(r#""schema":"0.3""#, r#""schema":"0.1""#)
     });
     fs::remove_file(dir.join("relations.jsonl")).expect("remove");
     fs::create_dir(dir.join("relations.jsonl")).expect("a directory in its place");
@@ -245,7 +245,7 @@ fn rows_are_checked_against_the_normative_schemas() {
 #[test]
 fn the_version_is_refused_before_the_root_is_resolved() {
     let dir = corrupted("root-order", "manifest.json", |t| {
-        t.replace(r#""schema":"0.2""#, r#""schema":"0.1""#)
+        t.replace(r#""schema":"0.3""#, r#""schema":"0.1""#)
     });
     let output = gosanja(&[&"validate", &dir, &"--root", &scratch("no-such-root")]);
     assert_eq!(code(&output), 2, "{}", stderr(&output));
@@ -266,7 +266,7 @@ fn fifo(path: &Path) {
 #[test]
 fn a_refused_version_is_decided_without_opening_any_table() {
     let dir = corrupted("manifest-only", "manifest.json", |t| {
-        t.replace(r#""schema":"0.2""#, r#""schema":"0.1""#)
+        t.replace(r#""schema":"0.3""#, r#""schema":"0.1""#)
     });
     for table in [
         "files",
@@ -317,4 +317,18 @@ fn the_project_is_named_after_its_root() {
         manifest.contains(r#""project":{"name":"rust-basic"}"#),
         "{manifest}"
     );
+}
+
+#[test]
+fn validate_refuses_frozen_public_snapshots() {
+    for version in ["v0.20.0", "v0.21.0"] {
+        let frozen = repo("fixtures/diff-public").join(version);
+        let output = gosanja(&[&"validate", &frozen]);
+        assert_eq!(code(&output), 2, "{}", stderr(&output));
+        let message = stderr(&output);
+        assert!(
+            message.contains("0.2") && message.contains("0.3"),
+            "{message}"
+        );
+    }
 }

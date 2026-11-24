@@ -159,10 +159,15 @@ fn compare_rows(
     let (old, old_scope) = side(old_snapshot)?;
     let (new, new_scope) = side(new_snapshot)?;
     let present = |state| state == LayerState::Present;
+    let not_comparable = |old, new| {
+        old == LayerState::NotRequested
+            || new == LayerState::NotRequested
+            || present(old) != present(new)
+    };
     let mut excluded = Vec::new();
     let old_calls = present(old_scope.layers.calls);
     let new_calls = present(new_scope.layers.calls);
-    if old_calls != new_calls
+    if not_comparable(old_scope.layers.calls, new_scope.layers.calls)
         || (old_calls
             && new_calls
             && (!old_scope
@@ -176,7 +181,7 @@ fn compare_rows(
     {
         excluded.push(Excluded::Calls);
     }
-    if present(old_scope.layers.syntax) != present(new_scope.layers.syntax) {
+    if not_comparable(old_scope.layers.syntax, new_scope.layers.syntax) {
         excluded.push(Excluded::Syntax);
     }
     let pairs = pair::pairs(old_snapshot, new_snapshot, old_symbols, new_symbols);

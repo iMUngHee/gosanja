@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use gosanja_schema::compat::{self, Version};
 use gosanja_schema::contract::{
     AdapterManifest, AdapterResult, Anchor, CONTRACT_VERSION, CallEvidence, CallSite, Diagnostic,
     LayerName, LayerResult, LayerStatus, Requirement, SkippedFile, SyntaxFact,
@@ -177,7 +178,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
 
     let manifest = Manifest {
         format: FORMAT.into(),
-        schema: "0.2".into(),
+        schema: "0.3".into(),
         tool: Tool {
             name: "gosanja".into(),
             version: "0.1.0".into(),
@@ -190,7 +191,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
             adapter: Some(AdapterInfo {
                 name: "fake".into(),
                 version: "0.0.1".into(),
-                contract: "0.2".into(),
+                contract: "0.3".into(),
             }),
             indexers: vec![Tool {
                 name: "rust-analyzer".into(),
@@ -436,10 +437,82 @@ fn every_gap_kind_passes_its_schema() {
 }
 
 #[test]
-fn both_interfaces_are_at_0_2() {
-    assert_eq!(CONTRACT_VERSION.to_string(), "0.2");
-    assert_eq!(SCHEMA_VERSION.to_string(), "0.2");
+fn the_interfaces_are_at_their_current_versions() {
+    assert_eq!(CONTRACT_VERSION.to_string(), "0.3");
+    assert_eq!(SCHEMA_VERSION.to_string(), "0.3");
+    assert_eq!(
+        gosanja_schema::diff::SCHEMA_VERSION.to_string(),
+        DIFF_SCHEMA
+    );
+    assert_eq!(DIFF_SCHEMA, "0.2");
     assert_eq!(to_value(&GapKind::SkippedFile), json!("skipped-file"));
+    assert_eq!(to_value(&LayerState::NotRequested), json!("not-requested"));
+}
+
+#[test]
+fn only_optional_layers_may_be_not_requested() {
+    let schemas = Schemas::load();
+    let layers = |base: &str, syntax: &str, calls: &str| json!({"base": base, "syntax": syntax, "calls": calls});
+    let snapshot = |layers: Value| {
+        json!({
+            "format": FORMAT,
+            "schema": SCHEMA_VERSION.to_string(),
+            "tool": {"name": "gosanja", "version": "0.2.0"},
+            "project": {"name": "demo"},
+            "scopes": [{"path": ".", "indexers": [], "layers": layers, "builds": []}],
+            "counts": {"files": 0, "entities": 0, "externals": 0, "relations": 0,
+                       "syntax": 0, "gaps": 0, "dropped_local_references": 0}
+        })
+    };
+    let side = |layers: Value| {
+        json!({
+            "schema": SCHEMA_VERSION.to_string(),
+            "project": {"name": "demo"},
+            "layers": layers,
+            "builds": [],
+            "counts": {"files": 0, "entities": 0, "externals": 0, "relations": 0,
+                       "syntax": 0, "gaps": 0, "dropped_local_references": 0},
+            "gaps": {}
+        })
+    };
+    let diff = |old: Value| {
+        let present = layers("present", "present", "present");
+        json!({
+            "format": DIFF_FORMAT,
+            "schema": DIFF_SCHEMA,
+            "tool": {"name": "gosanja", "version": "0.2.0"},
+            "weights": {"name": 30, "file": 18, "parents": 18, "size": 12,
+                        "outgoing": 13, "incoming": 9, "threshold": 500_000},
+            "old": side(old),
+            "new": side(present),
+            "counts": {"entities": {"added": 0, "removed": 0, "changed": 0, "rekeyed": 0},
+                       "externals": {"added": 0, "removed": 0, "rekeyed": 0},
+                       "relations": {"added": 0, "removed": 0},
+                       "candidates": 0},
+            "packages_added": [],
+            "packages_removed": [],
+            "not_compared": []
+        })
+    };
+    let accepted = [
+        layers("present", "not-requested", "present"),
+        layers("present", "present", "not-requested"),
+        layers("present", "not-requested", "not-requested"),
+        layers("failed", "not-requested", "absent"),
+    ];
+    let refused = [
+        layers("not-requested", "present", "present"),
+        layers("present", "skipped", "present"),
+        layers("present", "present", "requested"),
+    ];
+    for l in accepted {
+        schemas.assert_valid("snapshot-manifest", &snapshot(l.clone()));
+        schemas.assert_valid("diff-manifest", &diff(l));
+    }
+    for l in refused {
+        schemas.assert_invalid("snapshot-manifest", &snapshot(l.clone()));
+        schemas.assert_invalid("diff-manifest", &diff(l));
+    }
 }
 
 #[test]
@@ -447,7 +520,7 @@ fn every_adapter_file_type_passes_its_schema() {
     let schemas = Schemas::load();
 
     let manifest = AdapterManifest {
-        contract: "0.2".into(),
+        contract: "0.3".into(),
         name: "fake".into(),
         version: "0.0.1".into(),
         languages: vec!["rust".into()],
@@ -462,7 +535,7 @@ fn every_adapter_file_type_passes_its_schema() {
     schemas.assert_valid("adapter-manifest", &to_value(&manifest));
 
     let result = AdapterResult {
-        contract: "0.2".into(),
+        contract: "0.3".into(),
         layers: BTreeMap::from([
             (
                 "base".to_owned(),
@@ -494,7 +567,7 @@ fn every_adapter_file_type_passes_its_schema() {
         }]),
     };
     schemas.assert_valid("adapter-result", &to_value(&result));
-    schemas.assert_valid("adapter-result", &json!({"contract": "0.2", "layers": {}}));
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.3", "layers": {}}));
 
     let fact = SyntaxFact {
         anchor: anchor(Some(7), None),
@@ -577,21 +650,21 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
         &json!({"key": "cargo:d:f().", "name": "f", "group": true, "src": "core:identity"}),
     );
     // No path can enter a snapshot through a build context.
-    schemas.assert_invalid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "toolchain": "/home/dev/rustc"}]}));
-    schemas.assert_valid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "cwd": "ignored, not copied"}]}));
+    schemas.assert_invalid("adapter-result", &json!({"contract": "0.3", "layers": {}, "builds": [{"id": "release", "toolchain": "/home/dev/rustc"}]}));
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.3", "layers": {}, "builds": [{"id": "release", "cwd": "ignored, not copied"}]}));
     // A qualified feature name is not a path; an absolute path is refused in any spelling.
-    schemas.assert_valid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "features": ["ascii/std", "derive"]}]}));
+    schemas.assert_valid("adapter-result", &json!({"contract": "0.3", "layers": {}, "builds": [{"id": "release", "features": ["ascii/std", "derive"]}]}));
     for absolute in [
         "/abs/feature",
         "~/feature",
         "C:\\feature",
         "\\\\host\\share",
     ] {
-        schemas.assert_invalid("adapter-result", &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "release", "features": [absolute]}]}));
+        schemas.assert_invalid("adapter-result", &json!({"contract": "0.3", "layers": {}, "builds": [{"id": "release", "features": [absolute]}]}));
     }
     schemas.assert_invalid(
         "adapter-result",
-        &json!({"contract": "0.2", "layers": {}, "builds": [{"id": "a/b"}]}),
+        &json!({"contract": "0.3", "layers": {}, "builds": [{"id": "a/b"}]}),
     );
     // A group row carries no kind.
     schemas.assert_invalid("entity", &json!({"key": "cargo:d:f().", "symbol": "s cargo d 1 f().", "name": "f", "group": true, "kind": "rust:function", "src": "core:identity"}));
@@ -626,7 +699,7 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
         &json!({"anchor": {"file": "a.rs", "line": 1, "col": 0}, "body": [1, 2, 3]}),
     );
     // A diagnostic code is a short identifier, not a sentence.
-    schemas.assert_invalid("adapter-result", &json!({"contract": "0.2", "layers": {"base": {"status": "failed", "diagnostics": [{"code": "Could not run"}]}}}));
+    schemas.assert_invalid("adapter-result", &json!({"contract": "0.3", "layers": {"base": {"status": "failed", "diagnostics": [{"code": "Could not run"}]}}}));
     // A version is two integers.
     schemas.assert_invalid("adapter-manifest", &json!({"contract": "0.1.0", "name": "x", "version": "1", "languages": ["go"], "position_encoding": "utf-8", "layers": ["base"]}));
 }
@@ -634,7 +707,7 @@ fn unknown_fields_pass_and_forbidden_shapes_fail() {
 #[test]
 fn markers_are_portable_file_names() {
     let schemas = Schemas::load();
-    let manifest = json!({"contract": "0.2", "name": "x", "version": "1", "languages": ["rust"], "position_encoding": "utf-8", "layers": ["base"]});
+    let manifest = json!({"contract": "0.3", "name": "x", "version": "1", "languages": ["rust"], "position_encoding": "utf-8", "layers": ["base"]});
     schemas.assert_valid("adapter-manifest", &manifest);
     let mut with = manifest.clone();
     with["markers"] = json!(["Cargo.toml", "go.mod", ".tool-versions", "a_b-c.1"]);
@@ -655,7 +728,7 @@ fn every_layer_may_list_skipped_files() {
     let schemas = Schemas::load();
     let entry = |skipped: Value| json!({"status": "ok", "skipped": skipped});
     for layer in ["base", "syntax", "calls"] {
-        let result = |skipped: Value| json!({"contract": "0.2", "layers": {layer: entry(skipped)}});
+        let result = |skipped: Value| json!({"contract": "0.3", "layers": {layer: entry(skipped)}});
         schemas.assert_valid("adapter-result", &result(json!([])));
         schemas.assert_valid(
             "adapter-result",
@@ -674,7 +747,7 @@ fn every_layer_may_list_skipped_files() {
         // A failed layer's entry is checked too.
         schemas.assert_invalid(
             "adapter-result",
-            &json!({"contract": "0.2", "layers": {layer: {"status": "failed", "skipped": [{"file": "/a.rs", "code": "x"}]}}}),
+            &json!({"contract": "0.3", "layers": {layer: {"status": "failed", "skipped": [{"file": "/a.rs", "code": "x"}]}}}),
         );
     }
 }
@@ -760,7 +833,7 @@ fn only_a_call_node_names_a_callee_and_it_may_omit_it() {
 
 /// The marker and the schema version of a diff, as `spec/diff.md` states them.
 const DIFF_FORMAT: &str = "gosanja-diff";
-const DIFF_SCHEMA: &str = "0.1";
+const DIFF_SCHEMA: &str = "0.2";
 
 /// What a directory with a `manifest.json` holds, told by the manifest's `format`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -846,6 +919,7 @@ fn output_directories() -> Vec<(PathBuf, Output)> {
 fn outputs_in_the_repository_pass_the_schemas() {
     let schemas = Schemas::load();
     let directories = output_directories();
+    let root = repository();
     for (expected, kind) in [
         ("spec/examples/rust-basic", Output::Snapshot),
         ("spec/examples/diff-basic", Output::Diff),
@@ -870,12 +944,24 @@ fn outputs_in_the_repository_pass_the_schemas() {
             if *name == "manifest.json" {
                 let manifest: Value = serde_json::from_str(&text).expect("manifest is JSON");
                 schemas.assert_valid(schema, &manifest);
-                assert_eq!(
-                    manifest["schema"],
-                    json!(kind.schema()),
-                    "{} is stamped with the current schema",
-                    path.display()
-                );
+                if directory.starts_with(root.join("fixtures/diff-public")) {
+                    // Frozen inputs keep the schema they were measured at, which the
+                    // reader of the current minor refuses.
+                    assert_eq!(manifest["schema"], json!("0.2"), "{}", path.display());
+                    let stamped: Version = "0.2".parse().expect("a version");
+                    assert!(
+                        compat::accept(SCHEMA_VERSION, stamped).is_err(),
+                        "{} must be refused by the current reader",
+                        path.display()
+                    );
+                } else {
+                    assert_eq!(
+                        manifest["schema"],
+                        json!(kind.schema()),
+                        "{} is stamped with the current schema",
+                        path.display()
+                    );
+                }
                 continue;
             }
             // One validator per file: the public pair holds thousands of rows.

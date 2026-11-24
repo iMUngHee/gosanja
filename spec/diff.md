@@ -1,4 +1,4 @@
-# Diff, schema 0.1
+# Diff, schema 0.2
 
 A row of a diff says that one snapshot holds a statement and the other does not. It never says
 that the code changed. A snapshot that observed less, because a file was skipped, an anchor did
@@ -7,7 +7,7 @@ say so; the diff shows the same absence a reader of the two snapshots would see.
 gives each side's gap counts per kind and its layer states, so that a reader can weigh a row.
 
 A diff is what `gosanja diff <old> <new>` writes: the differences between two snapshots of one
-project, schema 0.2 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
+project, schema 0.3 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
 two inputs always produce the same bytes.
 
 | File | Holds | Schema |
@@ -49,7 +49,9 @@ Every file is always present. The conventions for paths, ranges and versions are
 Each input is a snapshot directory. It is read under the reader rules of
 [README.md](README.md) and checked with the validator without sources. A snapshot of another
 schema version, one with no scope or several, or one with any diagnostic is refused before
-anything is written.
+anything is written. That includes the snapshots kept frozen in `fixtures/diff-public`, which
+stay at schema 0.2, the schema they were measured at: a reader of 0.3 refuses them, and only
+scratch copies whose `schema` is re-stamped are compared in the repository's tests.
 
 ## Identity across the two snapshots
 
@@ -92,7 +94,7 @@ An unpaired row never equals a row of the other side that has the same key text.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-diff"` | marks the directory as a diff; see Publication |
-| `schema` | version | diff schema version, `0.1` |
+| `schema` | version | diff schema version, `0.2` |
 | `tool` | `{name, version}` | the engine that wrote the diff |
 | `weights` | object | the weights and the threshold of candidates, below |
 | `old` | side | the old snapshot |
@@ -266,18 +268,51 @@ candidates.
 
 ## What is not compared
 
-Two comparisons are not made at all, because they would compare a layer with nothing. Each adds
-its word to `not_compared`:
+Two comparisons can be left out: one that would compare a layer with nothing or with a layer
+that was not asked for, and, for calls, one between different builds. Whether `syntax` and
+`calls` are each compared follows from the layer's state on the two sides:
 
-- `syntax`: the syntax layer is `present` on one side only. Syntax properties, and relations
-  whose `src` is the syntax layer, are not compared.
-- `calls`: the calls layer is `present` on one side only, or it is `present` on both and their
-  build contexts are not equal as sets of whole rows. Relations whose `src` is the calls layer
-  are not compared, because call evidence holds for a build. When the calls layer is present on
-  neither side, the build contexts are not looked at.
+| Old state | New state | Compared |
+| --- | --- | --- |
+| `present` | `present` | yes; for `calls`, only when the two sides' build contexts are equal as sets of whole rows |
+| `not-requested` | any | no |
+| any | `not-requested` | no |
+| `present` | `absent` or `failed` | no |
+| `absent` or `failed` | `present` | no |
+| `absent` or `failed` | `absent` or `failed` | yes: there is nothing to compare, and the word is not added |
 
-What is not compared is also left out of the candidate features and of the packages. Gaps
-themselves are not diffed. Their counts per kind are in the manifest.
+A comparison left out adds its word to `not_compared`. Call evidence holds for a build, so
+when the calls layer is `present` on both sides, calls are compared only between equal build
+contexts; in every other pair the build contexts are not looked at. A reader can tell from the two sides'
+`layers` in the manifest which row of the table applied.
+
+What a comparison left out covers:
+
+- `syntax`: syntax properties, and relations whose `src` is the syntax layer;
+- `calls`: relations whose `src` is the calls layer.
+
+The same relations are left out of the candidates' relation features and of the packages.
+Gaps themselves are not diffed. Their counts per kind are in the manifest.
+
+One effect of the syntax layer lies outside this rule. Where the index gives a definition no
+extent, an adapter's syntax layer can supply its body, and bodies decide which definition owns
+a reference (`core:reference-in-body` relations, see [snapshot.md](snapshot.md)). Those
+relations come from the base layer and are compared whatever the state of the syntax layer.
+Two snapshots of one project, one with such a syntax layer and one without it, whether it was
+not requested, absent or failed, can therefore differ although the code did not change:
+
+- a reference can have another owner, or none: where the syntax layer supplied the only body
+  that holds it, the reference is left unattributed (an `unattributed-references` gap) and its
+  relation is missing, with its part in the candidates' `outgoing` and `incoming` features and
+  in the packages;
+- where a body of the syntax layer crossed one of the index, both were set aside as
+  `overlapping-bodies`; without the syntax layer that overlap is gone, so the index's body can
+  own references again, references outside the omitted body included, unless another overlap
+  sets it aside or an inner body owns them;
+- a candidate's `size` is 0 when either definition lacks a body, so a missing body can change
+  a score or drop it below the threshold, whatever the relation features.
+
+A reader comparing snapshots made with different layer selections should expect these rows.
 
 ## Publication
 

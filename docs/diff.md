@@ -17,7 +17,7 @@ gosanja diff <old> <new> --out <dir>
 ```
 
 `<old>` and `<new>` are snapshot directories, as `gosanja index` writes them. Both must be of
-the engine's snapshot schema (0.2), each with exactly one scope, and each must pass
+the engine's snapshot schema (0.3), each with exactly one scope, and each must pass
 `gosanja validate`; the diff checks this itself, without the sources, before it writes
 anything.
 
@@ -81,17 +81,52 @@ alone. Check a candidate against the code before you rely on it.
 
 ## What is not compared
 
-`not_compared` in the manifest lists the comparisons the diff did not make, because one side
-had nothing to compare with:
+`not_compared` in the manifest lists the comparisons the diff did not make. Whether the syntax
+layer and the calls layer are each compared follows from their states on the two sides, which
+the manifest also gives:
 
-- `syntax`: the syntax layer is present on one side only. Syntax properties (visibility,
-  qualifiers, attributes, outline) and the calls the syntax layer declared are not compared.
-- `calls`: the calls layer is present on one side only, or it is present on both and the two
-  sides were built with different build contexts. Calls from that layer are not compared. When
-  neither side has the calls layer, the build contexts do not matter.
+| Old side | New side | Compared |
+| --- | --- | --- |
+| `present` | `present` | yes; for calls, only when both sides were built with the same build contexts |
+| `not-requested` | any | no |
+| any | `not-requested` | no |
+| `present` | `absent` or `failed`, or the reverse | no |
+| `absent` or `failed` | `absent` or `failed` | yes, with nothing to compare; the word is not listed |
+
+A layer that one side did not ask for (`gosanja index --layers`, see
+[adapters.md](adapters.md#choosing-layers)) is therefore left out even when the other side has
+it. What a comparison left out covers:
+
+- `syntax`: syntax properties (visibility, qualifiers, attributes, outline) and the calls the
+  syntax layer declared;
+- `calls`: the calls from that layer.
 
 A comparison that is listed there produced no rows, so the absence of such rows says nothing.
-What is not compared is also left out of the candidates and of the package lists.
+The same relations are also left out of the candidates' `outgoing` and `incoming` features and
+of the package lists.
+
+### Snapshots made with and without the syntax layer
+
+One effect is not covered by `not_compared`. Where the index gives a definition no extent, an
+adapter's syntax layer can supply its body, and bodies decide which definition owns a
+reference. Those references come from the base layer and are compared whatever the state of
+the syntax layer, so two snapshots of unchanged code, one with such a syntax layer and one
+without it (not requested, absent or failed), can differ:
+
+- a reference can belong to another definition, or to none: where the syntax layer supplied
+  the only body that holds it, the snapshot without it records the reference as unattributed
+  (an `unattributed-references` gap), and its relation is gone from the rows, from the
+  candidates' `outgoing` and `incoming` features and from the package lists;
+- a syntax body that crossed a body of the index set both aside (`overlapping-bodies`);
+  without it the index's body can own references again, unless another overlap or an inner
+  body takes them;
+- a candidate's `size` is 0 when either definition has no body, so a missing body can change a
+  score or drop a candidate below the threshold, whatever its relation features.
+
+The Rust adapter is not such an adapter: its syntax layer gives no `body`, so every body in its
+snapshots comes from the index, and leaving out its syntax layer changes syntax properties and
+declared calls, which are then not compared, and the gaps the syntax layer reports, such as
+`open-call` and `opaque-region`, which changes that side's gap counts in the diff's manifest.
 
 ## Inputs and the output
 

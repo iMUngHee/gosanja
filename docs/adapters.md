@@ -39,8 +39,8 @@ gosanja adapter list
 ```
 
 ```text
-old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.1, this reader implements 0.2; 0.x versions are only compatible with themselves
-rust 1.2.3 contract=0.2 languages=rust layers=base,syntax,calls markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
+old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.2, this reader implements 0.3; 0.x versions are only compatible with themselves
+rust 1.2.3 contract=0.3 languages=rust layers=base,syntax,calls markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
   requires rust-analyzer: found /usr/bin/rust-analyzer
   requires cargo: missing
 ```
@@ -87,6 +87,57 @@ gosanja index --adapter ./my-adapter --root <project> --out <dir>  # a program, 
 An argument that is absolute or contains a path separator is a program; anything else is the
 name of an installed adapter. A bare word is never looked up as a program in `PATH`: to run
 one, give its path.
+
+### Choosing layers
+
+```sh
+gosanja index --root <project> --out <dir> --layers base,syntax
+```
+
+`--layers` names the layers to ask the adapter for: `base`, `syntax` and `calls`, separated by
+commas, each at most once, with no spaces, always including `base`. Without it all three are
+asked for, which gives the same rows as before the option existed. The snapshot differs only in
+its version stamps (snapshot schema 0.3, adapter contract 0.3), in build contexts reported by an
+adapter whose manifest does not offer the calls layer, which are no longer copied, and in an
+entry the adapter wrote for a layer it does not offer, which the engine discards before
+validating the result, so a malformed one no longer fails the run by itself. A list that breaks
+these rules exits with code 2 and says what is wrong with it, and no adapter runs. So does
+`--layers` together with `--scip`: a snapshot made from an index has no adapter to ask.
+
+The adapter is chosen first, by name, by path or by markers, exactly as above; the list plays
+no part in that choice. The engine then passes the adapter `--layers` with the layers you
+asked for that its manifest offers, always in the order `base`, `syntax`, `calls`. The
+snapshot records each optional layer:
+
+| You asked for it | The adapter offers it | State in the snapshot | Gap |
+| --- | --- | --- | --- |
+| no | either | `not-requested` | none |
+| yes | no | `absent` | `missing-layer` |
+| yes | yes | `present` or `failed` | as for any run |
+
+`not-requested` is your choice, not a limit of the adapter, and a diff treats it so: a layer
+that one side did not ask for is not compared (see [diff.md](diff.md#what-is-not-compared)).
+Two snapshots made with different lists can also differ in rows the diff does compare: the
+syntax layer can supply bodies, which decide which definition owns a reference, and accepted
+call evidence can name files that the index does not list, such as generated code, which are
+then added to `files.jsonl`. A run without the calls layer adds no such file, so its file rows
+and counts can be smaller.
+
+The engine reads only what it asked for: an entry, a build context or a file of a layer it did
+not pass is dropped unread and can neither fail the run nor add a gap. What an adapter does
+anyway is outside that. An adapter that ignores `--layers` still spends the time, can still
+fail or crash the run, and the project code it runs, such as build scripts, can still change
+what the requested layers see.
+
+### Upgrading to adapter contract 0.3
+
+An engine of contract 0.3 refuses an adapter of 0.2, and `gosanja adapter list` reports it as
+unusable. The search order above decides which copy of a name counts: an older copy earlier in
+`GOSANJA_ADAPTER_PATH`, the engine's directory or `PATH` hides a newer one later, and the
+engine refuses the older one rather than look further. Remove or move the old copy, or name
+the new executable with `--adapter <path>`. Of two adapters of different names whose markers
+both match a project, an unusable one is set aside before markers are matched, so the usable
+one runs; two usable ones are still refused as ambiguous.
 
 ## Trying it without a real adapter
 
@@ -137,3 +188,6 @@ The contract is [spec/adapter-contract.md](../spec/adapter-contract.md): two com
 `describe` and `index`, and the files `index` writes. An adapter may be written in any
 language. Name it `gosanja-adapter-<name>`, make `describe` print the same `name`, and list
 your ecosystem's marker files under `markers` if the engine should choose it by itself.
+`index` takes `--layers`, the layers it is asked for: produce only those, write a
+`result.json` entry for each of them and none for another, and report build contexts only
+when `calls` is among them.

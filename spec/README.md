@@ -4,9 +4,9 @@ Three interfaces of gosanja are specified here and are normative:
 
 | Document | Interface | Version |
 | --- | --- | --- |
-| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.2 |
-| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.2 |
-| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.1 |
+| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.3 |
+| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.3 |
+| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.2 |
 
 The JSON Schemas under [schema/](schema/) define the shape of every file. Where a document and
 a schema disagree, that is a defect in both: report it, and until it is fixed the schema decides
@@ -48,6 +48,28 @@ schema of the two snapshots it compares; reading a snapshot of another schema is
 
 While the major version is 0, a minor change may also break compatibility. The changelog says so
 for each such change.
+
+The current versions were classified this way:
+
+- **Adapter contract 0.3.** `index` takes `--layers`, and `result.json` holds entries only for
+  the layers the run was asked for. These are additions an adapter of 0.2 does not honour, so
+  the minor rises, and the change breaks compatibility: an engine of 0.3 refuses a 0.2 adapter.
+  An adapter reports build contexts only when it was asked for `calls`; when it was, an
+  adapter may report the contexts it used whether the calls layer succeeded or failed, as
+  under 0.2. This narrows when the field may appear and is part of the same minor.
+- **Snapshot schema 0.3.** `not-requested` is a value added to the closed enumeration of the
+  `syntax` and `calls` states (minor). `builds` keeps its meaning, the build contexts the
+  adapter reported, but the engine now copies only those reported in a run that passed
+  `calls`, so a snapshot of an adapter that reports contexts without offering calls has none.
+  A reader sees no new meaning, only fewer rows in that case; under major 0 this is stated as
+  breaking.
+- **Diff schema 0.2.** The snapshot state it copies gains the value (minor), and the comparison
+  rule gains one exclusion, a side whose layer is `not-requested`, which no input of diff 0.1
+  could trigger.
+- **Rust API**, governed by the release. `LayerState` gains a variant, which breaks an
+  exhaustive `match` downstream; the migration is to add the arm. `Described::run` keeps its
+  signature and asks for all known layers, as before; a new method takes the request. The
+  release version is raised when a release is cut, not with the interface change.
 
 ## What a reader must do
 

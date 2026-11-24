@@ -1,4 +1,4 @@
-# Snapshot, schema 0.2
+# Snapshot, schema 0.3
 
 A snapshot is what `gosanja index` writes: the facts established about one source tree at one
 moment. It is a directory of seven files. The same input always produces the same bytes.
@@ -115,7 +115,7 @@ manager, package and version as what it contains and is qualified by the same ru
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-snapshot"` | marks the directory as a snapshot; see Publication |
-| `schema` | version | snapshot schema version, `0.2` |
+| `schema` | version | snapshot schema version, `0.3` |
 | `tool` | `{name, version}` | the engine that wrote the snapshot |
 | `project` | `{name}` | a display name; it carries no identity |
 | `scopes` | array | one entry per indexed scope, in path order |
@@ -128,8 +128,28 @@ A scope entry:
 | `path` | path or `"."` | scope root relative to the project root |
 | `adapter` | `{name, version, contract}`, optional | the adapter that produced the inputs; absent when an index was given directly |
 | `indexers` | array of `{name, version}` | tools named in the metadata of the SCIP input, sorted |
-| `layers` | `{base, syntax, calls}` | each `present`, `absent` or `failed` |
-| `builds` | array | build contexts reported by the adapter, sorted by `id` |
+| `layers` | `{base, syntax, calls}` | each `present`, `absent`, `failed` or, for `syntax` and `calls`, `not-requested`; see below |
+| `builds` | array | build contexts the adapter reported in a run that asked it for the calls layer, sorted by `id` |
+
+The layers of a scope made by an adapter follow from what was requested and what the
+adapter's manifest offers. A request is a set of layer names that always holds `base`; a run
+that names no layers requests all three. `gosanja index --layers <names>` writes it as a
+comma-separated list of `base`, `syntax` and `calls`, each at most once, holding `base`, with
+no space and no empty element; any other list is a usage error (exit 2) and no adapter runs.
+`--layers` together with `--scip` is a usage error (exit 2) as well, and no adapter runs. The
+engine passes the adapter the request intersected with the layers its manifest lists (see
+[adapter-contract.md](adapter-contract.md#index)). For `syntax` and `calls`:
+
+| Requested | Offered by the adapter's manifest | Passed to the adapter | State | Gap |
+| --- | --- | --- | --- | --- |
+| no | either | no | `not-requested` | none |
+| yes | no | no | `absent` | `missing-layer` |
+| yes | yes | yes | `present`, or `failed` by the adapter's result | as [adapter-contract.md](adapter-contract.md) says for its result |
+
+`not-requested` records a choice, not a limit: it says nothing about whether the adapter offers
+the layer, and a reader must not take it for `absent`. `base` is always requested and is never
+`not-requested`. A scope made from an index given directly has no adapter and records both
+optional layers `absent`.
 
 A build context is `{id, toolchain?, target?, profile?, features?}` and nothing else. `id` is
 unique within the scope and is what call evidence refers to. The values are names, not paths:
@@ -357,7 +377,7 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `position-out-of-range` | positions fall outside their line or inside a multi-byte character, or a call site names a file that cannot be read inside the root; the occurrences, or the side-car rows that hold them, are dropped | `file`, `count`, and `layer` for a side-car |
 | `unattributed-references` | references in a file lie in no body | `file`, `count` |
 | `overlapping-bodies` | two bodies overlap without nesting; neither owns references; one row per pair | `file`, `keys`: the two entities |
-| `missing-layer` | the adapter does not offer an optional layer | `layer` |
+| `missing-layer` | the adapter does not offer an optional layer that was requested | `layer` |
 | `failed-layer` | an optional layer failed, was reported without a status, or was malformed | `layer`, `code`, `detail` |
 | `unanchored` | an anchor matched no definition or several | `layer`, `anchor` |
 | `open-call` | a reported call's callee token matches no reference, or the call has no callee token | `file`, `range`: the callee token in the first case, the whole call node in the second |

@@ -10,8 +10,8 @@ use std::{
 use gosanja_schema::{
     compat::{self, Acceptance, RowVerdict, Version},
     contract::{
-        AdapterManifest, AdapterResult, CONTRACT_VERSION, CallEvidence, LayerName, LayerResult,
-        LayerStatus, RESULT_FILE, SyntaxFact,
+        AdapterManifest, AdapterResult, CONTRACT_VERSION, CallEvidence, LayerName, LayerRequest,
+        LayerResult, LayerStatus, RESULT_FILE, SyntaxFact,
     },
     snapshot::{BuildContext, FailedDetail, GapKind, GapRow, Layer, LayerState, Layers},
 };
@@ -74,6 +74,33 @@ fn parse<T: DeserializeOwned>(schema: &Validator, value: Value) -> io::Result<T>
         ));
     }
     Ok(serde_json::from_value(value)?)
+}
+
+fn read_result(directory: &Path, contract: &str, passed: &[&str]) -> io::Result<AdapterResult> {
+    let mut value: Value =
+        serde_json::from_reader(regular(&directory.join(RESULT_FILE))?).map_err(io::Error::from)?;
+    if value.get("contract").and_then(Value::as_str) != Some(contract) {
+        return Err(io::Error::other("result contract differs from describe"));
+    }
+    if let Some(layers) = value.get_mut("layers").and_then(Value::as_object_mut) {
+        layers.retain(|k, _| passed.contains(&k.as_str()));
+    }
+    if !passed.contains(&"calls")
+        && let Some(object) = value.as_object_mut()
+    {
+        object.remove("builds");
+    }
+    let result: AdapterResult = parse(validator(Schema::AdapterResult), value)?;
+    let mut ids = std::collections::HashSet::new();
+    if result
+        .builds
+        .iter()
+        .flatten()
+        .any(|context| !ids.insert(&context.id))
+    {
+        return Err(io::Error::other("duplicate build context id"));
+    }
+    Ok(result)
 }
 
 fn regular(path: &Path) -> io::Result<File> {
@@ -160,6 +187,7 @@ struct OptionalLayer<'a> {
     name: &'static str,
     layer: Layer,
     offered: bool,
+    requested: bool,
 }
 
 impl OptionalLayer<'_> {
@@ -168,8 +196,12 @@ impl OptionalLayer<'_> {
         dir: &Path,
         result: &AdapterResult,
         gaps: &mut Vec<GapRow>,
+        open: impl FnOnce(&Path) -> io::Result<File>,
         read: impl FnOnce(BufReader<File>, Acceptance) -> io::Result<(Vec<T>, u64)>,
     ) -> (LayerState, Vec<T>) {
+        if !self.requested {
+            return (LayerState::NotRequested, vec![]);
+        }
         let mut gap = GapRow::new(
             GapKind::FailedLayer,
             format!("adapter:{}/{}", self.adapter, self.name),
@@ -190,7 +222,7 @@ impl OptionalLayer<'_> {
                     .map(|d| d.code.clone());
                 FailedDetail::ReportedFailed
             }
-            Some(entry) => match regular(&dir.join(format!("{}.jsonl", self.name))) {
+            Some(entry) => match open(&dir.join(format!("{}.jsonl", self.name))) {
                 Err(_) => FailedDetail::FileMissing,
                 Ok(file) => match read(BufReader::new(file), self.acceptance) {
                     Ok((rows, skipped)) => {
@@ -300,11 +332,28 @@ impl Described {
     /// # Errors
     /// Reports process, protocol and base-layer failures.
     pub fn run(self, root: &Path, scratch_parent: &Path) -> Result<AdapterOutput, AdapterError> {
+        self.run_with_layers(root, scratch_parent, LayerRequest::ALL)
+    }
+
+    /// Runs the adapter for the requested layers it offers.
+    /// # Errors
+    /// Reports process, protocol and base-layer failures.
+    pub fn run_with_layers(
+        self,
+        root: &Path,
+        scratch_parent: &Path,
+        request: LayerRequest,
+    ) -> Result<AdapterOutput, AdapterError> {
         let Self {
             invocation,
             manifest,
             acceptance,
         } = self;
+        let passed: Vec<_> = request
+            .iter()
+            .filter(|layer| manifest.layers.contains(layer))
+            .map(LayerName::as_str)
+            .collect();
         let root = root.canonicalize()?;
         let parent = scratch_parent.canonicalize()?;
         if parent.starts_with(&root) {
@@ -318,20 +367,13 @@ impl Described {
             .arg(&root)
             .arg("--out")
             .arg(dir.path())
+            .arg("--layers")
+            .arg(passed.join(","))
             .status()?;
         if !status.success() {
             return Err(io::Error::other(format!("index exited {status}")).into());
         }
-        let mut value: Value = serde_json::from_reader(regular(&dir.path().join(RESULT_FILE))?)
-            .map_err(io::Error::from)?;
-        // Unknown fields under layers need no status, regardless of their JSON type.
-        if let Some(layers) = value.get_mut("layers").and_then(Value::as_object_mut) {
-            layers.retain(|k, _| matches!(k.as_str(), "base" | "syntax" | "calls"));
-        }
-        let result: AdapterResult = parse(validator(Schema::AdapterResult), value)?;
-        if result.contract != manifest.contract {
-            return Err(io::Error::other("result contract differs from describe").into());
-        }
+        let result = read_result(dir.path(), &manifest.contract, &passed)?;
         for entry in result.layers.values() {
             for diagnostic in entry.diagnostics.iter().flatten() {
                 if let Some(message) = &diagnostic.message {
@@ -361,21 +403,19 @@ impl Described {
             name: "syntax",
             layer: Layer::Syntax,
             offered: manifest.layers.contains(&LayerName::Syntax),
+            requested: request.contains(LayerName::Syntax),
         }
-        .read(dir.path(), &result, &mut gaps, read_syntax);
+        .read(dir.path(), &result, &mut gaps, regular, read_syntax);
         let (calls_state, calls) = OptionalLayer {
             adapter: &manifest.name,
             acceptance,
             name: "calls",
             layer: Layer::Calls,
             offered: manifest.layers.contains(&LayerName::Calls),
+            requested: request.contains(LayerName::Calls),
         }
-        .read(dir.path(), &result, &mut gaps, read_calls);
+        .read(dir.path(), &result, &mut gaps, regular, read_calls);
         let builds = result.builds.unwrap_or_default();
-        let mut ids = std::collections::HashSet::new();
-        if builds.iter().any(|context| !ids.insert(&context.id)) {
-            return Err(io::Error::other("duplicate build context id").into());
-        }
         Ok(AdapterOutput {
             index,
             manifest,
@@ -410,6 +450,7 @@ mod tests {
             name: "syntax",
             layer: Layer::Syntax,
             offered: true,
+            requested: true,
             acceptance: Acceptance::SkipUnknown,
             adapter: "fake",
         };
@@ -417,7 +458,7 @@ mod tests {
         let known = r#"{"anchor":{"file":"x","line":0,"col":0}}"#;
         fs::write(&file, format!("{future}\n{known}\n{future}\n")).unwrap();
         let mut gaps = Vec::new();
-        let (state, rows) = layer.read(dir.path(), &result, &mut gaps, read_syntax);
+        let (state, rows) = layer.read(dir.path(), &result, &mut gaps, regular, read_syntax);
         assert_eq!((state, rows.len()), (LayerState::Present, 1));
         assert_eq!(gaps.len(), 2);
         assert!(
@@ -432,9 +473,55 @@ mod tests {
         assert_eq!(unknown.src, "adapter:fake/syntax");
         fs::write(file, format!("{future}\n{known}\n{{}}\n")).unwrap();
         gaps.clear();
-        let (state, rows) = layer.read(dir.path(), &result, &mut gaps, read_syntax);
+        let (state, rows) = layer.read(dir.path(), &result, &mut gaps, regular, read_syntax);
         assert_eq!((state, rows.len()), (LayerState::Failed, 0));
         assert_eq!(gaps.len(), 1);
         assert_eq!(gaps[0].detail, Some(FailedDetail::RowInvalid));
+    }
+
+    #[test]
+    fn optional_layer_opens_its_file_only_when_requested() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("syntax.jsonl");
+        fs::write(&file, "").unwrap();
+        let result = serde_json::from_value(json!({
+            "contract": CONTRACT_VERSION.to_string(),
+            "layers": {"syntax": {"status":"ok"}},
+        }))
+        .unwrap();
+        for (requested, expected) in [
+            (false, LayerState::NotRequested),
+            (true, LayerState::Present),
+        ] {
+            let mut opened = Vec::new();
+            let mut gaps = Vec::new();
+            let (state, rows) = OptionalLayer {
+                adapter: "probe",
+                acceptance: Acceptance::Full,
+                name: "syntax",
+                layer: Layer::Syntax,
+                offered: true,
+                requested,
+            }
+            .read(
+                dir.path(),
+                &result,
+                &mut gaps,
+                |path| {
+                    opened.push(path.to_path_buf());
+                    regular(path)
+                },
+                read_syntax,
+            );
+            assert_eq!(state, expected);
+            assert!(rows.is_empty() && gaps.is_empty());
+            assert_eq!(
+                opened,
+                requested
+                    .then(|| file.clone())
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 }

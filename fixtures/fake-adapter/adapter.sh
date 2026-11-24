@@ -9,6 +9,9 @@ encoding=utf-8
 markers=''
 requires=''
 record=''
+record_argv=''
+index_file=''
+syntax_file=''
 while [ "$#" -ge 2 ]; do
     case "$1" in
         --mode) mode=$2 ;;
@@ -20,6 +23,9 @@ while [ "$#" -ge 2 ]; do
         --markers) markers=',"markers":'"$2" ;;
         --requires) requires=',"requires":'"$2" ;;
         --record) record=$2 ;;
+        --record-argv) record_argv=$2 ;;
+        --index-file) index_file=$2 ;;
+        --syntax-file) syntax_file=$2 ;;
         *) break ;;
     esac
     shift 2
@@ -30,13 +36,14 @@ if [ -n "$record" ]; then
     fi
     printf '%s\n' "$1" >> "$record"
 fi
+if [ -n "$record_argv" ]; then printf '%s\n' "$@" >> "$record_argv"; fi
 case "$1" in
 describe)
-    contract=0.2
+    contract=0.3
     extra=''
     case "$mode" in
         incompatible) contract=1.0 ;;
-        old-contract) contract=0.1 ;;
+        old-contract) contract=0.2 ;;
         describe-failed) exit 1 ;;
         invalid-manifest) echo '{}'; exit 0 ;;
         not-offered|skip-not-offered) layers='["base","calls"]' ;;
@@ -54,7 +61,7 @@ index)
         nonzero) exit 1 ;;
         no-result) exit 0 ;;
         not-json) echo '{' > "$out/result.json"; exit 0 ;;
-        invalid-result) echo '{"contract":"0.2","layers":{"base":{"status":"invalid"}}}' > "$out/result.json"; exit 0 ;;
+        invalid-result) echo '{"contract":"0.3","layers":{"base":{"status":"invalid"}}}' > "$out/result.json"; exit 0 ;;
     esac
     builds='[{"id":"dev","features":["fast"]},{"id":"release","features":["full"]}]'
     base='"base":{"status":"ok"},'
@@ -64,7 +71,14 @@ index)
     unreadable='{"file":"src/views.rs","code":"unreadable"}'
     parse_error='{"file":"src/views.rs","code":"parse-error"}'
     case "$mode" in
+        malformed-calls) calls='"calls":false' ;;
+        failing-calls) builds='[{"id":"dev"}]'; calls='"calls":{"status":"failed","diagnostics":[{"code":"probe-calls-error","message":"the calls probe reported a failure"}]}' ;;
+        no-calls-status) builds='[{"id":"dev"}]'; syntax=${syntax%,}; calls='' ;;
         duplicate-builds) builds='[{"id":"dev"},{"id":"dev"}]' ;;
+        duplicate-builds-failed-base)
+            builds='[{"id":"dev"},{"id":"dev"}]'
+            base='"base":{"status":"failed","diagnostics":[{"code":"lockfile-missing","message":"missing project lockfile"}]},'
+            ;;
         path-build) builds='[{"id":"dev","target":"/tmp/build"}]' ;;
         skipped|skipped-reverse)
             base='"base":{"status":"ok","skipped":['"$unreadable"']},'
@@ -84,8 +98,10 @@ index)
         reported-*) syntax='"syntax":{"status":"failed","diagnostics":[{"code":"parser-failed","message":"'"$mode"' in /tmp/run-'"$$"'"}]},' ;;
         extra) extra=',"extra":true' ;;
     esac
-    printf '{"contract":"0.2","layers":{%s%s%s},"builds":%s%s}\n' "$base" "$syntax" "$calls" "$builds" "$extra" > "$out/result.json"
-    if [ "$mode" != no-index ]; then cp "$(dirname "$0")/../rust-basic/index.scip" "$out/index.scip"; fi
+    contract=0.3
+    if [ "$mode" = wrong-result-contract ]; then contract=0.2; calls='"calls":false'; fi
+    printf '{"contract":"%s","layers":{%s%s%s},"builds":%s%s}\n' "$contract" "$base" "$syntax" "$calls" "$builds" "$extra" > "$out/result.json"
+    if [ "$mode" != no-index ]; then cp "${index_file:-$(dirname "$0")/../rust-basic/index.scip}" "$out/index.scip"; fi
     if [ "$mode" = broken-scip ]; then printf "\377" > "$out/index.scip"; fi
     if [ "$mode" != no-file ]; then
         printf '{"anchor":{"file":"src/views.rs","line":2,"col":7},"visibility":"pub"%s}\n' "$extra" > "$out/syntax.jsonl"
@@ -98,6 +114,7 @@ index)
         no-lf) printf '{"anchor":{"file":"x","line":0,"col":0}}' > "$out/syntax.jsonl" ;;
         crlf) printf '{"anchor":{"file":"x","line":0,"col":0}}\r\n' > "$out/syntax.jsonl" ;;
     esac
+    if [ -n "$syntax_file" ]; then cp "$syntax_file" "$out/syntax.jsonl"; fi
     : > "$out/calls.jsonl"
     ;;
 *) exit 1 ;;

@@ -71,8 +71,9 @@ The IR is read as text, so another LLVM version may write lines the reader does 
 The reader then fails the layer rather than guess, and `result.json` names the compiler that
 wrote each module.
 
-Indexing now compiles every selected target once with debug information, so it needs a
-linker and takes the time and disk of a debug build. On ryu 1.0.23, a crate of 180 kB of
+A run that asks for the calls layer, as one without `--layers` does, compiles every selected
+target once with debug information, so it needs a linker and takes the time and disk of a
+debug build; a run without it runs no calls build. On ryu 1.0.23, a crate of 180 kB of
 source, a whole run of the adapter took 7 to 8 seconds on a 16-thread x86-64 host and left
 92 MiB under the output directory, nearly all of it Cargo's build directory; the IR read was
 0.75 MB. The calls build runs before the base layer's indexer, so a project whose index then
@@ -97,6 +98,25 @@ target/debug/gosanja adapter list
 target/debug/gosanja index --root fixtures/rust-flow --out /tmp/gosanja-rust-flow
 target/debug/gosanja validate /tmp/gosanja-rust-flow --root fixtures/rust-flow
 ```
+
+### Without the calls layer
+
+```sh
+gosanja index --root <workspace> --out <dir> --layers base,syntax
+```
+
+When it is not asked for the calls layer, the adapter selects no target, runs no
+`cargo rustc` and writes no `calls.jsonl` and no build context; the snapshot records the calls
+layer `not-requested`. This saves the calls build, not every compilation: `rust-analyzer scip`
+still builds and runs the project's build scripts and procedural macros for the base layer.
+When it is not asked for the syntax layer (`--layers base` or `--layers base,calls`), it does
+not parse the sources for that layer and writes no `syntax.jsonl`. The calls layer, when it is
+asked for, still reads the files its IR names to check its sites, whatever the syntax layer
+does. The base layer's status depends on its own index only, not on the syntax layer.
+
+The calls build runs before the indexer, and a build script may write into its source
+directory (see "What it does to your project"). A run without the calls layer skips that
+build, so what the base and syntax layers read can differ from a run with it.
 
 ## When it cannot index
 

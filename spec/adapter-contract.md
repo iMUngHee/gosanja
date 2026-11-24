@@ -1,4 +1,4 @@
-# Adapter contract, version 0.2
+# Adapter contract, version 0.3
 
 An adapter is a program that knows one language ecosystem. The engine knows none: it runs an
 adapter, reads the files the adapter wrote, and builds a [snapshot](snapshot.md) from them. An
@@ -10,7 +10,7 @@ The conventions for paths, ranges and versions, and the rules a reader follows, 
 ## Layers
 
 An adapter produces up to three layers for one scope, a directory tree in one language
-ecosystem.
+ecosystem. A run produces only the layers it is asked for (see [index](#index)).
 
 | Layer | Content | File | Required |
 | --- | --- | --- | --- |
@@ -54,11 +54,28 @@ is present when `<root>/<marker>`, with links followed, is a regular file. Sever
 are alternatives. The engine uses markers to choose among installed adapters when the user
 names none; an adapter without markers is used only when it is named.
 
+How the command line finds installed adapters is described in
+[docs/adapters.md](../docs/adapters.md); these rules bind it:
+
+- It looks in each directory of `GOSANJA_ADAPTER_PATH`, then in the directory of the engine's
+  executable, then in each directory of `PATH`. Of several executables with one name, the
+  first found is the adapter of that name, and a later one is never looked at, even when the
+  first is unusable.
+- An adapter whose manifest names a contract the engine does not accept under the reader rules
+  is reported and set aside before markers are matched. So when adapters of two names both
+  match a root and only one of them speaks an accepted contract, that one runs.
+- Two usable adapters whose markers both match a root are refused as ambiguous.
+- `--adapter <name>` or `--adapter <path>` names the adapter directly; a path selects that
+  executable whatever the search order would find.
+- The layers asked for play no part in any of this.
+
 ### index
 
 ```text
-<adapter> index --root <dir> --out <dir>
+<adapter> index --root <dir> --out <dir> [--layers <names>]
 ```
+
+Options may come in any order.
 
 - `--root` is the scope to analyse, an absolute path. The adapter must not create, change or
   delete anything under it, and must make the tools it runs do the same, for example by
@@ -69,6 +86,17 @@ names none; an adapter without markers is used only when it is named.
   leave such configuration in force, and its documentation says which.
 - `--out` is an existing empty directory, an absolute path outside `--root`. The adapter writes
   its files there and nowhere else. It may create a subdirectory for its own temporary files.
+- `--layers` names the layers the run is asked for. `<names>` is a comma-separated list of
+  layer names, each at most once, with no space and no empty element; it holds `base` and only
+  layers the manifest lists, in any order. Without `--layers` the run is asked for every layer
+  the manifest lists. The adapter does no work for a layer it was not asked for and writes no
+  file of it. An adapter given a list it cannot accept exits 2 and writes nothing.
+- The engine always passes `--layers`, so an adapter's default never decides what was asked.
+  What it passes, the *argument*, is the *request* (the layers the user asked for, `base`
+  always among them, all three when the user names none; see
+  [snapshot.md](snapshot.md#manifestjson)) intersected with the layers the manifest lists, in
+  the order `base`, `syntax`, `calls`. Which adapter runs is decided before, and the request
+  plays no part in it (see [describe](#describe)).
 - One run handles the whole scope. The engine does not run an adapter once per file.
 - Standard output and standard error are free text for a human. The engine shows them and never
   parses them.
@@ -77,18 +105,18 @@ names none; an adapter without markers is used only when it is named.
 
 | File | Written when |
 | --- | --- |
-| `result.json` | always |
+| `result.json` | always, when `index` exits 0 |
 | `index.scip` | the base layer succeeded |
-| `syntax.jsonl` | the syntax layer succeeded |
-| `calls.jsonl` | the calls layer succeeded |
+| `syntax.jsonl` | the run was asked for the syntax layer and it succeeded |
+| `calls.jsonl` | the run was asked for the calls layer and it succeeded |
 
 ### result.json
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `contract` | version | as in the manifest |
-| `layers` | object | one entry for each layer named in the manifest |
-| `builds` | array, optional | the build contexts actually used |
+| `layers` | object | one entry for each layer the run was asked for, and none for another |
+| `builds` | array, optional | the build contexts actually used; reported only when the run was asked for `calls` |
 | `tools` | array of `{name, version}`, optional | tools that were run |
 
 A layer entry:
@@ -105,12 +133,15 @@ timings. Only the first `code` of a failed layer is stored in the snapshot; a `m
 is, so two equivalent failures give identical snapshots.
 
 `skipped` lets a layer succeed without hiding what it left out: a source file that does not
-parse, a file that is not valid text, or a file for which the layer reports some facts and
-had to leave others out; the `code` says which. `file` is a path relative to `--root` and `code` has the
-form of a diagnostic code. The whole of `result.json` is checked against its schema, so a
-malformed entry is an adapter failure whatever the layer's status. For a layer whose status is
-`ok`, the engine records one `skipped-file` gap for each distinct file and code of that layer,
-without opening the file. A layer that is missing, failed or discarded contributes none.
+parse, a file that is not valid text, or a file for which the layer reports some facts and had
+to leave others out; the `code` says which. `file` is a path relative to `--root` and `code`
+has the form of a diagnostic code. What remains of `result.json` once the engine has removed
+what it did not ask for (see [How the engine reads
+result.json](#how-the-engine-reads-resultjson)) is checked against its schema, so a malformed
+entry of a layer the engine asked for is an adapter failure whatever the layer's status. For a
+layer whose status is `ok`, the engine records one `skipped-file` gap for each distinct file
+and code of that layer, without opening the file. A layer that is missing, failed, discarded or
+not requested contributes none.
 
 A build context:
 
@@ -127,7 +158,42 @@ not exist with another. Only the fields above are copied into the snapshot manif
 field is ignored. These values are names, not paths. `id`, `target` and `profile` may not
 contain `/` or `\`. `toolchain` and each feature may contain `/`, as in Cargo's
 `package/feature`, but may not be an absolute path: they may not start with `/`, `\`, `~` or a
-drive prefix such as `C:\`. A `result.json` that breaks this fails its schema.
+drive prefix such as `C:\`. A build that the engine keeps (see
+[How the engine reads result.json](#how-the-engine-reads-resultjson)) and that breaks this
+fails the schema.
+
+When the run is asked for `calls`, an adapter may report the build contexts it used whether the
+calls layer succeeded or failed, and the engine copies them. When it is not, the adapter
+reports none.
+
+### How the engine reads result.json
+
+The engine reads `result.json` in this order:
+
+1. It decodes the file as JSON. A file that does not decode fails the run.
+2. It compares `contract` with the contract of the manifest it accepted, and refuses a
+   missing or different value before it looks at anything else. An old result is therefore refused as
+   old, never for a schema error of the new reader.
+3. In terms of the argument it passed, not the request: it removes every layer entry
+   outside the argument, and removes `builds` unless `calls` is in the argument, since only
+   call evidence refers to them. When `calls` is in the argument, `builds` are kept whether
+   the calls layer succeeded or failed.
+4. It checks what remains against the schema, then the build ids for duplicates, then reads
+   the diagnostics.
+
+So once `result.json` decodes as JSON, an entry or a build the engine did not ask for, however
+malformed or duplicated, can neither fail the run nor add a gap, and its diagnostics are never
+shown. The engine never opens the file of a layer outside the argument. `tools` are kept,
+since they describe the run. The adapter's standard output and standard error stay free text
+that the engine shows, whatever they mention.
+
+Whether a layer of the argument has an entry is not a rule of the schema but of this reading:
+an optional layer passed to the adapter without an entry is recorded as failed, with detail
+`no-status`, and the valid builds are kept when `calls` was passed.
+
+The guarantee is about what the engine reads. Work that an adapter does for a layer it was not
+asked for is outside it: it costs time, it can fail the run, and code of the project that
+such work runs can change what the requested layers observe.
 
 ## Exit status and outcomes
 
@@ -138,11 +204,14 @@ A problem with the project is data, not a crash: the adapter reports a failed la
 | --- | --- |
 | Manifest `contract` not accepted under the reader rules | refused before `index` is run; exit 2; nothing written |
 | `index` exits non-zero | adapter failure; exit 3; no snapshot published |
-| `index` exits 0 and `result.json` is absent, is not valid JSON or fails its schema | adapter failure; exit 3; no snapshot published |
+| `index` exits 0 and `result.json` is absent or is not valid JSON | adapter failure; exit 3; no snapshot published |
+| `result.json`'s `contract` differs from the manifest's | adapter failure; exit 3; no snapshot published; refused before anything else in the file is read |
+| What remains of `result.json` once the entries and builds the engine did not ask for are removed fails its schema, or repeats a build id | adapter failure; exit 3; no snapshot published |
 | Base layer `failed`, without a status, or `index.scip` absent or unreadable | scope failed; exit 3; no snapshot published |
-| Optional layer not named in the manifest | snapshot published; `missing-layer` gap |
+| Optional layer not requested | snapshot published; layer `not-requested`; no gap; the adapter is not asked for it |
+| Optional layer requested but not named in the manifest | snapshot published; layer `absent`; `missing-layer` gap |
 | Optional layer `failed` | snapshot published; `failed-layer` gap, detail `reported-failed`, with the first diagnostic code |
-| Optional layer named in the manifest but without an entry in `result.json` | snapshot published; `failed-layer` gap, detail `no-status` |
+| Optional layer passed to the adapter but without an entry in `result.json` | snapshot published; `failed-layer` gap, detail `no-status` |
 | Optional layer `ok` but its file is absent | snapshot published; `failed-layer` gap, detail `file-missing` |
 | Optional layer `ok` but a row fails its schema | the whole layer is discarded; `failed-layer` gap, detail `row-invalid` |
 

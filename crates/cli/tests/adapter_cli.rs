@@ -76,7 +76,7 @@ fn standalone_describe_and_conflicting_index_sources() {
     check(&result, 0);
     let value: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(value["name"], "fake");
-    assert_eq!(value["contract"], "0.2");
+    assert_eq!(value["contract"], "0.3");
     let mut cmd = binary();
     cmd.args(["adapter", "describe"]).arg(program);
     Command::env(&mut cmd, "GOSANJA_FAKE_MODE", "incompatible");
@@ -287,6 +287,42 @@ fn base_failure_names_only_the_first_diagnostic_as_the_reason() {
 }
 
 #[test]
+fn duplicate_build_ids_fail_before_diagnostics_or_the_base_status() {
+    let temp = tempdir().unwrap();
+    let result = cli(
+        "duplicate-builds-failed-base",
+        &fixture().join("rust-basic"),
+        &temp.path().join("out"),
+        &temp.path().join("cache"),
+    );
+    check(&result, 3);
+    let err = String::from_utf8(result.stderr).unwrap();
+    assert!(err.contains("duplicate build context id"), "{err}");
+    assert!(!err.contains("missing project lockfile"), "{err}");
+    assert!(!err.contains("base layer failed"), "{err}");
+}
+
+#[test]
+fn an_old_result_is_refused_for_its_contract_before_the_schema() {
+    let temp = tempdir().unwrap();
+    let out = temp.path().join("out");
+    let result = cli(
+        "wrong-result-contract",
+        &fixture().join("rust-basic"),
+        &out,
+        &temp.path().join("cache"),
+    );
+    check(&result, 3);
+    let err = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        err.contains("result contract differs from describe"),
+        "{err}"
+    );
+    assert!(!err.contains("calls"), "{err}");
+    assert!(!out.exists());
+}
+
+#[test]
 fn skipped_files_survive_in_order_only_on_retained_layers() {
     let temp = tempdir().unwrap();
     let root = fixture().join("rust-basic");
@@ -331,4 +367,39 @@ fn skipped_files_survive_in_order_only_on_retained_layers() {
         assert!(!gaps.contains("unknown-value"));
     }
     check(&cli("skip-invalid", &root, &first, &cache), 3);
+}
+
+#[test]
+fn unrequested_adapter_diagnostics_do_not_escape() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    for (selection, expected) in [("base,syntax", false), ("calls,base", true)] {
+        let out = temp.path().join(selection);
+        let mut command = binary();
+        command
+            .args(["index", "--adapter"])
+            .arg(fixture().join("fake-adapter/adapter.sh"))
+            .arg("--root")
+            .arg(&root)
+            .arg("--out")
+            .arg(&out)
+            .args(["--layers", selection]);
+        configure(&mut command, "failing-calls", &temp.path().join("cache"));
+        let output = command.output().unwrap();
+        check(&output, 0);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        for marker in ["probe-calls-error", "the calls probe reported a failure"] {
+            assert_eq!(stderr.contains(marker), expected, "{stderr}");
+        }
+        let gaps = fs::read_to_string(out.join("gaps.jsonl")).unwrap_or_default();
+        assert_eq!(gaps.contains("probe-calls-error"), expected, "{gaps}");
+        assert_eq!(gaps.contains("failed-layer"), expected, "{gaps}");
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest["scopes"][0]["layers"]["calls"],
+            if expected { "failed" } else { "not-requested" }
+        );
+    }
 }

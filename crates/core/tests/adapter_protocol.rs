@@ -250,3 +250,192 @@ fn reported_skips_follow_layer_availability_and_nameless_calls_keep_their_range(
         gosanja_schema::position::Range::new(4, 8, 4, 15)
     );
 }
+
+fn configured_adapter(mode: &str, offered: &str, record: &Path) -> adapter::Described {
+    adapter::describe(
+        adapter::Invocation::new(
+            support::shell(),
+            vec![
+                support::repo("fixtures/fake-adapter/adapter.sh").into_os_string(),
+                "--mode".into(),
+                mode.into(),
+                "--layers".into(),
+                offered.into(),
+                "--record-argv".into(),
+                record.into(),
+            ],
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn layer_requests_are_intersected_with_the_manifest() {
+    use LayerState::{Absent, NotRequested, Present};
+    use gosanja_schema::{contract::LayerRequest, snapshot::Layer};
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    let record = temp.path().join("argv");
+    for (offered, cases) in [
+        (
+            r#"["base","syntax","calls"]"#,
+            [
+                (None, "base,syntax,calls", Present, Present),
+                (Some("base"), "base", NotRequested, NotRequested),
+                (Some("base,syntax"), "base,syntax", Present, NotRequested),
+                (Some("base,calls"), "base,calls", NotRequested, Present),
+            ],
+        ),
+        (
+            r#"["base"]"#,
+            [
+                (None, "base", Absent, Absent),
+                (Some("base"), "base", NotRequested, NotRequested),
+                (Some("base,syntax"), "base", Absent, NotRequested),
+                (Some("base,calls"), "base", NotRequested, Absent),
+            ],
+        ),
+    ] {
+        for (request, argument, syntax, calls) in cases {
+            fs::write(&record, "").unwrap();
+            let described = configured_adapter("good", offered, &record);
+            let output = match request {
+                None => described.run(&root, temp.path()),
+                Some(list) => described.run_with_layers(
+                    &root,
+                    temp.path(),
+                    list.parse::<LayerRequest>().unwrap(),
+                ),
+            }
+            .unwrap();
+            assert_eq!(
+                (
+                    output.layers.base,
+                    output.layers.syntax,
+                    output.layers.calls
+                ),
+                (Present, syntax, calls)
+            );
+            let expected: Vec<_> = [(syntax, Layer::Syntax), (calls, Layer::Calls)]
+                .into_iter()
+                .filter_map(|(state, layer)| {
+                    (state == Absent).then_some((GapKind::MissingLayer, Some(layer)))
+                })
+                .collect();
+            assert_eq!(
+                output
+                    .gaps
+                    .iter()
+                    .map(|g| (g.gap, g.layer))
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let recorded = fs::read_to_string(&record).unwrap();
+            assert_eq!(
+                recorded.lines().rev().take(2).collect::<Vec<_>>(),
+                [argument, "--layers"]
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_all_and_omission_have_equal_argv_and_snapshots() {
+    use gosanja_core::{
+        sidecar,
+        write::{FsSource, serialise},
+    };
+    use gosanja_schema::contract::LayerRequest;
+    let temp = tempdir().unwrap();
+    let parent = temp.path().canonicalize().unwrap();
+    let root = support::fixture("rust-basic");
+    let sources = FsSource::new(&root).unwrap();
+    let record = parent.join("argv");
+    let all = "base,syntax,calls".parse::<LayerRequest>().unwrap();
+    for offered in [r#"["base","syntax","calls"]"#, r#"["base"]"#] {
+        let run = |request| {
+            fs::write(&record, "").unwrap();
+            let described = configured_adapter("good", offered, &record);
+            let output = match request {
+                None => described.run(&root, &parent),
+                Some(request) => described.run_with_layers(&root, &parent, request),
+            }
+            .unwrap();
+            let snapshot = sidecar::build(output, &sources, "rust-basic").unwrap();
+            let mut argv: Vec<String> = fs::read_to_string(&record)
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            let output_path = argv
+                .iter_mut()
+                .skip_while(|arg| *arg != "--out")
+                .nth(1)
+                .unwrap();
+            assert!(Path::new(output_path).starts_with(&parent));
+            // The engine uses a fresh directory for each adapter invocation.
+            output_path.clear();
+            (argv, serialise(&snapshot))
+        };
+        let (implicit_argv, implicit_files) = run(None);
+        let (explicit_argv, explicit_files) = run(Some(all));
+        assert_eq!(explicit_argv, implicit_argv, "{offered}");
+        assert_eq!(explicit_files.named(), implicit_files.named(), "{offered}");
+    }
+}
+
+#[test]
+fn calls_output_is_filtered_before_schema_and_build_checks() {
+    use gosanja_schema::contract::LayerRequest;
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    let record = temp.path().join("argv");
+    let full = r#"["base","syntax","calls"]"#;
+    let no_calls = "base,syntax".parse::<LayerRequest>().unwrap();
+    let run = |mode, offered, request| {
+        configured_adapter(mode, offered, &record).run_with_layers(&root, temp.path(), request)
+    };
+    let sources = gosanja_core::write::FsSource::new(&root).unwrap();
+    let snapshot = |output| gosanja_core::sidecar::build(output, &sources, "root").unwrap();
+    let expected = snapshot(run("good", full, no_calls).unwrap());
+    for fault in ["malformed-calls", "path-build", "duplicate-builds"] {
+        let actual = snapshot(run(fault, full, no_calls).unwrap());
+        assert_eq!(actual, expected, "{fault}");
+        let error = run(fault, full, LayerRequest::ALL).unwrap_err();
+        assert_eq!(error.exit_code(), 3, "{fault}: {error}");
+        if fault == "duplicate-builds" {
+            assert_eq!(error.to_string(), "duplicate build context id");
+        }
+    }
+    let old = run("wrong-result-contract", full, LayerRequest::ALL).unwrap_err();
+    assert_eq!(
+        (old.exit_code(), old.to_string().as_str()),
+        (3, "result contract differs from describe")
+    );
+
+    for (mode, detail) in [
+        ("failing-calls", FailedDetail::ReportedFailed),
+        ("no-calls-status", FailedDetail::NoStatus),
+    ] {
+        let output = run(mode, full, LayerRequest::ALL).unwrap();
+        assert_eq!(output.layers.calls, LayerState::Failed);
+        assert_eq!(
+            output
+                .builds
+                .iter()
+                .map(|b| b.id.as_str())
+                .collect::<Vec<_>>(),
+            ["dev"]
+        );
+        assert_eq!(output.gaps.len(), 1);
+        assert_eq!(output.gaps[0].detail, Some(detail));
+    }
+    let base = r#"["base"]"#;
+    let expected = snapshot(run("good", base, LayerRequest::ALL).unwrap());
+    let actual = snapshot(run("malformed-calls", base, LayerRequest::ALL).unwrap());
+    assert_eq!(expected.scope.builds, []);
+    assert_eq!(actual, expected);
+}

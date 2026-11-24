@@ -56,7 +56,11 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
 - `fixtures/diff-public` is the exception: a frozen pair of snapshots of a public crate, kept as
   the measurement read them, with its provenance and licence in `NOTICE.md` and the pairs listed
   before any matcher ran in `truth.tsv`. It has no index of its own and is never rebuilt; a
-  change to it changes what the matcher's test measures.
+  change to it changes what the matcher's test measures. Its snapshots keep the schema they
+  were written in when the schema moves on, and the reader refuses them, as it must refuse any
+  other minor. The matcher's test therefore copies them and re-stamps only the copies'
+  `schema` to the current version, which holds only while the matcher reads no field that the
+  two schemas write differently, and the tests check that the originals are refused.
 - Edge cases (encodings, colliding symbols, malformed input) are built in tests from `scip`
   types, not stored as binary files.
 - Goldens under `fixtures/*/expected` are compared byte for byte. Tests that look for a

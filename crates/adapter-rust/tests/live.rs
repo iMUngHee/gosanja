@@ -281,15 +281,12 @@ struct Watch(Child, Arc<Mutex<Vec<String>>>);
 
 impl Watch {
     fn start(root: &Path) -> Self {
+        Self::start_for(root, "create,modify,delete,move")
+    }
+
+    fn start_for(root: &Path, events: &str) -> Self {
         let mut child = Command::new("inotifywait")
-            .args([
-                "-m",
-                "-r",
-                "-e",
-                "create,modify,delete,move",
-                "--format",
-                "%w%f %e",
-            ])
+            .args(["-m", "-r", "-e", events, "--format", "%w%f %e"])
             .arg(root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1035,6 +1032,48 @@ fn a_public_crate_keeps_its_counts() {
         assert!(
             run.rows.iter().any(|r| r == row),
             "a sampled row is missing: {row}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs inotifywait; run by scripts/check-live.sh"]
+fn omitted_syntax_does_not_open_its_indexed_source() {
+    use protobuf::Message;
+    use scip::types::{Document, Index};
+    for (request, reads_syntax) in [
+        ("base,calls", false),
+        ("base", false),
+        ("base,syntax", true),
+    ] {
+        let c = support::Case::new();
+        let file = c.root.join("probed.rs");
+        fs::write(&file, "fn probed() {}\n").unwrap();
+        let index_path = c.root.join("index.scip");
+        let mut index = Index::parse_from_bytes(&fs::read(&index_path).unwrap()).unwrap();
+        let mut document = Document::new();
+        document.relative_path = "probed.rs".into();
+        index.documents.push(document);
+        fs::write(index_path, index.write_to_bytes().unwrap()).unwrap();
+        let watch = Watch::start_for(&c.root, "open");
+        let result = c.run(c.index().args(["--layers", request]));
+        let events = watch.stop();
+        assert_eq!(result["layers"]["base"]["status"], "ok", "{result}");
+        assert_eq!(
+            result["layers"].get("syntax").is_some(),
+            reads_syntax,
+            "{result}"
+        );
+        if request.contains("calls") {
+            assert_eq!(result["layers"]["calls"]["status"], "ok", "{result}");
+        }
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.ends_with("/probed.rs OPEN"))
+                .count(),
+            usize::from(reads_syntax),
+            "{events:?}"
         );
     }
 }

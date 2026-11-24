@@ -30,7 +30,9 @@ origin. The facts come from compilers and indexers. Nothing is guessed.
 Three interfaces are specified and versioned, and everything else is free to change:
 
 - the [snapshot](../spec/snapshot.md), which is what consumers read;
-- the [adapter contract](../spec/adapter-contract.md), which is what a language adapter writes;
+- the [adapter contract](../spec/adapter-contract.md), which is what a language adapter is
+  asked for and writes: it produces only the layers the engine asks for, and the snapshot
+  records a layer that was not asked for as `not-requested`;
 - the [diff](../spec/diff.md), the differences between two snapshots, which is what a consumer
   of change reads.
 

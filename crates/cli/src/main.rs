@@ -14,14 +14,15 @@ use gosanja_core::publish;
 use gosanja_core::validate;
 use gosanja_core::write::{self, FsSource, SnapshotFiles, SourceReader};
 use gosanja_core::{adapter, graph, sidecar};
+use gosanja_schema::contract::LayerRequest;
 
 mod discover;
 
 use discover::Search;
 
 const USAGE: &str = "usage:
-  gosanja index --root <dir> --out <dir>
-  gosanja index --adapter <name or path> --root <dir> --out <dir>
+  gosanja index --root <dir> --out <dir> [--layers <names>]
+  gosanja index --adapter <name or path> --root <dir> --out <dir> [--layers <names>]
   gosanja index --scip <file> --root <dir> --out <dir>
   gosanja adapter list
   gosanja adapter describe <name or path>
@@ -70,7 +71,7 @@ fn run(args: &[OsString]) -> Result<(), Failure> {
     match command.to_str() {
         Some("index") => index(&Options::parse(
             rest,
-            &["--scip", "--adapter", "--root", "--out"],
+            &["--scip", "--adapter", "--root", "--out", "--layers"],
         )?),
         Some("adapter") => match rest {
             [subcommand] if subcommand == "list" => list(),
@@ -302,12 +303,24 @@ fn index(options: &Options) -> Result<(), Failure> {
     let root = options.require("--root")?;
     let out = options.require("--out")?;
     let adapter_argument = options.get("--adapter");
+    let layers = options.get("--layers");
     if let Some(scip) = options.get("--scip") {
+        if layers.is_some() {
+            return Err(usage("--scip and --layers cannot be combined"));
+        }
         if adapter_argument.is_some() {
             return Err(usage("give at most one of --scip and --adapter"));
         }
         return index_scip(scip, root, out);
     }
+    let request = match layers {
+        None => LayerRequest::ALL,
+        Some(list) => list
+            .to_str()
+            .ok_or_else(|| usage(&format!("invalid layer list {}", list.display())))?
+            .parse::<LayerRequest>()
+            .map_err(|error| usage(&error))?,
+    };
     check_root(root)?;
     // The output is judged first, as for every source; then nothing is described before the
     // cache is known to lie outside the root and the output.
@@ -327,7 +340,9 @@ fn index(options: &Options) -> Result<(), Failure> {
         .map_err(&mut decide)?;
         let sources = FsSource::new(root)?;
         fs::create_dir_all(&cache)?;
-        let output = described.run(root, &cache).map_err(io::Error::other)?;
+        let output = described
+            .run_with_layers(root, &cache, request)
+            .map_err(io::Error::other)?;
         let snapshot =
             sidecar::build(output, &sources, &project_name(root)).map_err(io::Error::other)?;
         write::write_snapshot(stage, &snapshot)

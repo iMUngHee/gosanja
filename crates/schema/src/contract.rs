@@ -8,7 +8,7 @@ use crate::position::{PositionEncoding, Range};
 use crate::snapshot::{BuildContext, Mechanism, OutlineNode, Resolution, Tool};
 
 /// Adapter contract version this crate reads and writes.
-pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 2);
+pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 3);
 
 /// File name of the result an adapter writes into its output directory.
 pub const RESULT_FILE: &str = "result.json";
@@ -26,6 +26,80 @@ pub enum LayerName {
     /// A value from a newer minor.
     #[serde(other)]
     Unknown,
+}
+
+impl LayerName {
+    /// Name used by the adapter protocol.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Syntax => "syntax",
+            Self::Calls => "calls",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Requested layers. The base layer is always included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerRequest {
+    syntax: bool,
+    calls: bool,
+}
+
+impl LayerRequest {
+    /// Ask for every known layer.
+    pub const ALL: Self = Self {
+        syntax: true,
+        calls: true,
+    };
+
+    /// Check whether the request includes this layer.
+    #[must_use]
+    pub const fn contains(self, layer: LayerName) -> bool {
+        match layer {
+            LayerName::Base => true,
+            LayerName::Syntax => self.syntax,
+            LayerName::Calls => self.calls,
+            LayerName::Unknown => false,
+        }
+    }
+
+    /// Requested layers in protocol argument order.
+    pub fn iter(self) -> impl Iterator<Item = LayerName> {
+        [LayerName::Base, LayerName::Syntax, LayerName::Calls]
+            .into_iter()
+            .filter(move |&layer| self.contains(layer))
+    }
+}
+
+impl std::str::FromStr for LayerRequest {
+    type Err = String;
+
+    fn from_str(list: &str) -> Result<Self, Self::Err> {
+        let mut base = false;
+        let mut request = Self {
+            syntax: false,
+            calls: false,
+        };
+        for name in list.split(',') {
+            let selected = match name {
+                "base" => &mut base,
+                "syntax" => &mut request.syntax,
+                "calls" => &mut request.calls,
+                _ => return Err(format!("unknown layer {name:?}")),
+            };
+            if *selected {
+                return Err(format!("duplicate layer {name:?}"));
+            }
+            *selected = true;
+        }
+        if !base {
+            return Err(format!("layer list {list:?} must include \"base\""));
+        }
+        Ok(request)
+    }
 }
 
 /// What `describe` prints.
@@ -185,4 +259,57 @@ pub struct CallSite {
     /// Column, in the adapter's position encoding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub col: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LayerName, LayerRequest};
+
+    #[test]
+    fn layer_arguments_use_the_manifest_spellings() {
+        let layers = [
+            LayerName::Base,
+            LayerName::Syntax,
+            LayerName::Calls,
+            LayerName::Unknown,
+        ];
+        assert_eq!(
+            layers.map(LayerName::as_str),
+            ["base", "syntax", "calls", "unknown"]
+        );
+        for layer in layers {
+            assert_eq!(serde_json::to_value(layer).unwrap(), layer.as_str());
+        }
+    }
+
+    #[test]
+    fn requests_include_base_and_list_each_selected_layer_in_order() {
+        for (list, expected) in [
+            ("base", &[LayerName::Base][..]),
+            ("syntax,base", &[LayerName::Base, LayerName::Syntax][..]),
+            ("calls,base", &[LayerName::Base, LayerName::Calls][..]),
+            (
+                "calls,syntax,base",
+                &[LayerName::Base, LayerName::Syntax, LayerName::Calls][..],
+            ),
+        ] {
+            let request = list.parse::<LayerRequest>().unwrap();
+            assert_eq!(request.iter().collect::<Vec<_>>(), expected);
+            assert!(!request.contains(LayerName::Unknown));
+        }
+        assert_eq!(
+            LayerRequest::ALL,
+            "base,syntax,calls".parse::<LayerRequest>().unwrap()
+        );
+        for list in [
+            "syntax",
+            "base,base",
+            "base,graph",
+            "base,",
+            "base, syntax",
+            "",
+        ] {
+            assert!(list.parse::<LayerRequest>().is_err(), "{list:?}");
+        }
+    }
 }

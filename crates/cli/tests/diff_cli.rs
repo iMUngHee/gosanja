@@ -196,7 +196,7 @@ fn a_snapshot_compared_with_itself_gives_five_files_and_no_row() {
 #[test]
 fn another_schema_version_is_refused_before_anything_is_written() {
     let input = edited("version", "manifest.json", |m| {
-        m.replace(r#""schema":"0.2""#, r#""schema":"0.1""#)
+        m.replace(r#""schema":"0.3""#, r#""schema":"0.1""#)
     });
     for (a, b) in [(&input, &new()), (&old(), &input)] {
         let out = scratch("refused");
@@ -457,7 +457,7 @@ fn another_schema_version_is_refused_whatever_its_tables_hold() {
         ),
     ] {
         let input = edited(name, "manifest.json", |m| {
-            m.replace(r#""schema":"0.2""#, r#""schema":"9.9""#)
+            m.replace(r#""schema":"0.3""#, r#""schema":"9.9""#)
         });
         damage(&input);
         for (a, b) in [(&input, &new()), (&old(), &input)] {
@@ -472,4 +472,81 @@ fn another_schema_version_is_refused_whatever_its_tables_hold() {
             assert!(!out.exists(), "{name}: nothing is written");
         }
     }
+}
+
+#[test]
+fn diff_refuses_frozen_public_snapshots() {
+    let root = repo("fixtures/diff-public");
+    let out = scratch("frozen");
+    let result = gosanja(&[
+        &"diff",
+        &root.join("v0.20.0"),
+        &root.join("v0.21.0"),
+        &"--out",
+        &out,
+    ]);
+    assert_refused(&result, "frozen public snapshots");
+    let message = stderr(&result);
+    assert!(
+        message.contains("unsupported snapshot schema 0.2"),
+        "{message}"
+    );
+    assert!(!out.exists());
+}
+
+#[test]
+fn validate_refuses_frozen_public_snapshots() {
+    let root = repo("fixtures/diff-public");
+    for side in ["v0.20.0", "v0.21.0"] {
+        let result = gosanja(&[&"validate", &root.join(side)]);
+        assert_refused(&result, side);
+        let message = stderr(&result);
+        assert!(
+            message.contains("written with version 0.2, this reader implements 0.3"),
+            "{side}: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_diff_of_the_previous_schema_at_the_output_is_replaced() {
+    use gosanja_schema::{
+        compat::{Refusal, accept},
+        diff::SCHEMA_VERSION,
+    };
+    let out = scratch("previous-schema");
+    copy(&repo("fixtures/diff-basic/expected"), &out);
+    let manifest = out.join("manifest.json");
+    let text = fs::read_to_string(&manifest).expect("read");
+    // A diff written before this schema: diff 0.1 over snapshot 0.2 sides from contract 0.2.
+    let previous = text
+        .replacen(r#""schema":"0.2""#, r#""schema":"0.1""#, 1)
+        .replace(r#""schema":"0.3""#, r#""schema":"0.2""#)
+        .replace(r#""contract":"0.3""#, r#""contract":"0.2""#);
+    for stamp in [
+        r#""schema":"0.1""#,
+        r#""schema":"0.2""#,
+        r#""contract":"0.2""#,
+    ] {
+        let expected = if stamp.contains("0.1") { 1 } else { 2 };
+        assert_eq!(previous.matches(stamp).count(), expected, "{stamp}");
+    }
+    fs::write(&manifest, previous).expect("write");
+    let prior_manifest: Value =
+        serde_json::from_slice(&fs::read(&manifest).expect("read")).expect("JSON");
+    let writer = prior_manifest["schema"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        accept(SCHEMA_VERSION, writer),
+        Err(Refusal::UnstableMinor {
+            reader: SCHEMA_VERSION,
+            writer
+        })
+    );
+
+    let output = gosanja(&[&"diff", &old(), &new(), &"--out", &out]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&manifest).expect("read")).expect("JSON");
+    assert_eq!(written["schema"], SCHEMA_VERSION.to_string());
+    assert_eq!(tree(&out), tree(&repo("fixtures/diff-basic/expected")));
 }

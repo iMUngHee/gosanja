@@ -95,8 +95,9 @@ fn write_fake(path: &Path, name: &str, label: &str, fake: &Fake) {
         ("--mode", fake.mode.clone()),
     ]);
     let mut script = format!(
-        "#!/bin/sh\nexec /bin/sh {} --record \"$GOSANJA_TEST_RECORDS\"/{}",
+        "#!/bin/sh\nexec /bin/sh {} --record \"$GOSANJA_TEST_RECORDS\"/{} --record-argv \"$GOSANJA_TEST_RECORDS\"/{}.argv",
         quoted(&fake_adapter().to_string_lossy()),
+        quoted(label),
         quoted(label)
     );
     for (option, value) in options {
@@ -806,7 +807,7 @@ fn an_unusable_first_copy_hides_every_later_one() {
         &world.adapters(),
         "rust",
         "first",
-        &Fake::markers(RUST).mode("describe-failed"),
+        &Fake::markers(RUST).mode("old-contract"),
     );
     install_in(&second, "rust", "second", &Fake::markers(RUST));
     let root = world.project("project");
@@ -1033,7 +1034,7 @@ fn unusable_adapters_are_reported_and_never_chosen() {
     assert_eq!(
         manifest,
         serde_json::json!({
-            "contract": "0.2",
+            "contract": "0.3",
             "name": "rust",
             "version": "1",
             "languages": ["rust"],
@@ -1077,8 +1078,8 @@ fn the_listing_shows_each_adapter_on_its_own_lines() {
     run.expect(0);
     let adapters = world.adapters();
     let expected = format!(
-        "go 0.9 contract=0.2 languages=go,templ layers=base markers=go.mod path={go}\n\
-         rust 1.2.3 contract=0.2 languages=rust layers=base,syntax,calls markers=Cargo.toml,rust-toolchain.toml path={rust}\n\
+        "go 0.9 contract=0.3 languages=go,templ layers=base markers=go.mod path={go}\n\
+         rust 1.2.3 contract=0.3 languages=rust layers=base,syntax,calls markers=Cargo.toml,rust-toolchain.toml path={rust}\n\
          \x20 requires tool-a >=1: found {found}\n\
          \x20 requires tool-b: missing\n\
          \x20 requires /opt/tool-c: not checked\n",
@@ -1131,11 +1132,11 @@ fn listed_values_stay_on_one_line() {
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 3, "{stdout}");
     assert!(
-        lines[0].starts_with(r"alpha 1\u{a}2\u{2028}\u{2029}\u{85}3 contract=0.2 "),
+        lines[0].starts_with(r"alpha 1\u{a}2\u{2028}\u{2029}\u{85}3 contract=0.3 "),
         "{stdout}"
     );
     assert_eq!(lines[1], r"  requires a\u{a}b: not checked");
-    assert!(lines[2].starts_with("beta 1 contract=0.2 "), "{stdout}");
+    assert!(lines[2].starts_with("beta 1 contract=0.3 "), "{stdout}");
 }
 
 // A failed base layer under automatic choice, and the cache beside `--out`.
@@ -1179,4 +1180,86 @@ fn a_failed_base_under_automatic_choice_leaves_the_snapshot_alone() {
     run.expect(3).says("lies in the output");
     assert_eq!(run.record("rust"), Vec::<String>::new());
     assert!(!absent.exists());
+}
+
+#[test]
+fn layer_lists_are_strict_and_do_not_participate_in_discovery() {
+    let world = World::new();
+    let rust = world.install("rust", &Fake::markers(RUST));
+    let root = world.project("project");
+    let index = |extra: &[&OsStr]| {
+        let out = world.base().join("out");
+        let mut args = vec![
+            "index".as_ref(),
+            "--root".as_ref(),
+            root.as_os_str(),
+            "--out".as_ref(),
+            out.as_os_str(),
+        ];
+        args.extend_from_slice(extra);
+        world.run(&args)
+    };
+    for (list, diagnostic) in [
+        ("syntax", "must include \"base\""),
+        ("base,base", "duplicate layer \"base\""),
+        ("base,graph", "unknown layer \"graph\""),
+        ("base,", "unknown layer \"\""),
+        ("base, syntax", "unknown layer \" syntax\""),
+        ("", "unknown layer \"\""),
+    ] {
+        let run = index(&["--layers".as_ref(), list.as_ref()]);
+        run.expect(2).says(diagnostic);
+        assert_eq!(run.record("rust"), Vec::<String>::new());
+        assert!(!world.base().join("out").exists());
+    }
+    let run = index(&[
+        "--layers".as_ref(),
+        "base".as_ref(),
+        "--scip".as_ref(),
+        "index.scip".as_ref(),
+    ]);
+    run.expect(2).says("--scip and --layers cannot be combined");
+    assert_eq!(run.record("rust"), Vec::<String>::new());
+
+    let automatic = index(&["--layers".as_ref(), "calls,base".as_ref()]);
+    automatic.expect(0);
+    assert_eq!(automatic.record("rust"), strings(&["describe", "index"]));
+    let explicit = index(&[
+        "--adapter".as_ref(),
+        rust.as_os_str(),
+        "--layers".as_ref(),
+        "base,calls".as_ref(),
+    ]);
+    explicit.expect(0);
+    assert_eq!(explicit.record("rust"), strings(&["describe", "index"]));
+    for run in [&automatic, &explicit] {
+        assert_eq!(
+            run.record("rust.argv")
+                .iter()
+                .rev()
+                .take(2)
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["base,calls", "--layers"]
+        );
+    }
+    world.install(
+        "other",
+        &Fake {
+            layers: Some(r#"["base"]"#.into()),
+            ..Fake::markers(RUST)
+        },
+    );
+    let run = index(&["--layers".as_ref(), "base,calls".as_ref()]);
+    run.expect(2)
+        .says("several installed adapters have a marker file");
+    for name in ["rust", "other"] {
+        assert_eq!(run.record(name), strings(&["describe"]));
+    }
+
+    world.install("other", &Fake::markers(RUST).mode("old-contract"));
+    let run = index(&["--layers".as_ref(), "base,calls".as_ref()]);
+    run.expect(0);
+    assert_eq!(run.record("rust"), strings(&["describe", "index"]));
+    assert_eq!(run.record("other"), strings(&["describe"]));
 }

@@ -10,7 +10,7 @@ use crate::position::{Range, Site};
 pub const FORMAT: &str = "gosanja-snapshot";
 
 /// Snapshot schema version this crate reads and writes.
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 2);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 3);
 
 /// `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +90,8 @@ pub enum LayerState {
     Absent,
     /// The layer was offered and could not be used.
     Failed,
+    /// The caller omitted this optional layer from its request.
+    NotRequested,
     /// A value from a newer minor.
     #[serde(other)]
     Unknown,

@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::process::Output;
+use std::process::{Command, Output};
 
 use protobuf::Message;
 use scip::types::{Document, Index, Occurrence, PositionEncoding, SymbolRole};
@@ -58,13 +58,19 @@ fn rust_flow() -> (Case, PathBuf) {
 }
 
 /// `gosanja index --root <root> --out <out>`, the adapter chosen by its marker.
-fn index(case: &Case, root: &Path, out: &Path) -> Output {
-    case.command(engine())
+fn index_command(case: &Case, root: &Path, out: &Path) -> Command {
+    let mut command = case.command(engine());
+    command
         .arg("index")
         .arg("--root")
         .arg(root)
         .arg("--out")
-        .arg(out)
+        .arg(out);
+    command
+}
+
+fn index(case: &Case, root: &Path, out: &Path) -> Output {
+    index_command(case, root, out)
         .output()
         .expect("gosanja runs")
 }
@@ -326,7 +332,7 @@ fn the_engine_finds_and_runs_the_adapter_and_gives_the_golden_snapshot() {
             .expect("JSON");
     let scope = &manifest["scopes"][0];
     assert_eq!(scope["adapter"]["name"], "rust");
-    assert_eq!(scope["adapter"]["contract"], "0.2");
+    assert_eq!(scope["adapter"]["contract"], "0.3");
     assert_eq!(
         scope["layers"],
         json!({"base": "present", "syntax": "present", "calls": "present"})
@@ -350,6 +356,84 @@ fn the_engine_finds_and_runs_the_adapter_and_gives_the_golden_snapshot() {
         text.contains(&format!("  requires cargo: found {bin}/cargo\n")),
         "{text}"
     );
+}
+
+#[test]
+fn selecting_only_base_keeps_all_snapshot_files() {
+    let (case, root) = rust_flow();
+    let out = case.temp.path().join("snapshot");
+    ok(&index_command(&case, &root, &out)
+        .args(["--layers", "base"])
+        .output()
+        .expect("gosanja runs"));
+    let files = snapshot_bytes(&out);
+    assert_eq!(
+        files
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "entities.jsonl",
+            "externals.jsonl",
+            "files.jsonl",
+            "gaps.jsonl",
+            "manifest.json",
+            "relations.jsonl",
+            "syntax.jsonl"
+        ]
+    );
+    assert_eq!(
+        fs::read(out.join("syntax.jsonl")).expect("syntax file"),
+        Vec::<u8>::new()
+    );
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(out.join("manifest.json")).expect("a manifest"))
+            .expect("JSON");
+    assert_eq!(
+        manifest["scopes"][0]["layers"],
+        json!({"base":"present","syntax":"not-requested","calls":"not-requested"})
+    );
+}
+
+#[test]
+fn selecting_base_and_syntax_keeps_declared_calls_without_the_calls_layer() {
+    let (case, root) = rust_flow();
+    let out = case.temp.path().join("snapshot");
+    ok(&index_command(&case, &root, &out)
+        .args(["--layers", "base,syntax"])
+        .output()
+        .expect("gosanja runs"));
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(out.join("manifest.json")).expect("a manifest"))
+            .expect("JSON");
+    let scope = &manifest["scopes"][0];
+    assert_eq!(
+        scope["layers"],
+        json!({"base":"present","syntax":"present","calls":"not-requested"})
+    );
+    assert_eq!(scope["builds"], json!([]));
+
+    let relations = table(&out, "relations.jsonl");
+    let gaps = table(&out, "gaps.jsonl");
+    for rows in [&relations, &gaps] {
+        let compiled: Vec<_> = rows
+            .iter()
+            .filter(|r| r["src"] == "adapter:rust/calls")
+            .collect();
+        assert_eq!(compiled, Vec::<&Value>::new());
+    }
+    let syntax_call = json!({
+        "from":"cargo:flow-kit:ping().","to":"cargo:flow-kit:pong().","rel":"call",
+        "mechanism":"unknown","resolution":"declared","src":"adapter:rust/syntax",
+        "evidence":[{"file":KIT,"line":53,"col":4,"end":[53,8]}]
+    });
+    assert!(relations.contains(&syntax_call), "{relations:?}");
+    ok(&case
+        .command(engine())
+        .arg("validate")
+        .arg(&out)
+        .output()
+        .expect("gosanja runs"));
 }
 
 // Every described item joins its entity, and the calls and gaps the syntax layer implies are there.

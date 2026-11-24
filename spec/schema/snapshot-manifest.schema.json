@@ -31,8 +31,8 @@
             "type": "object",
             "properties": {
               "base": {"enum": ["present", "absent", "failed"]},
-              "syntax": {"enum": ["present", "absent", "failed"]},
-              "calls": {"enum": ["present", "absent", "failed"]}
+              "syntax": {"enum": ["present", "absent", "failed", "not-requested"]},
+              "calls": {"enum": ["present", "absent", "failed", "not-requested"]}
             },
             "required": ["base", "syntax", "calls"]
           },

@@ -1,14 +1,62 @@
 # Changelog
 
-Changes to gosanja and to its two interfaces. The interfaces are versioned separately from the
+Changes to gosanja and to its interfaces. The interfaces are versioned separately from the
 release; see [spec/README.md](spec/README.md). While an interface's major version is 0, a minor
 change may break compatibility, and an entry here says so when it does.
 
 ## Unreleased
 
+### Adapter contract 0.3
+
+Breaks 0.2. An engine of 0.3 refuses an adapter that declares 0.2. An adapter has to:
+
+- declare `0.3` in its manifest and in `result.json`;
+- accept `index --root <dir> --out <dir> [--layers <names>]` with the options in any order.
+  `<names>` is a comma-separated list of the layers the run is asked for, `base` always among
+  them and only layers the manifest lists; without the option the run is asked for every layer
+  the manifest lists. A list it cannot accept makes it exit 2 and write nothing;
+- do no work for a layer it was not asked for, write no file of it, and give `result.json` an
+  entry for each layer it was asked for and none for another;
+- report `builds` only when it was asked for `calls`; then, as before, whether the calls layer
+  succeeded or failed.
+
+The engine always passes `--layers`, with the layers the user asked for that the manifest
+lists. It compares the contract of `result.json` with the manifest's before it reads anything
+else, and refuses a different one with exit 3. It then removes the entries of the layers it
+did not pass, and `builds` unless it passed `calls`, before it checks the file against its
+schema. Two results that 0.2 handled otherwise: build contexts reported by an adapter that
+does not offer the calls layer are no longer copied into the snapshot, and a malformed entry
+for a layer the adapter does not offer is dropped unread instead of failing the run.
+
+### Snapshot schema 0.3
+
+Breaks 0.2. A reader of 0.2 refuses a 0.3 snapshot, and `gosanja validate` and `gosanja diff`
+refuse a 0.2 snapshot, which has to be indexed again. A reader of 0.3 has to:
+
+- accept `not-requested` as the state of `layers.syntax` and `layers.calls`, never of
+  `layers.base`, and read it as a layer that was not asked for: it says nothing about whether
+  the adapter offers the layer, and it is not `absent`, which still means asked for and not
+  offered, with a `missing-layer` gap, or, in a snapshot made from an index given with `--scip`,
+  that there was no adapter to ask, with no gap. A `not-requested` layer has no gap;
+- read `builds` as the build contexts the adapter reported in a run that asked for `calls`,
+  whether its calls layer succeeded or failed; a snapshot whose run did not ask for `calls`
+  has none.
+
+### Diff schema 0.2
+
+Breaks 0.1. A reader of diff 0.2 refuses a diff 0.1, and `gosanja diff` takes inputs of
+snapshot schema 0.3 only. A reader of a diff has to accept `not-requested` in each side's
+`layers`, and read `not_compared` with one more reason: a layer is left out when either side
+did not ask for it. Every pair of states that diff 0.1 could meet keeps its result. An earlier
+diff 0.1 at `--out` is replaced like any earlier diff.
+
+Two snapshots made with and without a syntax layer that supplies bodies can differ in compared
+rows, because bodies decide which definition owns a reference; `spec/diff.md` and
+[docs/diff.md](docs/diff.md) say how. The Rust adapter's syntax layer supplies no bodies.
+
 ### Rust adapter: which attributes and compilers the calls layer accepts
 
-Neither interface changes. The calls layer judges attributes in more places and accepts fewer
+This change itself changes neither interface. The calls layer judges attributes in more places and accepts fewer
 compilers, and that changes which call rows a snapshot of a Rust project holds:
 
 - An inner attribute at the top of a file no longer withholds every row of the file when it
@@ -37,8 +85,9 @@ layer trusts and can produce false rows.
 
 ### Rust adapter: the calls layer
 
-`gosanja-adapter-rust` now gives the calls layer. Neither interface changes: the adapter
-contract stays 0.2 and the snapshot schema 0.2, so no reader or adapter has to change. What a
+`gosanja-adapter-rust` now gives the calls layer. The calls layer itself changes neither
+interface. The versions above move for the choice of layers, which lets a run leave out the
+calls layer and its build, so an adapter or a reader of this release follows them. What a
 snapshot of a Rust project now holds:
 
 - `call` relations with `src: adapter:rust/calls`, `mechanism: static` and
@@ -127,10 +176,21 @@ documents which of these it runs or leaves in force.
 - `--adapter` and `adapter describe` take an adapter name or a path. **Changed:** a bare word
   is now an adapter name and is no longer run as a program found on `PATH`; to run a program,
   give its path.
+- `gosanja index --layers <names>` asks the adapter for some of its layers, for example
+  `--layers base,syntax` to leave out the calls layer and, with the Rust adapter, the build it
+  needs; the base indexer may still build the project's build scripts and procedural macros.
+  Without the option all layers are asked for and the snapshot is as before, apart from the
+  versions and the two cases under Adapter contract 0.3. An invalid list, and `--layers`
+  with `--scip`, exit 2 before any adapter runs. The adapter is chosen as before; the list
+  plays no part. How to choose and what changes between snapshots of different lists is in
+  [docs/adapters.md](docs/adapters.md#choosing-layers).
+- `gosanja-adapter-rust index` takes `--layers`: without `calls` it runs no calls build,
+  without `syntax` it does not read the sources for the syntax layer, and the base layer's
+  status no longer depends on the syntax layer's.
 - When an adapter's base layer fails, the error names the adapter's first diagnostic code.
 - The adapter cache directory may not lie in the output directory.
 - `gosanja diff <old> <new> --out <dir>` compares two snapshots and writes a diff (diff schema
-  0.1). It exits 2 for an input of another schema or with no scope or several, and for an
+  0.2). It exits 2 for an input of another schema or with no scope or several, and for an
   output that is, contains or lies inside an input, or that is a non-empty directory other
   than an earlier diff; it exits 3 for an input that fails validation. How to read a diff is
   in [docs/diff.md](docs/diff.md).
@@ -145,7 +205,10 @@ documents which of these it runs or leaves in force.
   given `format` marker (`publish::publish` is unchanged); `diff::compare` takes two
   snapshot directories, refuses either by its manifest's schema before any table is read, and
   then validates and compares them; `write::write_diff` and `write::serialise_diff` write the
-  result.
+  result. `LayerState` has the variant `NotRequested`, which an exhaustive `match` must
+  handle. `Described::run` keeps its signature and asks for every known layer;
+  `Described::run_with_layers` takes a `contract::LayerRequest`, which parses a `--layers`
+  list.
 
 ### Snapshot schema 0.1
 

@@ -16,7 +16,7 @@ stored here. What each indexer writes for these fixtures is recorded in
 | `go-basic` | `greet` is defined at `main.go` [2,5,10]; the reference to it at [7,5,10] lies in `main`'s body [6,0,8,1] | `scip-go` 0.2.10 built with Go 1.27.3 |
 | `ts-basic` | `greet` is defined at `src/index.ts` [0,16,21]; the reference to it at [5,9,14] lies in `run`'s body [4,0,6,1] (UTF-16 columns) | `@sourcegraph/scip-typescript` 0.6.2 on Node 26.13.1 with TypeScript 6.0.3 |
 | `diff-basic` | two versions of one crate, `old/` and `new/`, each with its index and with its snapshot in `expected/`; one case of every kind of change a diff reports, the three candidate scores worked by hand in `NOTE.md`; the diff of the two snapshots is `expected/`, equal to `spec/examples/diff-basic` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1; snapshots by this workspace's engine and Rust adapter |
-| `diff-public` | a frozen pair of public snapshots, base64 v0.20.0 and v0.21.0, with `truth.tsv`, the pairs listed before any matcher ran; provenance and licence in `NOTICE.md`; no index, and not rebuilt | gosanja 0.2.0 from `rust-analyzer 0.3.3049-standalone` indexes, rustc 1.99.1 (see `NOTICE.md`) |
+| `diff-public` | a frozen pair of public snapshots, base64 v0.20.0 and v0.21.0, with `truth.tsv`, the pairs listed before any matcher ran; provenance and licence in `NOTICE.md`; no index, and not rebuilt; at snapshot schema 0.2, which the reader refuses, so the matcher's test reads copies re-stamped to the current schema | gosanja 0.2.0 from `rust-analyzer 0.3.3049-standalone` indexes, rustc 1.99.1 (see `NOTICE.md`) |
 
 ## Regenerating the indexes
 

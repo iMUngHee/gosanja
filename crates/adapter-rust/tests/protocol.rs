@@ -61,7 +61,7 @@ fn manifest() {
     assert!(validator(Schema::AdapterManifest).is_valid(&r), "{r}");
     assert_eq!(
         r,
-        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.2","languages":["rust"],"layers":["base","syntax","calls"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
+        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.3","languages":["rust"],"layers":["base","syntax","calls"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
     );
 }
 #[test]
@@ -1629,4 +1629,164 @@ exit 0"#
             assert!(stderr.contains(release), "{stderr}");
         }
     }
+}
+
+#[test]
+fn requested_layers_control_output_and_the_cargo_rustc_build() {
+    let choices = [
+        (Some("base,syntax"), true, false),
+        (Some("base,calls"), false, true),
+        (Some("calls,base"), false, true),
+        (Some("base"), false, false),
+        (None, true, true),
+    ];
+    for (i, (list, syntax, calls)) in choices.into_iter().enumerate() {
+        let c = Case::new();
+        probe_with_binary(&c);
+        let deep = format!(
+            "fn deep() {{ {} }}",
+            "if true { ".repeat(40) + &"} ".repeat(40)
+        );
+        fs::write(c.root.join("src/unused.rs"), deep).unwrap();
+        write_index(
+            &c,
+            &[
+                ("src/lib.rs", probe_document()),
+                ("src/main.rs", vec![]),
+                ("src/unused.rs", vec![]),
+            ],
+        );
+        let log = c.temp.path().join("cargo.log");
+        wrap(
+            &c,
+            "cargo",
+            &format!(
+                "{{ printf '%s\\t' \"$@\"; printf '\\n'; }} >> '{}'\nexec \"$REAL\" \"$@\"",
+                log.display()
+            ),
+        );
+        let mut command = c.adapter();
+        command.arg("index");
+        if i == 0 {
+            command.args(["--layers", list.unwrap()]);
+        }
+        command.arg("--root").arg(&c.root);
+        if i == 1 {
+            command.args(["--layers", list.unwrap()]);
+        }
+        command.arg("--out").arg(&c.out);
+        if i >= 2
+            && let Some(selection) = list
+        {
+            command.args(["--layers", selection]);
+        }
+        let output = command.output().unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(output.status.success(), "{stderr}");
+        let result: Value =
+            serde_json::from_slice(&fs::read(c.out.join("result.json")).unwrap()).unwrap();
+        assert!(
+            validator(Schema::AdapterResult).is_valid(&result),
+            "{result}"
+        );
+        let layers = result["layers"].as_object().unwrap();
+        assert_eq!(layers.len(), 1 + usize::from(syntax) + usize::from(calls));
+        assert_eq!(layers["base"]["status"], "ok", "{result}");
+        assert_eq!(layers.contains_key("syntax"), syntax);
+        assert_eq!(layers.contains_key("calls"), calls);
+        assert_eq!(c.out.join("syntax.jsonl").is_file(), syntax);
+        assert_eq!(c.out.join("calls.jsonl").is_file(), calls);
+        assert_eq!(result.get("builds").is_some(), calls);
+        assert_eq!(stderr.contains("outline-too-deep"), syntax, "{stderr}");
+        if calls {
+            assert!(!calls_rows(&c).is_empty(), "{result}");
+        }
+        let cargo = fs::read_to_string(log).unwrap();
+        let targets: Vec<_> = cargo
+            .lines()
+            .filter(|line| line.starts_with("rustc\t"))
+            .map(|line| {
+                let (cargo_args, _) = line.split_once("\t--\t").expect("rustc argument boundary");
+                let (_, target) = cargo_args.split_once("\t-p\t").expect("package selection");
+                target
+            })
+            .collect();
+        let expected: &[&str] = if calls {
+            &["probe@0.1.0\t--bin\tprobe", "probe@0.1.0\t--lib"]
+        } else {
+            &[]
+        };
+        assert_eq!(targets, expected, "{cargo}");
+    }
+
+    let c = Case::new();
+    probe(&c, "", &[]);
+    fs::remove_file(c.root.join("Cargo.lock")).unwrap();
+    let result = c.run(c.index().args(["--layers", "base,calls"]));
+    assert_eq!(
+        result["layers"],
+        json!({
+            "base": {"status":"failed", "diagnostics":[{"code":"lockfile-missing"}]},
+            "calls": {"status":"failed", "diagnostics":[{"code":"base-failed"}]},
+        })
+    );
+}
+
+#[test]
+fn invalid_layer_lists_leave_the_output_empty() {
+    for (list, diagnostic) in [
+        ("syntax", "must include \"base\""),
+        ("base,base", "duplicate layer \"base\""),
+        ("base,graph", "unknown layer \"graph\""),
+        ("base,", "unknown layer \"\""),
+        ("base, syntax", "unknown layer \" syntax\""),
+        ("", "unknown layer \"\""),
+    ] {
+        let c = Case::new();
+        let output = c.index().args(["--layers", list]).output().unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains(diagnostic), "{stderr}");
+        assert!(fs::read_dir(&c.out).unwrap().next().is_none());
+    }
+}
+
+#[test]
+fn duplicate_index_options_are_rejected_before_writing() {
+    let c = Case::new();
+    for (option, value) in [
+        ("--root", c.root.as_os_str()),
+        ("--out", c.out.as_os_str()),
+        ("--layers", std::ffi::OsStr::new("base")),
+    ] {
+        let mut command = c.index();
+        if option == "--layers" {
+            command.args(["--layers", "base,syntax"]);
+        }
+        let output = command.arg(option).arg(value).output().unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        assert!(
+            stderr.contains(&format!("unexpected index option {option}")),
+            "{stderr}"
+        );
+        assert!(fs::read_dir(&c.out).unwrap().next().is_none());
+    }
+}
+
+#[test]
+fn only_index_accepts_index_options() {
+    let c = Case::new();
+    let output = c
+        .adapter()
+        .arg("bogus")
+        .arg("--root")
+        .arg(&c.root)
+        .arg("--out")
+        .arg(&c.out)
+        .args(["--layers", "base"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(fs::read_dir(&c.out).unwrap().next().is_none());
 }
