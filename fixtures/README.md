@@ -13,6 +13,8 @@ stored here. What each indexer writes for these fixtures is recorded in
 | `rust-recall` | every identifier token in `src/lib.rs` that names a definition of the crate, other than that definition's own name, is a row of `expected-refs.tsv`: file, line, start byte column, then the file, line and column of the name token it names | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
 | `go-basic` | `greet` is defined at `main.go` [2,5,10]; the reference to it at [7,5,10] lies in `main`'s body [6,0,8,1] | `scip-go` 0.2.10 built with Go 1.27.3 |
 | `ts-basic` | `greet` is defined at `src/index.ts` [0,16,21]; the reference to it at [5,9,14] lies in `run`'s body [4,0,6,1] (UTF-16 columns) | `@sourcegraph/scip-typescript` 0.6.2 on Node 26.13.1 with TypeScript 6.0.3 |
+| `diff-basic` | two versions of one crate, `old/` and `new/`, each with its index and with its snapshot in `expected/`; one case of every kind of change a diff reports, the three candidate scores worked by hand in `NOTE.md`; the diff of the two snapshots is `expected/`, equal to `spec/examples/diff-basic` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1; snapshots by this workspace's engine and Rust adapter |
+| `diff-public` | a frozen pair of public snapshots, base64 v0.20.0 and v0.21.0, with `truth.tsv`, the pairs listed before any matcher ran; provenance and licence in `NOTICE.md`; no index, and not rebuilt | gosanja 0.2.0 from `rust-analyzer 0.3.3049-standalone` indexes, rustc 1.99.1 (see `NOTICE.md`) |
 
 ## Regenerating the indexes
 
@@ -25,6 +27,13 @@ fixtures/regenerate.sh              # every fixture
 fixtures/regenerate.sh rust-basic   # one fixture
 fixtures/regenerate.sh rust-flow rust-recall
 ```
+
+`fixtures/regenerate.sh diff-basic` also writes each side's snapshot, `old/expected` and
+`new/expected`. It builds this workspace's `gosanja` and `gosanja-adapter-rust` into a
+temporary directory, or uses those in the directory named by `GOSANJA_BIN`. It then runs
+`gosanja index --adapter <that adapter>` on each side's copy at its fixed path, with the
+chosen `rust-analyzer` first on `PATH`. Two runs give the same bytes. It does not touch the
+diff `expected/`, which is the specification's example, nor `diff-public`.
 
 Indexers write the directory they ran in into the index metadata, so the script copies each
 fixture to the fixed path `/tmp/gosanja-fixtures/<fixture>`, indexes it there and copies only

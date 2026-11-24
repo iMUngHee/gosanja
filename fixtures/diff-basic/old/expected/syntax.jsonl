@@ -1,0 +1,15 @@
+{"key":"cargo:diff-basic:both_g().","visibility":"pub","outline":[{"k":"call","range":[43,4,43,14],"callee":[43,11,43,12]},{"k":"call","range":[43,17,43,27],"callee":[43,24,43,25]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:callee().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:caller().","visibility":"pub","outline":[{"k":"call","range":[31,4,31,12],"callee":[31,4,31,10]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:grows().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:hidden().","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:main().~1","outline":[{"k":"call","range":[1,12,1,32],"callee":[1,24,1,30]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:main().~2","outline":[{"k":"call","range":[1,12,1,32],"callee":[1,24,1,30]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:mover().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:old_name().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:removed().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:uses_dep().","visibility":"pub","outline":[{"k":"call","range":[39,4,39,17],"callee":[39,9,39,15]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:uses_f().","visibility":"pub","outline":[{"k":"call","range":[47,4,47,14],"callee":[47,11,47,12]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:uses_moved().","visibility":"pub","outline":[{"k":"call","range":[19,4,19,12],"callee":[19,4,19,9]},{"k":"call","range":[19,15,19,24],"callee":[19,15,19,21]}],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:util/stays().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}
+{"key":"cargo:diff-basic:wander().","visibility":"pub","outline":[],"src":"adapter:rust/syntax"}

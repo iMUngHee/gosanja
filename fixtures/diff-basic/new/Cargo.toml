@@ -1,0 +1,12 @@
+[workspace]
+
+[package]
+name = "diff-basic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dep = { path = "../deps/dep-0.1" }
+dep2 = { package = "dep", path = "../deps/dep-0.2" }
+pair1 = { package = "pair", path = "../deps/pair-1" }
+pair2 = { package = "pair", path = "../deps/pair-2" }

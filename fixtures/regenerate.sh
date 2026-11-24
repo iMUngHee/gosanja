@@ -2,12 +2,18 @@
 # Rebuilds the checked-in index.scip of each fixture.
 #
 # Usage: fixtures/regenerate.sh [rust-basic] [rust-flow] [rust-recall] [go-basic] [ts-basic]
+#                               [diff-basic]
 # With no argument every fixture is rebuilt. Indexers record the absolute
 # directory they ran in, so each fixture is copied to the fixed path
 # /tmp/gosanja-fixtures/<fixture> and indexed there; only index.scip comes
 # back, and build output never lands in the repository. Override the indexer
 # programs with RUST_ANALYZER, SCIP_GO and SCIP_TYPESCRIPT, and record the
 # versions this prints in fixtures/README.md when you commit new indexes.
+#
+# diff-basic also gets each side's snapshot, old/expected and new/expected,
+# written by this workspace's engine with its Rust adapter, which runs the
+# indexer itself. Both are built into a temporary directory; GOSANJA_BIN names
+# a directory holding gosanja and gosanja-adapter-rust to use instead.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -38,10 +44,40 @@ index() {
     echo "$fixture: $("$1" --version)"
 }
 
-[ "$#" -gt 0 ] || set -- rust-basic rust-flow rust-recall go-basic ts-basic
+# The two sides share the path dependencies under deps/, so the whole fixture is
+# copied, and each side is indexed and then snapshotted from the same copy.
+diff_basic() {
+    rm -rf "${root:?}/diff-basic"
+    mkdir -p "$root/diff-basic"
+    copies="$copies diff-basic"
+    (cd "$here/diff-basic" && tar --exclude=./expected --exclude=./old/expected \
+        --exclude=./new/expected --exclude=./old/index.scip --exclude=./new/index.scip -cf - .) |
+        (cd "$root/diff-basic" && tar -xf -)
+    if [ -n "${GOSANJA_BIN:-}" ]; then
+        bin=$GOSANJA_BIN
+    else
+        CARGO_TARGET_DIR=$cargo_target/tools cargo build --quiet --manifest-path "$here/../Cargo.toml" \
+            -p gosanja -p gosanja-adapter-rust >&2
+        bin=$cargo_target/tools/debug
+    fi
+    indexer_dir=$(dirname "$(command -v "$rust_analyzer")")
+    for side in old new; do
+        side_root=$root/diff-basic/$side
+        (cd "$side_root" && CARGO_TARGET_DIR=$cargo_target "$rust_analyzer" scip . >&2)
+        mv "$side_root/index.scip" "$here/diff-basic/$side/index.scip"
+        rm -rf "${here:?}/diff-basic/$side/expected"
+        PATH=$indexer_dir:$PATH XDG_CACHE_HOME=$cargo_target/cache \
+            "$bin/gosanja" index --adapter "$bin/gosanja-adapter-rust" --root "$side_root" \
+            --out "$here/diff-basic/$side/expected" >&2
+    done
+    echo "diff-basic: $("$rust_analyzer" --version)"
+}
+
+[ "$#" -gt 0 ] || set -- rust-basic rust-flow rust-recall go-basic ts-basic diff-basic
 for fixture in "$@"; do
     case $fixture in
     rust-basic | rust-flow | rust-recall) index "$fixture" "$rust_analyzer" scip . ;;
+    diff-basic) diff_basic ;;
     go-basic) index go-basic "$scip_go" index --module-version v1.0.0 ;;
     ts-basic) index ts-basic "$scip_typescript" index --no-progress-bar ;;
     *)
