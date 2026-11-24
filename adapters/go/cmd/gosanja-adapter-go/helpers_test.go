@@ -95,15 +95,65 @@ func (w *world) stub(index string) {
 	w.write(filepath.Join(w.bin, "scip-go"), text, 0o755)
 }
 
-// recordingGo replaces go with a script that logs each invocation's arguments, working
-// directory and environment, then runs the real go.
+// recorderSource is a program that logs its arguments, working directory and exact
+// environment to the file named on the first line of <itself>.conf, then executes the program
+// named on the second. A shell script cannot stand in for it: the shell adds PWD by itself.
+const recorderSource = `package main
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
+)
+
+func main() {
+	self, _ := os.Executable()
+	conf, err := os.ReadFile(self + ".conf")
+	if err != nil {
+		os.Exit(125)
+	}
+	lines := strings.Split(strings.TrimSpace(string(conf)), "\n")
+	cwd, _ := os.Getwd()
+	cwd, _ = filepath.EvalSymlinks(cwd)
+	var b strings.Builder
+	b.WriteString("cwd=" + cwd + "\n")
+	for _, a := range os.Args[1:] {
+		b.WriteString("arg=" + a + "\n")
+	}
+	vars := os.Environ()
+	sort.Strings(vars)
+	for _, v := range vars {
+		b.WriteString(v + "\n")
+	}
+	b.WriteString("\n")
+	f, err := os.OpenFile(lines[0], os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		os.Exit(125)
+	}
+	f.WriteString(b.String())
+	f.Close()
+	os.Exit(func() int { syscall.Exec(lines[1], append([]string{lines[1]}, os.Args[1:]...), os.Environ()); return 126 }())
+}
+`
+
+// recordingGo replaces go with a recorder that logs each invocation's arguments, working
+// directory and exact environment, then runs the real go.
 func (w *world) recordingGo() {
 	w.t.Helper()
 	w.gorec = filepath.Join(w.dir, "go.record")
+	src := filepath.Join(w.dir, "recorder", "main.go")
+	w.write(src, recorderSource, 0o644)
 	path := filepath.Join(w.bin, "go")
 	_ = os.Remove(path)
-	w.write(path, "#!/bin/sh\n{ printf 'cwd=%s\\n' \"$(pwd -P)\"; for a do printf 'arg=%s\\n' \"$a\"; done; env | LC_ALL=C sort; printf '\\n'; } >> '"+
-		w.gorec+"'\nexec '"+realGo(w.t)+"' \"$@\"\n", 0o755)
+	cmd := exec.Command(realGo(w.t), "build", "-o", path, src)
+	cmd.Dir = filepath.Dir(src)
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		w.t.Fatalf("build the recorder: %v\n%s", err, out)
+	}
+	w.write(path+".conf", w.gorec+"\n"+realGo(w.t)+"\n", 0o644)
 }
 
 // fakeGo replaces go with a script.
@@ -257,7 +307,10 @@ func readOnly(t *testing.T, dir string) {
 }
 
 // run starts the adapter in process and returns its exit status and standard error.
+// run runs the command in process. go/packages finds go through the process's own PATH, as
+// it does when the caller starts the adapter, so the process takes the caller's PATH here.
 func (w *world) run(caller env.Caller, goos string, args ...string) (int, string) {
+	w.t.Setenv("PATH", caller.Vars["PATH"])
 	var stdout, stderr bytes.Buffer
 	code := run(args, caller, goos, &stdout, &stderr)
 	return code, stderr.String()

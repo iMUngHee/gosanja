@@ -238,6 +238,12 @@ func TestPreconditions(t *testing.T) {
 			if indexRuns(t, w) != 0 {
 				t.Error("the indexer ran")
 			}
+			if e := result(t, outs[0]).Layers["syntax"]; e.Status != "failed" || len(e.Diagnostics) != 1 || e.Diagnostics[0].Code != "base-failed" {
+				t.Errorf("syntax %+v, want failed with base-failed", e)
+			}
+			if _, err := os.Stat(filepath.Join(outs[0], "syntax.jsonl")); err == nil {
+				t.Error("syntax.jsonl written for a failed base layer")
+			}
 			if after := listing(t, root); !reflect.DeepEqual(before, after) {
 				t.Errorf("the root changed:\n%v\n%v", before, after)
 			}

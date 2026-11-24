@@ -29,7 +29,7 @@ func TestDescribe(t *testing.T) {
 	}
 	want := map[string]any{
 		"contract": "0.3", "name": "go", "version": strings.TrimSuffix(string(version), "\n"),
-		"languages": []any{"go"}, "position_encoding": "utf-8", "layers": []any{"base"},
+		"languages": []any{"go"}, "position_encoding": "utf-8", "layers": []any{"base", "syntax"},
 		"requires": []any{map[string]any{"tool": "go"}, map[string]any{"tool": "scip-go"}},
 		"markers":  []any{"go.mod"},
 	}

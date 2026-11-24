@@ -17,6 +17,7 @@ import (
 	"gosanja/adapters/go/internal/contract"
 	"gosanja/adapters/go/internal/env"
 	"gosanja/adapters/go/internal/paths"
+	"gosanja/adapters/go/internal/syntax"
 )
 
 const usage = "usage: gosanja-adapter-go describe | index --root <dir> --out <dir> [--layers <names>]"
@@ -38,7 +39,7 @@ func Manifest() contract.Manifest {
 		Version:          adaptergo.Version(),
 		Languages:        []string{"go"},
 		PositionEncoding: "utf-8",
-		Layers:           []string{contract.Base},
+		Layers:           []string{contract.Base, contract.Syntax},
 		Requires:         []contract.Requirement{{Tool: "go"}, {Tool: "scip-go"}},
 		Markers:          []string{"go.mod"},
 	}
@@ -98,6 +99,7 @@ func parse(args []string) (options, error) {
 		values[name] = args[i+1]
 	}
 	o.root, o.out = values["--root"], values["--out"]
+	o.request = contract.Request{Syntax: true}
 	if o.root == "" || o.out == "" {
 		return o, invalid{"--root and --out are required"}
 	}
@@ -129,11 +131,49 @@ func index(args []string, caller env.Caller, goos string, stderr io.Writer) erro
 		Layers:   map[string]contract.Entry{contract.Base: outcome.Entry},
 		Tools:    outcome.Tools,
 	}
+	if o.request.Syntax {
+		entry, err := syntaxLayer(root, out, outcome, stderr)
+		if err != nil {
+			return err
+		}
+		result.Layers[contract.Syntax] = entry
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(out, "result.json"), append(data, '\n'), 0o644)
+}
+
+// layer computes the syntax layer; tests replace it to see whether it is called.
+var layer = syntax.Layer
+
+// syntaxLayer runs the syntax layer over the base layer's outcome and writes syntax.jsonl when
+// the layer succeeds. A failed base layer fails it with base-failed, without loading anything.
+func syntaxLayer(root, out string, outcome base.Outcome, stderr io.Writer) (contract.Entry, error) {
+	if outcome.Failed() {
+		return contract.Failed("base-failed"), nil
+	}
+	files := make(map[string]syntax.File, len(outcome.Reads))
+	for rel, read := range outcome.Reads {
+		files[rel] = syntax.File{Code: read.Code, HasLineDirective: read.LineDirective}
+	}
+	entry, facts := layer(context.Background(), syntax.Input{
+		Root: root, Env: outcome.Env, Files: files, Documents: outcome.Documents,
+		Inventory: outcome.Inventory.Owned(root), Stderr: stderr, Index: outcome.Index,
+	})
+	if entry.Status != "ok" {
+		return entry, nil
+	}
+	var rows []byte
+	for _, fact := range facts {
+		row, err := json.Marshal(fact)
+		if err != nil {
+			return contract.Entry{}, err
+		}
+		rows = append(append(rows, row...), '\n')
+	}
+	return entry, os.WriteFile(filepath.Join(out, "syntax.jsonl"), rows, 0o644)
 }
 
 // locations checks --root and --out and resolves both: the root an existing directory, the

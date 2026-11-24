@@ -16,8 +16,50 @@ import (
 	"gosanja/adapters/go/internal/env"
 )
 
-// shellAdded are the variables the recording shell sets by itself.
-var shellAdded = map[string]bool{"PWD": true, "SHLVL": true, "_": true}
+// stubAdded are the variables the stub's shell sets by itself, with any value.
+var stubAdded = map[string]string{"PWD": "", "SHLVL": "", "_": ""}
+
+// releaseTagProbe is the one go command go/packages runs with GO111MODULE=off.
+var releaseTagProbe = []string{"list", "-e", "-f", "{{context.ReleaseTags}}", "--", "unsafe"}
+
+// own reports whether a logged go invocation is one the adapter starts itself rather than one
+// go/packages starts for the syntax layer.
+func own(args []string) bool {
+	line := strings.Join(args, " ")
+	return line == "version" || line == "list -m -json" || line == "mod edit -json" ||
+		strings.HasPrefix(line, "list -e -test -deps -json=ImportPath,")
+}
+
+// goAdded are the variables a logged go invocation may carry beyond the child environment:
+// none for the adapter's own, PWD set to the working directory for go/packages', and
+// GO111MODULE=off as well for its release-tag probe.
+func goAdded(inv invocation, root string) map[string]string {
+	switch {
+	case own(inv.args):
+		return nil
+	case reflect.DeepEqual(inv.args, releaseTagProbe):
+		return map[string]string{"PWD": root, "GO111MODULE": "off"}
+	default:
+		return map[string]string{"PWD": root}
+	}
+}
+
+// checkGo checks every logged go invocation after the first, and that go/packages ran, with its
+// release-tag probe among its commands.
+func checkGo(t *testing.T, record []invocation, root, out string, vendor bool) {
+	t.Helper()
+	loader, probe := 0, false
+	for _, inv := range record {
+		checkChild(t, inv, root, out, vendor, goAdded(inv, root))
+		if !own(inv.args) {
+			loader++
+			probe = probe || reflect.DeepEqual(inv.args, releaseTagProbe)
+		}
+	}
+	if loader == 0 || !probe {
+		t.Errorf("go/packages ran %d go commands, the release-tag probe among them: %v; logged %d", loader, probe, len(record))
+	}
+}
 
 // passedNames are the caller variables a child may carry unchanged.
 var passedNames = map[string]bool{"PATH": true, "HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
@@ -55,14 +97,15 @@ func checkBootstrap(t *testing.T, inv invocation, out, envFile string) {
 		}
 	}
 	for k := range inv.vars {
-		if _, ok := want[k]; !ok && !shellAdded[k] && !passedNames[k] && !settingName(k) {
+		if _, ok := want[k]; !ok && !passedNames[k] && !settingName(k) {
 			t.Errorf("bootstrap carries %s", k)
 		}
 	}
 }
 
-// checkChild checks a later invocation: the root as working directory and the child environment alone.
-func checkChild(t *testing.T, inv invocation, root, out string, vendor bool) {
+// checkChild checks a later invocation: the root as working directory and the child
+// environment, with nothing else but the added variables (an empty value admits any).
+func checkChild(t *testing.T, inv invocation, root, out string, vendor bool, added map[string]string) {
 	t.Helper()
 	work := filepath.Join(out, "work")
 	if inv.cwd != root {
@@ -83,8 +126,13 @@ func checkChild(t *testing.T, inv invocation, root, out string, vendor bool) {
 			t.Errorf("%v: %s=%q, want %q", inv.args, k, inv.vars[k], v)
 		}
 	}
-	for k := range inv.vars {
-		if _, ok := want[k]; !ok && !shellAdded[k] && !passedNames[k] && !settingName(k) {
+	for k, v := range inv.vars {
+		extra, ok := added[k]
+		switch {
+		case ok && extra != "" && v != extra:
+			t.Errorf("%v: %s=%q, want %q", inv.args, k, v, extra)
+		case ok:
+		case want[k] == "" && !passedNames[k] && !settingName(k):
 			t.Errorf("%v carries %s", inv.args, k)
 		}
 	}
@@ -170,8 +218,11 @@ func TestEnvironment(t *testing.T) {
 			if c.proxy != nil {
 				proxy = c.proxy(w)
 			}
+			checkGo(t, record[1:], root, out, false)
+			for _, inv := range readRecord(t, w.record) {
+				checkChild(t, inv, root, out, false, stubAdded)
+			}
 			for _, inv := range append(record[1:], readRecord(t, w.record)...) {
-				checkChild(t, inv, root, out, false)
 				if inv.vars["GOPROXY"] != proxy {
 					t.Errorf("%v: GOPROXY=%q, want %q", inv.args, inv.vars["GOPROXY"], proxy)
 				}
@@ -393,7 +444,8 @@ func TestEnvironmentVendor(t *testing.T) {
 	w.recordingGo()
 	root := w.flow("go-flow")
 	w.goIn(root, nil, "mod", "vendor")
-	out, code, stderr := w.index(w.caller(map[string]string{"GOMODCACHE": filepath.Join(w.dir, "empty-cache")}), root)
+	empty := filepath.Join(w.dir, "empty-cache")
+	out, code, stderr := w.index(w.caller(map[string]string{"GOMODCACHE": empty}), root)
 	if code != 0 || baseEntry(t, out).Status != "ok" {
 		t.Fatalf("exit %d, base %+v: %s", code, baseEntry(t, out), stderr)
 	}
@@ -401,7 +453,22 @@ func TestEnvironmentVendor(t *testing.T) {
 	if len(record) < 2 {
 		t.Fatalf("record %+v", record)
 	}
-	for _, inv := range append(record[1:], readRecord(t, w.record)...) {
-		checkChild(t, inv, root, out, true)
+	checkGo(t, record[1:], root, out, true)
+	for _, inv := range readRecord(t, w.record) {
+		checkChild(t, inv, root, out, true, stubAdded)
+	}
+	// Through the engine: a snapshot is published, with the external row of the x/mod function
+	// the fixture calls. The stub serves the checked-in index, so the row's attribution is the
+	// real indexer's; the live check runs that.
+	snap := filepath.Join(w.dir, "snapshot")
+	if code, stderr := w.engineWith(empty, "index", "--root", root, "--out", snap); code != 0 {
+		t.Fatalf("gosanja index exit %d: %s", code, stderr)
+	}
+	found := false
+	for _, e := range jsonl(t, filepath.Join(snap, "externals.jsonl")) {
+		found = found || e["symbol"] == "scip-go gomod golang.org/x/mod v0.43.0 `golang.org/x/mod/semver`/IsValid()."
+	}
+	if !found {
+		t.Errorf("no external row for semver.IsValid")
 	}
 }
