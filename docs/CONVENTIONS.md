@@ -10,10 +10,14 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
 - **A gap, never a guess.** When an input does not establish something, the engine leaves it
   out, and when it can tell that something is missing it writes a row to `gaps.jsonl`. A
   reference is not a call; a declaration is not what runs.
-- **Every row says where it came from** (`src`), and a call says how far its target was
-  established (`resolution`).
-- **Same input, same bytes.** Output is sorted, carries no timestamp and no absolute path, and
-  does not depend on the order in which an indexer happened to write things.
+- **Every row says where it came from.** A row of a snapshot has `src`, and a call says how far
+  its target was established (`resolution`). A row of a diff is a comparison of two snapshots,
+  and the diff names its two inputs in its manifest; only a relation row of a call carries a
+  `src`, the snapshot's, because the layer that recorded a call is part of what the call is.
+- **Same input, same bytes.** Output is sorted and does not depend on the order in which an
+  indexer happened to write things. The engine adds no timestamp and no path of the machine it
+  runs on; every path field is relative to the analysed root. A value copied from an input, such
+  as an attribute an adapter reported, is written as it was recorded, whatever it contains.
 
 ## Boundaries
 
@@ -22,11 +26,12 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
   that branches on a language name, or recovers meaning from source text, is a defect.
 - **Indexer quirks are keyed by SCIP scheme** and kept in one small module. A trait is
   introduced when a second indexer needs different behaviour, not before.
-- **The core does no I/O** except running an adapter (`adapter.rs`) and writing a snapshot
-  (`write.rs`, `publish.rs`). Source text reaches it through one reader, so a test can see what
+- **The core does no I/O** except running an adapter (`adapter.rs`) and writing a snapshot or
+  a diff (`write.rs`, `publish.rs`). Source text reaches it through one reader, so a test can see what
   was asked for. The command-line crate does the rest.
 - **The engine and its adapters leave the analysed tree alone.** The engine creates, changes
   and deletes nothing under the root being indexed, and the output path may not overlap it.
+  A diff's output may not overlap either of the snapshots it compares, and both are only read.
   An adapter and the tools it runs do the same of their own accord; what the project's own
   build code or configuration writes there is outside the rule, as the adapter contract
   states, and an adapter documents it.
@@ -42,7 +47,12 @@ Rules that the code does not show by itself. The reasons behind the larger ones 
 - Fixtures are small projects written for this repository. Never copy code, names or paths from
   a private project into a fixture, a test or a document.
 - Each fixture has a checked-in `index.scip` and one source-level fact a test asserts.
-  `fixtures/regenerate.sh` rebuilds the indexes; the tests need no indexer.
+  `fixtures/regenerate.sh` rebuilds the indexes, and for `diff-basic` each side's snapshot too;
+  the tests need no indexer.
+- `fixtures/diff-public` is the exception: a frozen pair of snapshots of a public crate, kept as
+  the measurement read them, with its provenance and licence in `NOTICE.md` and the pairs listed
+  before any matcher ran in `truth.tsv`. It has no index of its own and is never rebuilt; a
+  change to it changes what the matcher's test measures.
 - Edge cases (encodings, colliding symbols, malformed input) are built in tests from `scip`
   types, not stored as binary files.
 - Goldens under `fixtures/*/expected` are compared byte for byte. Tests that look for a

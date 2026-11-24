@@ -16,10 +16,11 @@ made from surveyed facts.
 ## Status
 
 Early. The engine reads a [SCIP](https://github.com/scip-code/scip) index, or runs an
-installed adapter, and writes a snapshot. A Rust adapter gives the base graph and syntactic
-facts; compiler-backed call evidence for Rust, adapters for Go and TypeScript, and the
-comparison of two snapshots are planned and not yet here. Both interfaces are at version 0.2
-and may change.
+installed adapter, and writes a snapshot; it compares two snapshots and writes what differs
+between them. A Rust adapter gives the base graph and syntactic facts; compiler-backed call
+evidence for Rust and adapters for Go and TypeScript are planned and not yet here. The
+snapshot and the adapter contract are at version 0.2 and the diff at 0.1, and all three may
+change.
 
 ## Try it
 
@@ -33,12 +34,24 @@ The output directory holds seven files, described in [spec/snapshot.md](spec/sna
 index your own project, produce a SCIP index for it first, for example with
 `rust-analyzer scip .`, and pass it the same way. The output path must be outside the project.
 
+To compare two snapshots of one project:
+
+```sh
+cargo run -p gosanja -- diff fixtures/diff-basic/old/expected \
+    fixtures/diff-basic/new/expected --out /tmp/gosanja-diff-demo
+```
+
+A row of the diff says that one snapshot holds a statement and the other does not, never that
+the code changed, and a rename or move is only ever suggested. [docs/diff.md](docs/diff.md)
+says how to read it.
+
 ## Documentation
 
 | | |
 | --- | --- |
-| [spec/](spec/README.md) | The snapshot and the adapter contract, with JSON Schemas |
+| [spec/](spec/README.md) | The snapshot, the adapter contract and the diff, with JSON Schemas |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the engine is cut and why |
+| [docs/diff.md](docs/diff.md) | Comparing two snapshots: the command, what a row claims, candidates |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Rules for changing the code |
 | [docs/research/](docs/research/README.md) | The papers, tools and measurements behind the design |
 | [docs/adapters.md](docs/adapters.md) | How the engine finds and chooses installed adapters |

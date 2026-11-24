@@ -19,12 +19,20 @@ origin. The facts come from compilers and indexers. Nothing is guessed.
   └──────────────────────────────┬───────────────────────────────────┘
                                  ▼
                     snapshot (seven files) ─► validate
+                                 │
+                                 ▼  two of them, old and new
+                 validate ─► pair ─► compare ─► candidates      (core: diff)
+                                 │
+                                 ▼
+                         diff (five files)
 ```
 
-Two interfaces are specified and versioned, and everything else is free to change:
+Three interfaces are specified and versioned, and everything else is free to change:
 
 - the [snapshot](../spec/snapshot.md), which is what consumers read;
-- the [adapter contract](../spec/adapter-contract.md), which is what a language adapter writes.
+- the [adapter contract](../spec/adapter-contract.md), which is what a language adapter writes;
+- the [diff](../spec/diff.md), the differences between two snapshots, which is what a consumer
+  of change reads.
 
 ## Why it is cut this way
 
@@ -57,12 +65,19 @@ only when two symbols would otherwise clash. There are no numeric ids, so a row 
 compared and tested without a table of ids.
 See [research/structural-diff-identity.md](research/structural-diff-identity.md).
 
+**A diff compares records, not code.** It reads two snapshots and nothing else, so it works for
+every adapter and lives in the core. Rows of the two sides are the same thing only where the
+pairing rules justify exactly one partner; everything else is removed or added. A rename or a
+move is never asserted: a removed and an added definition may be listed as candidates, with the
+evidence they were ranked by. See [diff.md](diff.md) and
+[research/snapshot-diff-prestudy.md](research/snapshot-diff-prestudy.md).
+
 ## Workspace
 
 | Crate | Path | Responsibility |
 | --- | --- | --- |
-| `gosanja-schema` | `crates/schema` | Types of both interfaces and the version compatibility rules. Shared with adapters written in Rust. |
-| `gosanja-core` | `crates/core` | Decoding, keys, the graph, side-car joins, writing, validation, running adapters. Knows no language. |
+| `gosanja-schema` | `crates/schema` | Types of the three interfaces and the version compatibility rules. Shared with adapters written in Rust. |
+| `gosanja-core` | `crates/core` | Decoding, keys, the graph, side-car joins, writing, validation, running adapters, comparing two snapshots. Knows no language. |
 | `gosanja` | `crates/cli` | The command line. Reads files, finds installed adapters (`discover`), calls the core, sets exit codes. |
 | `gosanja-adapter-rust` | `crates/adapter-rust` | The Rust adapter, a separate program: runs `rust-analyzer scip` for the base layer and reads source with `syn` for the syntax layer. Of this workspace's crates it depends on `gosanja-schema` only; its tests also use the core. |
 
@@ -76,10 +91,12 @@ Core modules:
 | `anchor` | Matches adapter anchors against definitions. |
 | `sidecar` | Reads the syntax and calls layers and joins them to the graph. |
 | `adapter` | Runs one given adapter program and classifies what it produced. The program that was described is the one that is run. |
-| `write` | Serialises a snapshot deterministically, and reads sources and snapshots from disk. |
-| `publish` | Moves a finished snapshot into place and protects what was there. |
+| `write` | Serialises a snapshot or a diff deterministically, and reads sources and snapshots from disk. |
+| `publish` | Moves a finished snapshot or diff into place, and protects what was there and the inputs it was made from. |
 | `validate` | Checks a snapshot on disk against the specification. |
 | `schemas` | The normative JSON Schemas of `spec/schema`, compiled in once for the validator and the adapter runner. |
+| `diff` | Validates two snapshots, pairs their rows, and finds the entity, external and relation changes and the candidates. |
+| `diff::similarity` | The two pure measures of the candidates, in millionths: the edit-distance similarity of two sequences, and the ratio of the intersection of two multisets to their union. |
 
 Dependencies point one way: `cli` → `core` → `schema`.
 
@@ -89,8 +106,9 @@ Dependencies point one way: `cli` → `core` → `schema`.
 - No viewer. A viewer is a consumer of the snapshot.
 - No source text in a snapshot, only paths, sizes and digests.
 - No incremental indexing. Every row is tied to a file, which keeps that possible later.
-- No calls layer in the Rust adapter yet, no adapter for another language, and no comparison
-  of two snapshots.
+- No calls layer in the Rust adapter yet, and no adapter for another language.
+- No assertion that something was renamed or moved, and no diff of gaps, of more than two
+  snapshots or of snapshots with several scopes.
 - No defence against a tree that changes while it is being indexed. A path is resolved, checked
   to lie inside the root and then opened by its resolved name; a link swapped in between those
   steps is not detected. Index a tree that is not being written to.

@@ -1061,3 +1061,39 @@ fn diff_candidate_and_manifest_rows_the_specification_forbids_fail() {
         schemas.assert_invalid(schema, &row);
     }
 }
+
+/// The first paragraph after a Markdown document's title, its lines joined by spaces.
+fn opening(path: &str) -> String {
+    let text = fs::read_to_string(repository().join(path))
+        .unwrap_or_else(|e| panic!("{path} must exist: {e}"));
+    let mut lines = text
+        .lines()
+        .skip_while(|l| l.starts_with('#') || l.is_empty());
+    let mut paragraph = Vec::new();
+    for line in lines.by_ref() {
+        if line.is_empty() {
+            break;
+        }
+        paragraph.push(line.trim());
+    }
+    paragraph.join(" ")
+}
+
+/// Both documents of the diff begin with what a row says and what it does not, before the
+/// command or the files, so that no reader meets a row first.
+#[test]
+fn both_diff_documents_open_with_what_a_row_states() {
+    for path in ["spec/diff.md", "docs/diff.md"] {
+        let first = opening(path);
+        for phrase in [
+            "one snapshot holds a statement and the other does not",
+            "never says that the code changed",
+            "gap counts per kind",
+        ] {
+            assert!(
+                first.contains(phrase),
+                "{path} opens without \"{phrase}\": {first}"
+            );
+        }
+    }
+}
