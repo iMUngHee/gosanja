@@ -127,6 +127,13 @@ The following were stated by hand, from the source:
 Calls written by macros have no reference of their own. They are listed apart and evaluated
 the same way.
 
+## Corrections after the first comparison
+
+Part one was compared once with the rows a reader of the layer's rule writes on this fixture.
+Three sites differed, and each was checked again against the source and the index alone:
+`drops.rs` 77:21 and `lib.rs` 45:5 are rows that part one had missed, and `lib.rs` 604:83 is
+withheld by step 4, which part one had not applied. The table rows say `corrected` and why.
+
 ## Shared symbols
 
 Definitions in two places share a symbol in two cases. Both are in calls-app, whose binaries
@@ -160,14 +167,14 @@ structs, which rust-analyzer gives one symbol. They are constructors, not calls.
 
 | Expected | Sites |
 | --- | --- |
-| none: step 2 | 99 |
-| row | 78 |
-| none: step 5 | 35 |
+| none: step 2 | 98 |
+| row | 79 |
+| none: step 5 | 34 |
 | same call | 34 |
 | constructor | 25 |
-| none: step 4 | 19 |
+| none: step 4 | 21 |
 | not a call | 13 |
-| none: closure | 10 |
+| none: closure | 9 |
 | none: no instruction | 5 |
 | row? | 5 |
 | none: indirect | 5 |
@@ -185,7 +192,7 @@ structs, which rust-analyzer gives one symbol. They are constructors, not calls.
 - Beyond the 336 sites, 11 instructions are written by macros and have no reference of their
   own. None of them gives a row (see "Calls written by macros" below).
 
-The rows add up to 79 relations and 85 evidence entries. Each `row?` is counted at its
+The rows add up to 80 relations and 86 evidence entries. Each `row?` is counted at its
 expected value: `always -> leaf` may gain a second entry if `always` is inlined into
 `calls_always`, and `calls_always -> always` then has no instruction.
 
@@ -216,7 +223,7 @@ Each construct, where it is, and what part one expects. Line numbers are those o
 | a macro invocation whose argument is a call and that saves it as another macro, with a nested function whose closure evaluates it | `save!` 567, `saver` 578 | rows `saver -> leaf` (579, the call `save!` makes in place), `saver -> inner`, `saver -> direct`; none for the closure in `inner`, whose line 581 `inner` also touches |
 | two binaries that each define a `helper` and call it | `main.rs` 7/17, `twin.rs` 1/6 | a row from each `main` to its own `helper` |
 | `run` with a nested `run` under `cfg(not(test))` whose closure shares a line with a call of the outer one | `nested_run::run` 591, line 594 | one row from the outer `run`, at 594:55; none at the closure's site 594:24 (innermost written item: the nested `run`) |
-| `run` holding a nested function with a constant `run` whose initialiser is a closure on such a line | `const_run::run` 601, line 604 | one row from the outer `run`, at 604:83; none at 604:48 (innermost written item: `const run`) |
+| `run` holding a nested function with a constant `run` whose initialiser is a closure on such a line | `const_run::run` 601, line 604 | none from line 604: the index holds `nested`, so the line's two references to `leaf` lie in different definitions (step 4), and the site 604:48 is also outside the caller's own items |
 | a file with a byte order mark holding a caller and a callee, beside a readable file with a call | `bom.rs`; `plain.rs` | none in `bom.rs` (`parse-failed`); row `plain -> leaf` |
 | `run` holding a call and a `macro_rules!` whose template is a closure on one line, with a nested module's `run` using it | `templated::run` 613, line 614 | none from 614 (taken); row at 615; row `templated::run -> inner::run` |
 | a local type under a derive whose body shares a line with a call | `local_derive` 625 | none at 627 (taken); row at 628 |
@@ -435,7 +442,7 @@ The symbol ids refer to the table "Symbols" at the end.
 | 53:9b/9u | index, call node | `[52, 8, 52, 12]` | S42 `mem/drop().` | yes / 1 (1) | outside the project | none | - | step 2, no code: outside the project |
 | 58:18b/18u | call node only | `[57, 17, 57, 22]` | S43 `drops/Outer#` | yes / 1 (1) | - | constructor | - | a constructor: no function is called [part 2] |
 | 71:23b/23u | call node only | `[70, 22, 70, 27]` | S44 `drops/Token#` | yes / 1 (1) | - | constructor | - | a constructor: no function is called [part 2] |
-| 77:21b/21u | index, call node | `[76, 20, 76, 24]` | S45 `mem/drop().` | yes / 1 (1) | `fake-core`, not a member | none | - | step 2, no code: `fake-core` is not a member and no IR of the run defines it |
+| 77:21b/21u | index, call node | `[76, 20, 76, 24]` | S45 `mem/drop().` | yes / 1 (1) | fake-core/src/lib.rs:4 `mem/drop().` | row | 1 | corrected: `fake-core` is a path dependency under the root and calls-lib's IR defines the instance `drop::<Guard>`, so the callee is a definition of the project |
 | 77:26b/26u | call node only | `[76, 25, 76, 30]` | S41 `drops/Guard#` | yes / 1 (1) | - | constructor | - | a constructor: no function is called [part 2] |
 | **calls-lib/src/lib.rs** | | | | | | | | |
 | 10:45b/45u | index | `[9, 44, 9, 55]` | S46 `drops/drop_at_end().` | no / 1 (0) | - | not a call | - | a path in `pub use` |
@@ -457,7 +464,7 @@ The symbol ids refer to the table "Symbols" at the end.
 | 40:10b/10u | index | `[39, 9, 39, 10]` | S56 `` ops/bit/impl#[u32][`BitXor<Self>`]bitxor(). `` | no / 3 (1) | - | same call | - | the white space beside an operator: the index gives one operator three one-character references (space, operator, space); the operator's own is the site |
 | 40:11b/11u | index | `[39, 10, 39, 11]` | S56 `` ops/bit/impl#[u32][`BitXor<Self>`]bitxor(). `` | yes / 3 (1) | outside the project | none | - | step 2, no code: outside the project |
 | 40:12b/12u | index | `[39, 11, 39, 12]` | S56 `` ops/bit/impl#[u32][`BitXor<Self>`]bitxor(). `` | no / 3 (1) | - | same call | - | the white space beside an operator: the index gives one operator three one-character references (space, operator, space); the operator's own is the site |
-| 45:5b/5u | index, call node | `[44, 4, 44, 14]` | S57 `make_adder().` | yes / 1 (1) | a closure's body | none | - | closure: step 3: the callee is the returned closure's body, which has no definition |
+| 45:5b/5u | index, call node | `[44, 4, 44, 14]` | S57 `make_adder().` | yes / 1 (1) | calls-lib/src/lib.rs:37 `make_adder().` | row | 1 | corrected: the reference to `make_adder` is followed by `(`; only the call of the returned closure, the next site, has no row |
 | 45:5b/5u | call node only | none | - | - | a closure's body | none | - | closure: step 3: the callee is the returned closure's body, which has no definition |
 | 53:13b/13u | index, call node | `[52, 12, 52, 17]` | S58 `ready().` | yes / 1 (1) | calls-lib/src/lib.rs:48 `ready().` | row | 1 |  |
 | 53:20b/20u | index | `[52, 19, 52, 20]` | S59 `future/future/Future#poll().` | no / 2 (0) | a coroutine body | none | - | coroutine: step 3: `.await` polls the body of `ready`, a coroutine with no definition |
@@ -607,9 +614,9 @@ The symbol ids refer to the table "Symbols" at the end.
 | 596:15b/15u | index | `[595, 14, 595, 15]` | S56 `` ops/bit/impl#[u32][`BitXor<Self>`]bitxor(). `` | yes / 3 (1) | outside the project | none | - | step 2, no code: outside the project |
 | 596:16b/16u | index | `[595, 15, 595, 16]` | S56 `` ops/bit/impl#[u32][`BitXor<Self>`]bitxor(). `` | no / 3 (1) | - | same call | - | the white space beside an operator: the index gives one operator three one-character references (space, operator, space); the operator's own is the site |
 | 596:17b/17u | call node only | `[595, 16, 595, 21]` | S120 `local 51` | yes / 1 (1) | any function of that type passed in | none | - | indirect: no direct callee: a call through a function pointer |
-| 604:48b/48u | index | `[603, 47, 603, 51]` | S1 `leaf().` | yes / 2 (2) | calls-lib/src/lib.rs:12 `leaf().` | none | - | step 5: the innermost written item at the site is `const run` (603), not the caller |
+| 604:48b/48u | index | `[603, 47, 603, 51]` | S1 `leaf().` | yes / 2 (2) | calls-lib/src/lib.rs:12 `leaf().` | none | - | corrected reason (the outcome was already none): step 4: the line's two references to `leaf` lie in `nested` and in the outer `run` |
 | 604:56b/56u | call node only | `[603, 55, 603, 58]` | S121 `const_run/run.` | yes / 1 (1) | any function of that type passed in | none | - | indirect: no direct callee: the constant `run` is a function pointer |
-| 604:83b/83u | index, call node | `[603, 82, 603, 86]` | S1 `leaf().` | yes / 2 (2) | calls-lib/src/lib.rs:12 `leaf().` | row | 1 |  |
+| 604:83b/83u | index, call node | `[603, 82, 603, 86]` | S1 `leaf().` | yes / 2 (2) | calls-lib/src/lib.rs:12 `leaf().` | none | - | corrected: step 4: the line's two references to `leaf` lie in `nested` and in the outer `run`, so neither instruction has a row |
 | 605:34b/34u | index | `[604, 33, 604, 39]` | S122 `const_run/nested().` | no / 1 (0) | - | not a call | - | `nested` taken as a value |
 | 606:14b/14u | index | `[605, 13, 605, 14]` | S56 `` ops/bit/impl#[u32][`BitXor<Self>`]bitxor(). `` | no / 3 (1) | - | same call | - | the white space beside an operator: the index gives one operator three one-character references (space, operator, space); the operator's own is the site |
 | 606:15b/15u | index | `[605, 14, 605, 15]` | S56 `` ops/bit/impl#[u32][`BitXor<Self>`]bitxor(). `` | yes / 3 (1) | outside the project | none | - | step 2, no code: outside the project |
@@ -690,11 +697,13 @@ Ends are given as the file, line and column (1-based, bytes) of the name token.
 | `impl_parts().` calls-derive/src/lib.rs:36:4 | `fn_span().` calls-derive/src/lib.rs:53:4 | 1 | 46:80 |
 | `respan().` calls-derive/src/lib.rs:64:4 | `respan().` calls-derive/src/lib.rs:64:4 | 1 | 68:59 |
 | `drops/impl#[Guard][Drop]drop().` calls-lib/src/drops.rs:6:8 | `drops/helpers/drop().` calls-lib/src/drops.rs:36:12 | 1 | 6:35 |
+| `drops/drop_lookalike().` calls-lib/src/drops.rs:76:8 | `mem/drop().` fake-core/src/lib.rs:4:12 | 1 | 77:21 |
 | `direct().` calls-lib/src/lib.rs:16:8 | `leaf().` calls-lib/src/lib.rs:12:8 | 1 | 17:5 |
 | `two_types().` calls-lib/src/lib.rs:24:8 | `generic().` calls-lib/src/lib.rs:20:8 | 2 | 25:6, 25:21 |
 | `twice().` calls-lib/src/lib.rs:28:8 | `leaf().` calls-lib/src/lib.rs:12:8 | 2 | 29:5 x2 |
 | `use_twice().` calls-lib/src/lib.rs:33:8 | `twice().` calls-lib/src/lib.rs:28:8 | 2 | 34:6, 34:18 |
 | `make_adder().` calls-lib/src/lib.rs:37:8 | `leaf().` calls-lib/src/lib.rs:12:8 | 1 | 39:9 |
+| `use_adder().` calls-lib/src/lib.rs:44:8 | `make_adder().` calls-lib/src/lib.rs:37:8 | 1 | 45:5 |
 | `after_await().` calls-lib/src/lib.rs:52:14 | `leaf().` calls-lib/src/lib.rs:12:8 | 1 | 54:5 |
 | `after_await().` calls-lib/src/lib.rs:52:14 | `ready().` calls-lib/src/lib.rs:48:14 | 1 | 53:13 |
 | `run_after_await().` calls-lib/src/lib.rs:57:8 | `after_await().` calls-lib/src/lib.rs:52:14 | 1 | 58:27 |
@@ -753,7 +762,6 @@ Ends are given as the file, line and column (1-based, bytes) of the name token.
 | `saver().` calls-lib/src/lib.rs:578:8 | `direct().` calls-lib/src/lib.rs:16:8 | 1 | 587:13 |
 | `saver().` calls-lib/src/lib.rs:578:8 | `inner().` calls-lib/src/lib.rs:580:8 | 1 | 586:17 |
 | `nested_run/run().` calls-lib/src/lib.rs:591:12 | `leaf().` calls-lib/src/lib.rs:12:8 | 1 | 594:55 |
-| `const_run/run().` calls-lib/src/lib.rs:601:12 | `leaf().` calls-lib/src/lib.rs:12:8 | 1 | 604:83 |
 | `templated/run().` calls-lib/src/lib.rs:613:12 | `leaf().` calls-lib/src/lib.rs:12:8 | 1 | 615:29 |
 | `templated/run().` calls-lib/src/lib.rs:613:12 | `templated/inner/run().` calls-lib/src/lib.rs:617:20 | 1 | 621:33 |
 | `local_derive().` calls-lib/src/lib.rs:625:8 | `leaf().` calls-lib/src/lib.rs:12:8 | 1 | 628:18 |
@@ -906,3 +914,429 @@ Recorded from the raw IR of the pinned toolchain. For each call above it gives:
 - the member of the `helper` group the compiler names;
 - the `[part 2]` readings;
 - the control relation.
+
+### Pinned compiler observations
+
+Rust 1.99.1, x86_64-unknown-linux-gnu, dev profile, 2026-11-25. Each selected
+target produced a separate IR module. The binaries call their own definitions
+of `helper`: calls-app/src/main.rs:7 and calls-app/src/bin/twin.rs:1. For the
+regeneration control use `direct → leaf`, calls-lib/src/lib.rs:16 → 12, with one
+instruction at 17:5. The two generic instantiations of `twice` each emit the
+call at 29:5. The two instantiations of `Wrapper::get` each emit the call at
+128:9.
+
+Of the 86 possible entries in part one, the emitted instructions corroborate
+83. The compiler inlines `always` into `calls_always`, leaving the instruction
+at the inlined body's line 68 and none calling `always` at 72. For
+`split_path`, it places the call at 369:5, one line before the indexed
+reference. The binary emits `hinted` and calls it, but only declares the
+`leaf` called by that copy at 559:5. The compiler places the call to
+`make_adder` and the invocation of its returned closure at 45:5. Only the
+former has a written callee definition. Both instructions at line 604 are
+withheld because the two references to `leaf` have different enclosing
+functions. The lookalike `drop` instance is defined in calls-lib.ll with its
+source in fake-core/src/lib.rs.
+
+### Expected evidence from the source and IR
+
+Positions in this table are one-based character positions. Each entry groups
+identical caller, callee, site and build. The engine uses zero-based positions.
+
+| Emitted target | Caller | Callee | Site | Copies |
+| --- | --- | --- | --- | ---: |
+| calls-app | calls-app/src/main.rs:11:4 | calls-app/src/main.rs:7:4 | calls-app/src/main.rs:17:13 | 1 |
+| calls-app | calls-app/src/main.rs:11:4 | calls-lib/src/lib.rs:20:8 | calls-app/src/main.rs:14:13 | 1 |
+| calls-app | calls-app/src/main.rs:11:4 | calls-lib/src/lib.rs:558:8 | calls-app/src/main.rs:15:13 | 1 |
+| calls-derive | calls-derive/src/lib.rs:36:4 | calls-derive/src/lib.rs:53:4 | calls-derive/src/lib.rs:46:80 | 1 |
+| calls-derive | calls-derive/src/lib.rs:64:4 | calls-derive/src/lib.rs:64:4 | calls-derive/src/lib.rs:68:59 | 1 |
+| calls-lib | calls-lib/src/drops.rs:6:8 | calls-lib/src/drops.rs:36:12 | calls-lib/src/drops.rs:6:26 | 1 |
+| calls-lib | calls-lib/src/drops.rs:76:8 | fake-core/src/lib.rs:4:12 | calls-lib/src/drops.rs:77:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:116:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:117:6 | 1 |
+| calls-lib | calls-lib/src/lib.rs:120:8 | calls-lib/src/lib.rs:116:8 | calls-lib/src/lib.rs:121:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:127:12 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:128:9 | 2 |
+| calls-lib | calls-lib/src/lib.rs:133:8 | calls-lib/src/lib.rs:127:12 | calls-lib/src/lib.rs:134:18 | 1 |
+| calls-lib | calls-lib/src/lib.rs:138:19 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:139:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:143:1 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:144:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:151:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:151:49 | 1 |
+| calls-lib | calls-lib/src/lib.rs:154:12 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:155:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:159:8 | calls-lib/src/lib.rs:127:12 | calls-lib/src/lib.rs:160:46 | 1 |
+| calls-lib | calls-lib/src/lib.rs:159:8 | calls-lib/src/lib.rs:154:12 | calls-lib/src/lib.rs:160:20 | 1 |
+| calls-lib | calls-lib/src/lib.rs:164:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:165:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:16:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:17:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:173:8 | calls-lib/src/lib.rs:164:8 | calls-lib/src/lib.rs:174:11 | 1 |
+| calls-lib | calls-lib/src/lib.rs:24:8 | calls-lib/src/lib.rs:20:8 | calls-lib/src/lib.rs:25:21 | 1 |
+| calls-lib | calls-lib/src/lib.rs:24:8 | calls-lib/src/lib.rs:20:8 | calls-lib/src/lib.rs:25:6 | 1 |
+| calls-lib | calls-lib/src/lib.rs:255:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:256:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:260:8 | calls-lib/src/lib.rs:255:8 | calls-lib/src/lib.rs:261:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:269:12 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:270:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:274:8 | calls-lib/src/lib.rs:269:12 | calls-lib/src/lib.rs:275:13 | 1 |
+| calls-lib | calls-lib/src/lib.rs:28:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:29:5 | 2 |
+| calls-lib | calls-lib/src/lib.rs:294:8 | calls-lib/src/mounted.rs:3:8 | calls-lib/src/lib.rs:295:6 | 1 |
+| calls-lib | calls-lib/src/lib.rs:294:8 | calls-lib/src/plain.rs:3:8 | calls-lib/src/lib.rs:295:33 | 1 |
+| calls-lib | calls-lib/src/lib.rs:298:8 | calls-lib/src/lib.rs:127:12 | calls-lib/src/lib.rs:299:19 | 1 |
+| calls-lib | calls-lib/src/lib.rs:298:8 | calls-lib/src/lib.rs:127:12 | calls-lib/src/lib.rs:299:40 | 1 |
+| calls-lib | calls-lib/src/lib.rs:303:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:304:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:307:8 | calls-lib/src/lib.rs:303:8 | calls-lib/src/lib.rs:308:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:311:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:312:14 | 1 |
+| calls-lib | calls-lib/src/lib.rs:311:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:312:6 | 1 |
+| calls-lib | calls-lib/src/lib.rs:325:8 | calls-lib/src/lib.rs:320:8 | calls-lib/src/lib.rs:326:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:329:8 | calls-lib/src/lib.rs:138:19 | calls-lib/src/lib.rs:330:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:33:8 | calls-lib/src/lib.rs:28:8 | calls-lib/src/lib.rs:34:18 | 1 |
+| calls-lib | calls-lib/src/lib.rs:33:8 | calls-lib/src/lib.rs:28:8 | calls-lib/src/lib.rs:34:6 | 1 |
+| calls-lib | calls-lib/src/lib.rs:353:8 | calls-lib/src/lib.rs:16:8 | calls-lib/src/lib.rs:354:12 | 1 |
+| calls-lib | calls-lib/src/lib.rs:357:18 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:357:42 | 1 |
+| calls-lib | calls-lib/src/lib.rs:359:8 | calls-lib/src/lib.rs:357:18 | calls-lib/src/lib.rs:360:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:363:8 | calls-lib/src/lib.rs:127:12 | calls-lib/src/lib.rs:365:10 | 1 |
+| calls-lib | calls-lib/src/lib.rs:37:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:39:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:413:8 | calls-lib/src/lib.rs:409:8 | calls-lib/src/lib.rs:414:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:419:8 | calls-lib/src/shared.rs:7:8 | calls-lib/src/lib.rs:420:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:437:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:438:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:441:8 | calls-lib/src/lib.rs:437:8 | calls-lib/src/lib.rs:445:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:44:8 | calls-lib/src/lib.rs:37:8 | calls-lib/src/lib.rs:45:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:480:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:481:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:489:8 | calls-lib/src/lib.rs:480:8 | calls-lib/src/lib.rs:490:6 | 1 |
+| calls-lib | calls-lib/src/lib.rs:511:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:512:13 | 1 |
+| calls-lib | calls-lib/src/lib.rs:517:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:518:13 | 1 |
+| calls-lib | calls-lib/src/lib.rs:526:50 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:526:69 | 1 |
+| calls-lib | calls-lib/src/lib.rs:529:8 | calls-lib/src/lib.rs:504:8 | calls-lib/src/lib.rs:531:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:529:8 | calls-lib/src/lib.rs:505:57 | calls-lib/src/lib.rs:532:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:529:8 | calls-lib/src/lib.rs:511:8 | calls-lib/src/lib.rs:533:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:529:8 | calls-lib/src/lib.rs:517:8 | calls-lib/src/lib.rs:534:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:529:8 | calls-lib/src/lib.rs:525:8 | calls-lib/src/lib.rs:535:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:529:8 | calls-lib/src/lib.rs:526:50 | calls-lib/src/lib.rs:536:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:52:14 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:54:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:52:14 | calls-lib/src/lib.rs:48:14 | calls-lib/src/lib.rs:53:13 | 1 |
+| calls-lib | calls-lib/src/lib.rs:549:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:550:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:563:19 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:564:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:578:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:579:11 | 1 |
+| calls-lib | calls-lib/src/lib.rs:578:8 | calls-lib/src/lib.rs:16:8 | calls-lib/src/lib.rs:587:13 | 1 |
+| calls-lib | calls-lib/src/lib.rs:578:8 | calls-lib/src/lib.rs:580:8 | calls-lib/src/lib.rs:586:17 | 1 |
+| calls-lib | calls-lib/src/lib.rs:57:8 | calls-lib/src/lib.rs:52:14 | calls-lib/src/lib.rs:58:27 | 1 |
+| calls-lib | calls-lib/src/lib.rs:591:12 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:594:48 | 1 |
+| calls-lib | calls-lib/src/lib.rs:613:12 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:615:22 | 1 |
+| calls-lib | calls-lib/src/lib.rs:613:12 | calls-lib/src/lib.rs:617:20 | calls-lib/src/lib.rs:621:26 | 1 |
+| calls-lib | calls-lib/src/lib.rs:625:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:628:18 | 1 |
+| calls-lib | calls-lib/src/lib.rs:645:12 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:646:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:660:8 | calls-lib/src/lib.rs:645:12 | calls-lib/src/lib.rs:664:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:67:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:68:5 | 1 |
+| calls-lib | calls-lib/src/lib.rs:82:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/lib.rs:83:9 | 1 |
+| calls-lib | calls-lib/src/lib.rs:91:8 | calls-lib/src/lib.rs:87:8 | calls-lib/src/lib.rs:92:5 | 1 |
+| calls-lib | calls-lib/src/mounted.rs:3:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/mounted.rs:4:5 | 1 |
+| calls-lib | calls-lib/src/plain.rs:3:8 | calls-lib/src/lib.rs:12:8 | calls-lib/src/plain.rs:4:5 | 1 |
+| calls-lib | calls-lib/src/shared.rs:7:8 | calls-lib/src/shared.rs:3:8 | calls-lib/src/shared.rs:8:5 | 1 |
+| calls-twin | calls-app/src/bin/twin.rs:5:4 | calls-app/src/bin/twin.rs:1:4 | calls-app/src/bin/twin.rs:6:13 | 1 |
+
+### Raw instructions by project source location
+
+The inventory below includes direct and indirect call and invoke instructions
+with project debug locations, before source corroboration. Columns here are
+one-based UTF-8 bytes. A missing location has zero observed instructions at
+that exact position. A source token and its instruction can occupy different
+columns or different lines. LLVM intrinsics are excluded. A register operand
+denotes an indirect call. The final component of the demangled target is shown
+for lookup; endpoint identity above uses the actual definition. Compiler-
+generated calls can share a location with a written call.
+
+#### calls-app · calls-app/src/main.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 12 | 17 `direct` |
+| 13 | 21 `shared_entry` |
+| 14 | 13 `generic` |
+| 15 | 13 `hinted` |
+| 16 | 13 `@_Read` |
+| 17 | 13 `helper` |
+
+#### calls-app · calls-lib/src/lib.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 559 | 5 `leaf` |
+
+#### calls-derive · calls-derive/src/lib.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 5 | 1 `panic_in_cleanup` |
+| 6 | 16 `struct_name` |
+| 7 | 16 `format`, 16 `new`, 16 `new_display` |
+| 8 | 5 `deref`, 10 `parse` |
+| 9 | 1 `drop_glue` ×4 |
+| 11 | 1 `panic_in_cleanup` |
+| 12 | 28 `into_iter` |
+| 13 | 36 `next` |
+| 15 | 16 `eq`, 22 `to_string`, 44 `drop_glue` ×3 |
+| 16 | 58 `next` |
+| 18 | 25 `to_string` |
+| 19 | 9 `drop_glue` ×3 |
+| 20 | 5 `drop_glue` ×3 |
+| 21 | 5 `from_str`, 5 `panic_fmt` |
+| 22 | 1 `drop_glue` ×2 |
+| 27 | 1 `panic_in_cleanup` |
+| 28 | 22 `impl_parts`, 38 `clone` |
+| 29 | 16 `format`, 16 `new`, 16 `new_display` |
+| 32 | 21 `respan`, 28 `deref`, 33 `parse` |
+| 33 | 10 `into_iter`, 22 `chain`, 39 `collect` |
+| 34 | 1 `drop_glue` ×8 |
+| 36 | 1 `panic_in_cleanup` |
+| 37 | 27 `into_iter` |
+| 39 | 36 `next` |
+| 41 | 40 `eq`, 46 `to_string`, 66 `drop_glue` ×3 |
+| 42 | 62 `next` |
+| 43 | 21 `drop_glue`, 36 `to_string` |
+| 44 | 17 `drop_glue` ×3 |
+| 46 | 50 `expect`, 80 `fn_span`, 93 `stream`, 102 `drop_glue` ×3 |
+| 50 | 5 `from_str`, 5 `panic_fmt` |
+| 51 | 1 `drop_glue` ×3 |
+| 53 | 1 `panic_in_cleanup` |
+| 54 | 18 `into_iter`, 18 `next` |
+| 56 | 16 `eq`, 22 `to_string`, 40 `drop_glue` ×3 |
+| 58 | 26 `span` |
+| 60 | 5 `drop_glue` ×6 |
+| 61 | 5 `from_str`, 5 `panic_fmt` |
+| 64 | 1 `panic_in_cleanup` |
+| 65 | 19 `new` |
+| 66 | 22 `into_iter`, 22 `next` |
+| 68 | 29 `new`, 46 `delimiter`, 59 `respan`, 72 `stream` |
+| 69 | 19 `set_span` |
+| 70 | 13 `drop_glue` |
+| 71 | 9 `drop_glue` |
+| 72 | 19 `set_span` |
+| 74 | 13 `push` |
+| 75 | 5 `drop_glue` ×3 |
+| 76 | 9 `into_iter`, 21 `collect` |
+| 77 | 1 `drop_glue` ×2 |
+| 82 | 1 `panic_in_cleanup` |
+| 83 | 22 `impl_parts`, 38 `clone` |
+| 84 | 16 `format`, 16 `new`, 16 `new_display` ×2 |
+| 85 | 21 `respan`, 28 `deref`, 33 `parse` |
+| 86 | 10 `into_iter`, 22 `chain`, 39 `collect` |
+| 87 | 1 `drop_glue` ×8 |
+| 93 | 1 `drop_glue` |
+| 99 | 1 `panic_in_cleanup` |
+| 100 | 28 `trait_impl_parts`, 50 `clone` |
+| 101 | 16 `format`, 16 `new`, 16 `new_display` ×3 |
+| 102 | 21 `respan`, 28 `deref`, 33 `parse` |
+| 103 | 10 `into_iter`, 22 `chain`, 39 `collect` |
+| 104 | 1 `drop_glue` ×10 |
+| 106 | 1 `panic_in_cleanup` |
+| 107 | 27 `into_iter` |
+| 109 | 36 `next` |
+| 111 | 40 `eq`, 46 `to_string`, 65 `drop_glue` ×3 |
+| 112 | 62 `next` |
+| 113 | 21 `drop_glue`, 36 `to_string` |
+| 114 | 17 `drop_glue` ×3 |
+| 117 | 38 `stream`, 47 `into_iter` |
+| 118 | 47 `next` |
+| 120 | 28 `eq`, 34 `to_string`, 52 `drop_glue` ×3 |
+| 121 | 69 `next` |
+| 123 | 36 `expect`, 77 `to_string`, 96 `span`, 102 `drop_glue` ×2 |
+| 124 | 21 `drop_glue` ×3 |
+| 125 | 17 `drop_glue` ×3 |
+| 126 | 13 `drop_glue` ×6 |
+| 130 | 5 `from_str`, 5 `panic_fmt` |
+| 131 | 1 `drop_glue` ×3 |
+| 136 | 1 `panic_in_cleanup` |
+| 137 | 20 `new` |
+| 139 | 18 `into_iter`, 18 `next`, 23 `clone` |
+| 141 | 40 `eq`, 46 `to_string`, 66 `drop_glue` ×3 |
+| 143 | 22 `extend`, 34 `clone` |
+| 149 | 14 `push` |
+| 150 | 5 `drop_glue` ×4 |
+| 151 | 10 `into_iter`, 22 `chain`, 34 `collect` |
+| 152 | 1 `drop_glue` ×4 |
+| 157 | 1 `panic_in_cleanup` |
+| 158 | 16 `struct_name`, 34 `clone` |
+| 159 | 28 `into_iter`, 40 `last` |
+| 160 | 46 `span_close`, 57 `drop_glue` ×2 |
+| 161 | 30 `span`, 35 `drop_glue` ×2 |
+| 162 | 17 `call_site` |
+| 164 | 16 `format`, 16 `new`, 16 `new_display` |
+| 165 | 5 `respan`, 12 `deref`, 17 `parse` |
+| 166 | 1 `drop_glue` ×5 |
+
+#### calls-lib · calls-lib/src/bom.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 8 | 5 `bom_leaf` |
+
+#### calls-lib · calls-lib/src/drops.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 6 | 26 `drop` |
+| 20 | 5 `drop` |
+| 25 | 1 `drop_glue` |
+| 29 | 1 `drop_glue` |
+| 33 | 1 `drop_glue` |
+| 40 | 5 `drop` |
+| 44 | 5 `drop` |
+| 53 | 9 `drop` |
+| 59 | 1 `drop_glue` |
+| 61 | 1 `panic_in_cleanup` |
+| 73 | 5 `drop_glue` |
+| 74 | 1 `drop_glue` ×2 |
+| 77 | 5 `drop` |
+
+#### calls-lib · calls-lib/src/lib.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 17 | 5 `leaf` |
+| 25 | 6 `generic`, 21 `generic` |
+| 29 | 5 `leaf` ×2 |
+| 34 | 6 `twice`, 18 `twice` |
+| 39 | 9 `leaf` |
+| 45 | 5 `make_adder`, 5 `{closure#0}` |
+| 48 | 29 `panic_const_async_fn_resumed` |
+| 52 | 35 `panic_const_async_fn_resumed`, 35 `panic_const_async_fn_resumed_panic`, 35 `panic_in_cleanup` |
+| 53 | 13 `ready`, 21 `into_future`, 21 `{closure#0}`, 25 `drop_glue` ×2 |
+| 54 | 5 `leaf` |
+| 57 | 1 `panic_in_cleanup` |
+| 58 | 22 `pin_new_unchecked_in_helper`, 27 `after_await` |
+| 59 | 17 `noop` |
+| 60 | 27 `{closure#0}`, 37 `from_waker` |
+| 64 | 1 `drop_glue` ×2 |
+| 68 | 5 `leaf` |
+| 83 | 9 `leaf` |
+| 88 | 11 `%2` |
+| 92 | 5 `dyn_call` |
+| 99 | 5 `describe` |
+| 105 | 13 `leaf` |
+| 110 | 39 `leaf` |
+| 113 | 6 `made`, 20 `made` |
+| 117 | 6 `leaf` |
+| 121 | 5 `fill` |
+| 128 | 9 `leaf` ×2 |
+| 134 | 18 `get` |
+| 138 | 1 `panic_cannot_unwind` |
+| 139 | 5 `leaf` |
+| 144 | 5 `leaf` |
+| 148 | 5 `split` |
+| 151 | 54 `leaf` |
+| 155 | 9 `leaf` |
+| 160 | 20 `concrete`, 46 `get` |
+| 165 | 9 `leaf` |
+| 174 | 11 `greet` |
+| 177 | 40 `leaf` |
+| 179 | 5 `leaf` |
+| 182 | 6 `same`, 21 `same` |
+| 188 | 13 `leaf` |
+| 196 | 5 `{closure#0}` |
+| 203 | 9 `proxy_helper` |
+| 204 | 9 `leaf` |
+| 208 | 9 `leaf` |
+| 218 | 16 `run` |
+| 219 | 21 `run` |
+| 220 | 16 `beside` |
+| 228 | 9 `proxy_helper` |
+| 234 | 14 `run` |
+| 241 | 9 `proxy_helper` |
+| 242 | 9 `leaf` |
+| 247 | 16 `run`, 34 `run` |
+| 256 | 9 `leaf` |
+| 261 | 9 `tag` |
+| 270 | 9 `leaf` |
+| 275 | 13 `via_alias` |
+| 295 | 6 `mounted`, 33 `plain` |
+| 299 | 19 `get`, 40 `get` |
+| 304 | 5 `leaf` |
+| 308 | 5 `only_with_flag` |
+| 312 | 6 `leaf`, 14 `leaf` |
+| 326 | 5 `add` |
+| 330 | 5 `shared_entry` |
+| 345 | 5 `leaf` |
+| 350 | 5 `only_outside_test` |
+| 354 | 12 `direct` |
+| 357 | 46 `leaf` |
+| 360 | 5 `after_accent` |
+| 365 | 10 `get` |
+| 369 | 5 `leaf` |
+| 389 | 5 `proxy_helper` |
+| 390 | 9 `leaf` |
+| 400 | 5 `work` |
+| 403 | 85 `direct` |
+| 406 | 5 `alt` |
+| 410 | 5 `%f` |
+| 414 | 5 `apply` |
+| 420 | 5 `shared_call` |
+| 425 | 5 `leaf` |
+| 433 | 9 `leaf` |
+| 438 | 5 `leaf` |
+| 443 | 9 `kept` |
+| 444 | 14 `kept_method` |
+| 445 | 9 `plain_beside` |
+| 457 | 13 `leaf` |
+| 471 | 9 `leaf` |
+| 476 | 22 `by_test`, 42 `by_clippy` |
+| 481 | 5 `leaf` |
+| 486 | 5 `leaf` |
+| 490 | 6 `maybe_inline`, 22 `maybe_kept` |
+| 505 | 9 `{closure#0}`, 13 `leaf`, 76 `{closure#0}`, 80 `leaf` |
+| 512 | 9 `{closure#0}`, 13 `leaf` |
+| 518 | 9 `{closure#0}`, 13 `leaf` |
+| 526 | 9 `leaf`, 69 `leaf` |
+| 531 | 9 `go` |
+| 532 | 9 `go` |
+| 533 | 9 `go` |
+| 534 | 9 `go` |
+| 535 | 9 `go` |
+| 536 | 9 `go` |
+| 546 | 33 `helper` ×2 |
+| 550 | 5 `leaf` |
+| 554 | 15 `work`, 30 `work` |
+| 563 | 1 `panic_cannot_unwind` |
+| 564 | 5 `leaf` |
+| 579 | 11 `leaf` ×2 |
+| 584 | 9 `{closure#0}` |
+| 586 | 17 `inner` |
+| 587 | 13 `direct` |
+| 594 | 13 `{closure#0}`, 17 `leaf`, 48 `leaf` |
+| 596 | 17 `run` |
+| 604 | 41 `leaf`, 56 `call_once`, 76 `leaf` |
+| 606 | 17 `nested` |
+| 614 | 21 `leaf`, 73 `leaf` |
+| 615 | 22 `leaf` |
+| 618 | 17 `{closure#0}` |
+| 621 | 26 `run` |
+| 627 | 45 `leaf` |
+| 628 | 18 `leaf` |
+| 634 | 48 `proxy_helper`, 87 `leaf` |
+| 640 | 19 `proxy_helper`, 58 `leaf` |
+| 646 | 9 `leaf` |
+| 662 | 9 `label` |
+| 663 | 9 `label` |
+| 664 | 9 `label` |
+
+#### calls-lib · calls-lib/src/mounted.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 4 | 5 `leaf` |
+
+#### calls-lib · calls-lib/src/plain.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 4 | 5 `leaf` |
+
+#### calls-lib · calls-lib/src/shared.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 8 | 5 `shared_leaf` |
+
+#### calls-lib · fake-core/src/lib.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 6 | 5 `drop_glue` |
+
+#### calls-twin · calls-app/src/bin/twin.rs
+
+| Source line | Byte column, target and multiplicity |
+| ---: | --- |
+| 6 | 13 `helper` |
+

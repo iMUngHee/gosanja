@@ -20,6 +20,7 @@ records, not decisions. Decisions belong in the architecture document once it ex
 
 | File | Date | What it answers |
 | --- | --- | --- |
+| [rust-call-evidence-measurements.md](rust-call-evidence-measurements.md) | 2026-11-24 | How many Rust calls a scratch reader corroborates from compiler positions, where it loses calls, and which locations the engine resolves |
 | [snapshot-diff-prestudy.md](snapshot-diff-prestudy.md) | 2026-11-24 | Which renamed or moved definitions can be found in two public Rust release pairs, and where candidate rankings fail |
 | [rust-adapter-measurements.md](rust-adapter-measurements.md) | 2026-11-24 | What Cargo and rust-analyzer write, which targets and definition spans SCIP includes, and how byte and character columns compare |
 | [scip-indexer-differences.md](scip-indexer-differences.md) | 2026-11-23 | What rust-analyzer, scip-go and scip-typescript write for three small fixtures: position encodings, range forms, enclosing ranges, symbol shapes, message counts, absolute paths and repeatability, and whether the pinned `scip` 0.10.0 bindings decode typed ranges |
