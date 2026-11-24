@@ -1,3 +1,5 @@
+![gosanja, Code Atlas: mapping the paths between definitions](docs/assets/banner.png)
+
 # gosanja
 
 gosanja builds a map of a codebase from compiler facts: what is defined where, what contains
