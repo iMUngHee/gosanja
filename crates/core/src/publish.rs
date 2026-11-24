@@ -100,10 +100,43 @@ fn publish_with(
         .iter()
         .map(|dir| dir.canonicalize())
         .collect::<io::Result<Vec<_>>>()?;
-    let absolute = std::path::absolute(out)?;
-    let name = absolute
-        .file_name()
-        .ok_or_else(|| PublishError::Refused("output must name a directory".into()))?;
+    let name_required = || PublishError::Refused("output must name a directory".into());
+    // Path normalization drops a trailing dot. Inspect the spelling before resolving links.
+    let leaf = out
+        .as_os_str()
+        .as_encoded_bytes()
+        .rsplit(|&b| std::path::is_separator(char::from(b)))
+        .find(|component| !component.is_empty());
+    let resolves_directory = matches!(leaf, Some(b"." | b".."));
+    #[cfg(windows)]
+    let resolves_directory = resolves_directory
+        || matches!(
+            out.components().next_back(),
+            Some(std::path::Component::CurDir | std::path::Component::ParentDir)
+        );
+    let absolute = if resolves_directory {
+        let directory_error = |err: io::Error| match err.kind() {
+            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => name_required(),
+            _ => err.into(),
+        };
+        // Win32 can remove a trailing parent component before visiting the directory.
+        #[cfg(windows)]
+        if out.ends_with("..")
+            && let Some(through) = out.parent().filter(|path| !path.as_os_str().is_empty())
+            && !through.metadata().map_err(directory_error)?.is_dir()
+        {
+            return Err(name_required());
+        }
+        let resolved = out.canonicalize().map_err(directory_error)?;
+        #[cfg(windows)]
+        if !resolved.metadata().map_err(directory_error)?.is_dir() {
+            return Err(name_required());
+        }
+        resolved
+    } else {
+        std::path::absolute(out)?
+    };
+    let name = absolute.file_name().ok_or_else(name_required)?;
     let parent = absolute
         .parent()
         .ok_or_else(|| PublishError::Refused("output needs a parent".into()))?;

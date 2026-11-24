@@ -6,6 +6,11 @@ change may break compatibility, and an entry here says so when it does.
 
 ## Unreleased
 
+### CLI
+
+- `gosanja index` and `gosanja diff` resolve `--out` paths ending in `.` or `..` to an existing
+  directory before checking for overlap and deciding whether the output can be replaced.
+
 ### Adapter contract 0.3
 
 Breaks 0.2. An engine of 0.3 refuses an adapter that declares 0.2. An adapter has to:

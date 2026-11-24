@@ -149,6 +149,79 @@ fn an_earlier_diff_is_replaced_and_an_empty_or_missing_output_is_used() {
 }
 
 #[test]
+fn a_terminal_parent_directory_publishes_the_same_output_as_the_directory_itself() {
+    let inputs = Inputs::new();
+    let direct = inputs.tmp.path().join("direct");
+    inputs.guarded(&direct).unwrap();
+    assert_eq!(fs::read(direct.join("data")).unwrap(), b"written");
+
+    let demo = inputs.tmp.path().join("demo");
+    fs::create_dir_all(demo.join("child")).unwrap();
+    output(&demo, DIFF, "earlier").unwrap();
+    inputs.guarded(&demo.join("child/..")).unwrap();
+    assert_eq!(tree(&demo), tree(&direct));
+}
+
+#[test]
+fn a_terminal_current_directory_must_already_exist() {
+    let inputs = Inputs::new();
+    let demo = inputs.tmp.path().join("demo");
+    fs::create_dir(&demo).unwrap();
+    inputs.guarded(&demo.join(".")).unwrap();
+    assert_eq!(fs::read(demo.join("data")).unwrap(), b"written");
+
+    let before = tree(inputs.tmp.path());
+    let err = inputs.guarded(&demo.join("missing/.")).unwrap_err();
+    assert_eq!(err.exit_code(), 2);
+    assert_eq!(tree(inputs.tmp.path()), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_terminal_parent_directory_resolves_through_a_symlink_target() {
+    let inputs = Inputs::new();
+    let demo = inputs.tmp.path().join("demo");
+    let child = demo.join("child");
+    fs::create_dir_all(&child).unwrap();
+    output(&demo, DIFF, "earlier").unwrap();
+
+    let links = inputs.tmp.path().join("links");
+    fs::create_dir(&links).unwrap();
+    let link = links.join("child");
+    std::os::unix::fs::symlink(&child, &link).unwrap();
+    let before = tree(&links);
+    inputs.guarded(&link.join("..")).unwrap();
+    assert_eq!(fs::read(demo.join("data")).unwrap(), b"written");
+    assert_eq!(tree(&links), before);
+}
+
+#[test]
+fn a_terminal_parent_directory_through_a_missing_component_is_refused() {
+    let inputs = Inputs::new();
+    let demo = inputs.tmp.path().join("demo");
+    fs::create_dir(&demo).unwrap();
+    let before = tree(inputs.tmp.path());
+
+    let err = inputs.guarded(&demo.join("missing/..")).unwrap_err();
+    assert_eq!(err.exit_code(), 2);
+    assert_eq!(err.to_string(), "output must name a directory");
+    assert_eq!(tree(inputs.tmp.path()), before);
+}
+
+#[test]
+fn a_terminal_parent_directory_containing_the_source_is_refused_as_an_overlap() {
+    let inputs = Inputs::new();
+    let src = inputs.tmp.path().join("src");
+    fs::create_dir(&src).unwrap();
+    let before = tree(inputs.tmp.path());
+
+    let err = publish::publish(&src, &src.join(".."), |_| panic!("overlap")).unwrap_err();
+    assert_eq!(err.exit_code(), 2);
+    assert!(err.to_string().contains("output overlaps"), "{err}");
+    assert_eq!(tree(inputs.tmp.path()), before);
+}
+
+#[test]
 fn any_other_non_empty_output_is_refused_and_left_alone() {
     let inputs = Inputs::new();
     for manifest in [None, Some("{}"), Some("not json")] {
