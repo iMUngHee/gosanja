@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+
+# A test can set either path in its copy of this script.
+index_file=''
+record_file=''
+
+if [ -n "$record_file" ]; then
+    {
+        printf 'cwd=%s\n' "$(pwd -P)"
+        for arg do
+            printf 'arg=%s\n' "$arg"
+        done
+        env | LC_ALL=C sort
+        printf '\n'
+    } >> "$record_file"
+fi
+
+if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
+    echo '0.2.10'
+    exit 0
+fi
+
+if [ "${1:-}" = index ]; then
+    shift
+    output=
+    while [ "$#" -ge 2 ]; do
+        case $1 in
+            --module-version) ;;
+            --output) output=$2 ;;
+            *) break ;;
+        esac
+        shift 2
+    done
+    if [ "$#" -eq 0 ] && [ -n "$output" ]; then
+        cp "${index_file:-./index.scip}" "$output"
+        exit 0
+    fi
+fi
+
+echo 'usage: scip-go --version | index [--module-version <version>] --output <file>' >&2
+exit 2

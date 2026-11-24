@@ -1,0 +1,158 @@
+
+rH
+scip-go0.2.10index--module-versionv0.0.0--output
+index.scip$file:///tmp/gosanja-fixtures/go-flow ûm
+flow.goG=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/BOCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/BMAscip-go gomod golang.org/x/mod v0.43.0 `golang.org/x/mod/semver`/BWCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Count#B
+Z \Jscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/DefaultCount.B
+R
+OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Count#B
+Q?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/A.BRQ?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/B.BRPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().BPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/next().BQ?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/F.BRGQ?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/G.BRGPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B#PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B>BVDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Marker.BR PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().BPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().BWCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#B
+Z ]Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#Score.BRXDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#BZ ]Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#Load.BROCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#BOCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/BVJscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#BPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#BOCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/BUIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#B_Kscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedValue#BZ OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/BfRscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedValue#Circle.BRVJscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#BaMscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedPointer#B!Z!# OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B"gSscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedPointer#Gauge.B"R"UIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#B"VDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B&	R&!local 0B&
+local 0B&UCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Max().B(R(5local 1B(	
+local 2B(local 3B(local 1B(local 1B(OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B($)UIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Max().B(*-local 2B(./local 3B(12YEscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/make2().B*
+Z*, local 4B+PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B+!%local 4B+&'[Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/IsVersion().B.R.Flocal 5B.MAscip-go gomod golang.org/x/mod v0.43.0 `golang.org/x/mod/semver`/B.-3WKscip-go gomod golang.org/x/mod v0.43.0 `golang.org/x/mod/semver`/IsValid().B.4;local 5B.<C\Hscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Promoted().B1Z16 local 6B2OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B2VJscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#B2]Qscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Amount.B2local 7B3WKscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedValue#B3
+^Rscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedValue#Circle.B3local 6B3 &local 8B4YMscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedPointer#B4_Sscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedPointer#Gauge.B4!OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B4$)UIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#B4*/\Pscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#Amount.B406local 6B5^Rscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Score().B5local 7B5^Rscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Score().B5$local 8B5)0\Pscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#Load().B515XFscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/signal().B8R86local 9B8local 9B8/3]Kscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/awaitSignal().B9R91local 10B9local 10B9+/XDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Flow().B<	Z<z local 11B<
+local 12B<local 13B<$local 14B=OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B=XLscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Double().B=local 11B=!"local 15B>PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B>(,local 16B?local 14B?OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Max().B? #OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B?05UIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Max().B?69OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B?FKUIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Max().B?LOQEscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/make2().B?W\local 15B?celocal 17B@local 16B@local 18BAlocal 17BA
+PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().BAlocal 16BAlocal 19BBRFscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/signal().BC
+local 19BCWKscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/awaitSignal().BDlocal 19BDlocal 11BFlocal 11BGlocal 11BGlocal 11BIlocal 18BJlocal 18BLlocal 20BOlocal 11BP	local 18BRPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().BRlocal 18BUPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().BUlocal 18BWPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().BWlocal 21BZlocal 12BZlocal 18B\local 21B\local 18B^local 21B^local 18B`PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B`local 22Bclocal 23Bdlocal 23Bdlocal 22Bdlocal 23Bdlocal 23Belocal 23Bhlocal 13Bhlocal 18Bklocal 22Bklocal 23Bklocal 24Bmlocal 18Bnlocal 24Bnlocal 25Brlocal 13Brlocal 18Bslocal 25Bslocal 18BuPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().Bulocal 26Bxlocal 27BxPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().Bx&*local 27Bx+0local 26Bylocal 18ByVDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/next().B|	R|%local 28B|
+local 28B|PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B~†
+Rscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedValue#Circle.(2Circle:&"go* struct field Circle meter.CircleW
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/_.(=2_:"go*	var _ int¦
+Cscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#+Shape describes a value that can be scored.(2Shape:)"go*#type Shape interface{ Score() int }t
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#Score.(C2Score:"go*func (Shape).Score() int^
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/G.(=2G:"go*var G func() intT
+Mscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/inline-14-5:int.2intß
+Mscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedPointer#"H
+Dscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#(12EmbeddedPointer:1"go*+type EmbeddedPointer struct{ *meter.Gauge }Z
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/_.(=2_:"go*var _ Loader[
+=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/(#2flow:"go*package flows
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#Load.(C2Load:"go*func (Loader).Load() intØ
+Kscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedValue#"G
+Cscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#(12EmbeddedValue:/"go*)type EmbeddedValue struct{ meter.Circle }^
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/F.(=2F:"go*var F func() intp
+Cscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Max().(2Max:""go*func Max[T ~int](a T, b T) TË
+Hscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Promoted().XPromoted calls one method through an embedded value and one through an embedded pointer.(2Promoted:"go*func Promoted() int€
+Jscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/DefaultCount.(2DefaultCount:""go*const DefaultCount Count = 2W
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/B.(=2B:"go*	var B intT
+Mscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/inline-14-5:int.2intf
+Dscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Marker.(=2Marker:"go*var Marker intY
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/_.(=2_:"go*var _ Shapej
+Dscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().(2seed:"go*func seed(n int) intr
+Escip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/make2().(2make2: "go*func make2() func(int) int›
+Cscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Count#3Count is the fixture's public alias for an integer.(72Count:"go*type Count = intW
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/A.(=2A:"go*	var A intW
+?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/_.(=2_:"go*	var _ int{
+Fscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/signal().(2signal:'"go*!func signal(done chan<- struct{})…
+Sscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/EmbeddedPointer#Gauge.(2Gauge:%"go*struct field Gauge *meter.GaugeŠ
+Kscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/awaitSignal().(2awaitSignal:,"go*&func awaitSignal(done <-chan struct{})Ê
+Dscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Flow().>Flow collects the statement forms used in the outline fixture.(2Flow::"go*4func Flow(n int, argument any, inbox <-chan int) intj
+Dscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/next().(2next:"go*func next(n int) intƒ
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/IsVersion().(2	IsVersion:)"go*#func IsVersion(version string) bool¹
+Dscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#<Loader describes the method that only *meter.Gauge provides.(2Loader:)"go*#type Loader interface{ Load() int }(
+local 24(=2delta:"go*var delta int
+local 0(=2n:"go*	var n int 
+local 23(=2i:"go*	var i int(
+local 27(=2value:"go*var value int,
+local 6(=2circle:"go*var circle Circle(
+local 25(=2value:"go*var value int 
+local 28(=2n:"go*	var n int
+local 4(=2n:"go*	var n int,
+local 16(=2values:"go*var values []int*
+local 17(=2ê°œìˆ˜:"go*var ê°œìˆ˜ int(
+local 18(=2total:"go*var total int 
+local 11(=2n:"go*	var n int+
+local 15(=2fs:"go*var fs []func() int7
+local 8(=2pointer:!"go*var pointer EmbeddedPointer0
+local 19(=2done:"go*var done chan struct{}1
+local 9(=2done:"go*var done chan<- struct{}(
+local 14(=2score:"go*var score int
+local 21(=2value*
+local 22(=2steps:"go*var steps []int+
+local 1(2T:"go*type parameter T ~int
+local 3(=2b:"go*var b T.
+local 5(=2version:"go*var version string6
+local 26(=2bump:""go*var bump func(value int) int
+local 2(=2a:"go*var a T1
+local 7(=2value:"go*var value EmbeddedValue2
+local 10(=2done:"go*var done <-chan struct{}.
+local 12(=2argument:"go*var argument any/
+local 13(=2inbox:"go*var inbox <-chan int*
+local 202classify:"go*label classify"go0õ
+	tagged.goI=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/BXFscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Tagged().BR%PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().Bk
+Fscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Tagged().(2Tagged:"go*func Tagged() int"go0‡
+zz_generated.goI=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/B[Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Generated().BR(PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/seed().B"t
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Generated().(2	Generated:"go*func Generated() int"go0ø
+flow_test.goG=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/BD8scip-go gomod github.com/golang/go/src go1.27.3 testing/B\Hscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/TestFlow().BZ local 0BD8scip-go gomod github.com/golang/go/src go1.27.3 testing/BF:scip-go gomod github.com/golang/go/src go1.27.3 testing/T#Blocal 1Blocal 1Blocal 2Blocal 3B	local 4B
+local 5Blocal 6Blocal 7Blocal 1B*/local 0BL@scip-go gomod github.com/golang/go/src go1.27.3 testing/T#Run().Blocal 2Blocal 3Blocal 8BD8scip-go gomod github.com/golang/go/src go1.27.3 testing/B$F:scip-go gomod github.com/golang/go/src go1.27.3 testing/T#B%&local 9B	PDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Flow().Blocal 2Blocal 4Blocal 2B"local 5B#&local 2B(.local 6B/1local 9B47local 2B;Alocal 7BBFlocal 8BTHscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Fatalf().Blocal 9B#&local 2B(.local 7B/3dPscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/TestInitializers().BZ) local 10BD8scip-go gomod github.com/golang/go/src go1.27.3 testing/B F:scip-go gomod github.com/golang/go/src go1.27.3 testing/T#B!"local 11BK?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/A.BK?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/B.BK?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/F.BK?scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/G.BPDscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Marker.B%local 12Blocal 11B local 12B local 10B!THscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Fatalf().B!
+local 11B!),local 12B!.2local 13B#RFscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Tagged().B#local 13B#local 10B$THscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Errorf().B$
+local 13B$#&local 14B&UIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Generated().B&local 14B&local 10B'THscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Errorf().B'
+local 14B'&)y
+Hscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/TestFlow().(2TestFlow:!"go*func TestFlow(t *testing.T)‘
+Pscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/TestInitializers().(2TestInitializers:)"go*#func TestInitializers(t *testing.T)*
+local 6(2in:"go*field in <-chan int
+local 10(=2t:"go*var t *T'
+local 11(=2got:"go*var got [5]int%
+local 5(2arg:"go*field arg any'
+local 7(2want:"go*field want int#
+local 9(=2got:"go*var got int$
+local 14(=2got:"go*var got int,
+local 1(=2inbox:"go*var inbox chan int)
+local 12(=2want:"go*var want [5]int
+local 0(=2t:"go*var t *Tb
+local 2(=2sample:M"go*Gvar sample struct{name string; n int; arg any; in <-chan int; want int}*
+local 3(2name:"go*field name string!
+local 4(2n:"go*field n int
+local 8(=2t:"go*var t *T$
+local 13(=2got:"go*var got int"go0í&
+meter/meter.goMCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/B^Jscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#BZ eQscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Amount.BRlocal 0BVJscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#BdRscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Score().BR/local 0B%&]Qscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Amount.B'-]Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#B
+Z
+ dPscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#Amount.B	R	local 1BUIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#B	bPscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#Load().BR.local 1B$%\Pscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#Amount.B&,[Gscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#BZ local 2B	
+`Lscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#item.BRlocal 2B^Lscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/NewBox().BR?local 3Blocal 4Blocal 3BSGscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#Blocal 3B SGscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#B+.local 3B/0XLscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#item.B26local 4B8<local 5BSGscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#Blocal 6Blocal 6B_Mscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#Get().BR)local 6Blocal 5B!"XLscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#item.B#'^Lscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Double().BR+local 7Blocal 7B$%]Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Max().BZ local 8B	
+local 9Blocal 10Blocal 8Blocal 8Blocal 9Blocal 10B	local 9B	
+local 10B	v
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Max().(2Max:""go*func Max[T ~int](a T, b T) TÇ
+Jscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#"G
+Cscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#(12Circle:&"go* type Circle struct{ Amount int }{
+Pscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#Amount.(2Amount:"go*struct field Amount intq
+Gscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#(12Box:"go*type Box struct{ item T }
+Lscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/NewBox().(2NewBox:'"go*!func NewBox[T any](item T) Box[T]s
+Mscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#Get().(2Get:"go*func (Box[T]).Get() Tz
+Lscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Double().(2Double: "go*func Double(n int32) int32c
+Cscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/(#2meter:"go*package meter|
+Qscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Amount.(2Amount:"go*struct field Amount intÅ
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#"H
+Dscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#(12Gauge:%"go*type Gauge struct{ Amount int }q
+Lscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#item.(2item:"go*struct field item TÍ
+Rscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Circle#Score()."M
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Shape#Score.(2Score:"go*func (Circle).Score() intÉ
+Pscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Gauge#Load()."M
+Iscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Loader#Load.(2Load:"go*func (*Gauge).Load() int"
+local 0(=2v:"go*var v Circle*
+local 2(2T:"go*type parameter T any*
+local 3(2T:"go*type parameter T any"
+local 5(=2b:"go*var b Box[T]*
+local 6(2T:"go*type parameter T any!
+local 7(=2n:"go*var n int32+
+local 8(2T:"go*type parameter T ~int"
+local 1(=2g:"go*var g *Gauge#
+local 4(=2item:"go*
+var item T
+local 9(=2a:"go*var a T
+local 10(=2b:"go*var b T"go0Ã
+external_test.goLBscip-go gomod example.com/goflow v0.0.0 `example.com/goflow_test`/BD8scip-go gomod github.com/golang/go/src go1.27.3 testing/B	I=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/BOCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/BhTscip-go gomod example.com/goflow v0.0.0 `example.com/goflow_test`/TestPublicCalls().B	Z	 local 0B	D8scip-go gomod github.com/golang/go/src go1.27.3 testing/B	F:scip-go gomod github.com/golang/go/src go1.27.3 testing/T#B	 !local 1B
+I=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/B
+OCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Max().B
+local 1B
+local 0BTHscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Errorf().B
+local 1B"local 2BI=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/BOCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Max().Blocal 2Blocal 0BTHscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Errorf().B
+local 2B"I=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/B	UIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/IsVersion().B
+I=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/B!%UIscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/IsVersion().B&/local 0BSGscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Error().B	local 3BI=scip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/BTHscip-go gomod example.com/goflow v0.0.0 `example.com/goflow`/Promoted().Blocal 3Blocal 0BTHscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Errorf().B
+local 3B$'local 4BOCscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/BXLscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/NewBox().BYMscip-go gomod example.com/goflow v0.0.0 `example.com/goflow/meter`/Box#Get().B!$local 4B(+local 0BTHscip-go gomod github.com/golang/go/src go1.27.3 testing/common#Errorf().B
+local 4B'*“
+Tscip-go gomod example.com/goflow v0.0.0 `example.com/goflow_test`/TestPublicCalls().(2TestPublicCalls:("go*"func TestPublicCalls(t *testing.T)j
+Bscip-go gomod example.com/goflow v0.0.0 `example.com/goflow_test`/(#2	flow_test:"go*package flow_test
+local 0(=2t:"go*var t *T#
+local 1(=2got:"go*var got int#
+local 2(=2got:"go*var got int#
+local 3(=2got:"go*var got int&
+local 4(=2got:"go*var got string"go0

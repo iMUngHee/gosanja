@@ -14,6 +14,7 @@ stored here. What each indexer writes for these fixtures is recorded in
 | `rust-calls` | a workspace of a library, three binaries (one never built) and a procedural macro, holding the constructs the calls layer has to publish or withhold; `NOTE.md` records, per call, the reference the index holds on its line, the definition the call may reach and the rows that follow | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
 | `rust-calls-variants` | three copies of the package `calls-variant`: `v0.1.0`, `v0.2.0` (only the version differs) and `no-default` (version 0.1.0, `default` enables no feature); each copy has its own `Cargo.lock` and `index.scip`, and its library's `direct` calls `leaf` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
 | `go-basic` | `greet` is defined at `main.go` [2,5,10]; the reference to it at [7,5,10] lies in `main`'s body [6,0,8,1] | `scip-go` 0.2.10 built with Go 1.27.3 |
+| `go-flow` | a module with ordinary, internal-test and external-test documents, generic and promoted calls, value and pointer interface implementations, build constraints and physical positions after `//line`. `NOTE.md` gives the source and index controls | `scip-go` 0.2.10 built with Go 1.27.3 |
 | `ts-basic` | `greet` is defined at `src/index.ts` [0,16,21]; the reference to it at [5,9,14] lies in `run`'s body [4,0,6,1] (UTF-16 columns) | `@sourcegraph/scip-typescript` 0.6.2 on Node 26.13.1 with TypeScript 6.0.3 |
 | `diff-basic` | two versions of one crate, `old/` and `new/`, each with its index and with its snapshot in `expected/`; one case of every kind of change a diff reports, the three candidate scores worked by hand in `NOTE.md`; the diff of the two snapshots is `expected/`, equal to `spec/examples/diff-basic` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1; snapshots by this workspace's engine and Rust adapter |
 | `diff-public` | a frozen pair of public snapshots, base64 v0.20.0 and v0.21.0, with `truth.tsv`, the pairs listed before any matcher ran; provenance and licence in `NOTICE.md`; no index, and not rebuilt; at snapshot schema 0.2, which the reader refuses, so the matcher's test reads copies re-stamped to the current schema | gosanja 0.2.0 from `rust-analyzer 0.3.3049-standalone` indexes, rustc 1.99.1 (see `NOTICE.md`) |
@@ -88,9 +89,15 @@ at opt-level 0 holds each of the four calls, and each checked-in snapshot holds 
 ### Indexers that do not repeat themselves
 
 rust-analyzer and scip-typescript give the same bytes on every run. scip-go 0.2.10 does not:
-the order of `Document.symbols` changes between runs, so a regenerated `go-basic/index.scip`
-can differ from the checked-in one without any change in its facts. The index is kept as
-the indexer wrote it, and tests must not depend on that order.
+the order of `Document.symbols` changes between runs, so regenerated `go-basic/index.scip`
+and `go-flow/index.scip` can differ from the checked-in files without any change in their
+facts. The indexes are kept as the indexers wrote them. Compare decoded facts or the snapshot
+built from a fresh index, which is deterministic, rather than comparing raw Go indexes.
+
+To regenerate `go-flow`, put Go 1.27.3 and scip-go 0.2.10 on PATH and have
+`golang.org/x/mod` v0.43.0 in the Go module cache. The fixture runs offline with the native
+build context and cgo disabled. The fixed source root is `/tmp/gosanja-fixtures/go-flow`.
+`fixtures/regenerate.sh --out <dir> go-flow` stages the index outside the checkout.
 
 ## The fake adapter
 

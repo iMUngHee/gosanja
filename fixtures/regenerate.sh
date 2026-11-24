@@ -4,7 +4,7 @@
 #
 # Usage: fixtures/regenerate.sh [--out <dir>] [--indexes-only] [fixture...]
 #   fixtures: rust-basic rust-flow rust-recall rust-calls rust-calls-variants go-basic
-#             ts-basic diff-basic; with none given every fixture is rebuilt.
+#             go-flow ts-basic diff-basic; with none given every fixture is rebuilt.
 #
 # Indexers record the absolute directory they ran in, so each fixture is copied to the fixed
 # path /tmp/gosanja-fixtures/<fixture> and indexed there; build output never lands in the
@@ -23,6 +23,7 @@
 # the file system's root, holds one. Override the indexer programs with RUST_ANALYZER,
 # SCIP_GO and SCIP_TYPESCRIPT, and record the versions this prints in fixtures/README.md
 # when you commit new indexes.
+# go-flow indexes with the host build context, cgo disabled, and a warm Go module cache.
 #
 # The snapshots are those of rust-flow, rust-calls and both sides of diff-basic, written
 # by this workspace's engine with its Rust adapter, which runs the indexer itself. The
@@ -244,7 +245,7 @@ other_index() {
     echo "$fixture: $("$1" --version)"
 }
 
-[ "$#" -gt 0 ] || set -- rust-basic rust-flow rust-recall rust-calls rust-calls-variants go-basic ts-basic diff-basic
+[ "$#" -gt 0 ] || set -- rust-basic rust-flow rust-recall rust-calls rust-calls-variants go-basic go-flow ts-basic diff-basic
 for fixture in "$@"; do
     case $fixture in
     rust-basic | rust-recall) rust_fixture "$fixture" ;;
@@ -252,6 +253,16 @@ for fixture in "$@"; do
     rust-calls-variants) rust_variants ;;
     diff-basic) diff_basic ;;
     go-basic) other_index go-basic "$scip_go" index --module-version v1.0.0 ;;
+    go-flow)
+        mkdir -p "$work/go-cache" "$work/go-tmp"
+        (
+            unset GOOS GOARCH GO111MODULE
+            CGO_ENABLED=0 GOFLAGS="-mod=readonly -buildvcs=false" GOENV=off GOWORK=off \
+                GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOPACKAGESDRIVER=off \
+                XDG_CONFIG_HOME="$work/config" GOCACHE="$work/go-cache" GOTMPDIR="$work/go-tmp" \
+                other_index go-flow "$scip_go" index --module-version v0.0.0 --output index.scip
+        )
+        ;;
     ts-basic) other_index ts-basic "$scip_typescript" index --no-progress-bar ;;
     *) die "unknown fixture: $fixture" ;;
     esac
