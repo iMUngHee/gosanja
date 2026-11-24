@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/scip-code/scip/bindings/go/scip"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -36,29 +37,37 @@ func Decode(data []byte) (*Index, error) {
 	return &Index{Documents: index.Documents}, nil
 }
 
-// Keep rewrites the index file at path with only the documents whose path keep accepts,
-// keeping its metadata and external symbols.
+// Keep rewrites the index file at path with only the documents whose path keep accepts.
+// It copies the remaining wire records in order so each document keeps its preceding metadata.
 func Keep(path string, keep func(string) bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	var index scip.Index
-	if err := proto.Unmarshal(data, &index); err != nil {
-		return fmt.Errorf("not a SCIP index: %w", err)
-	}
-	var kept []*scip.Document
-	for _, d := range index.Documents {
-		if keep(d.RelativePath) {
-			kept = append(kept, d)
-		}
-	}
-	index.Documents = kept
-	out, err := proto.MarshalOptions{Deterministic: true}.Marshal(&index)
+	index, err := Decode(data)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0o644)
+	const documentsField = 2 // scip.proto Index.documents
+	kept := data[:0]
+	document := 0
+	for rest := data; len(rest) > 0; {
+		number, kind, length := protowire.ConsumeField(rest)
+		if length < 0 {
+			return fmt.Errorf("not a SCIP index: %w", protowire.ParseError(length))
+		}
+		record := rest[:length]
+		rest = rest[length:]
+		if number == documentsField && kind == protowire.BytesType {
+			path := index.Documents[document].RelativePath
+			document++
+			if !keep(path) {
+				continue
+			}
+		}
+		kept = append(kept, record...)
+	}
+	return os.WriteFile(path, kept, 0o644)
 }
 
 // Paths lists the documents' relative paths, sorted, each once.

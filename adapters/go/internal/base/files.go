@@ -2,6 +2,7 @@ package base
 
 import (
 	"bytes"
+	"context"
 	"go/build"
 	"go/parser"
 	"go/token"
@@ -9,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"gosanja/adapters/go/internal/paths"
@@ -59,42 +60,24 @@ func readFile(root os.FileInfo, f file) Read {
 	return read
 }
 
-// buildContext is the context of owner decision 5: the host's GOOS and GOARCH, cgo off, and
-// the release tags of the go command that lists the packages, whose version word is goVersion
-// (`go1.27.3`, possibly with a suffix). The adapter's own build tags would judge a
-// `//go:build go1.27` file by the compiler that built the adapter.
-func buildContext(goVersion string) build.Context {
+// buildContext uses the tool and release tags of the same Go command and environment as
+// the inventory. The parent adapter process can have different architecture or experiment tags.
+func buildContext(ctx context.Context, root, goTool string, vars []string) (build.Context, error) {
+	const format = `{{with context}}{{range .ToolTags}}{{printf "%s " .}}{{end}}{{"\n"}}{{range .ReleaseTags}}{{printf "%s " .}}{{end}}{{end}}`
+	stdout, stderr, err := runIn(ctx, root, vars, goTool, "list", "-f", format, "unsafe")
+	if err != nil {
+		return build.Context{}, fail("dependencies-unreadable", "go list build context: %v: %s", err, strings.TrimSpace(string(stderr)))
+	}
+	tags := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
+	if len(tags) != 2 || len(strings.Fields(tags[1])) == 0 {
+		return build.Context{}, fail("dependencies-unreadable", "go list returned an invalid build context")
+	}
 	ctxt := build.Default
 	ctxt.GOOS, ctxt.GOARCH = runtime.GOOS, runtime.GOARCH
 	ctxt.CgoEnabled = false
-	if tags, ok := releaseTags(goVersion); ok {
-		ctxt.ReleaseTags = tags
-	}
-	return ctxt
-}
-
-// releaseTags are go1.1 up to the minor release goVersion names, as the go command sets them.
-func releaseTags(goVersion string) ([]string, bool) {
-	rest, ok := strings.CutPrefix(goVersion, "go1.")
-	if !ok {
-		return nil, false
-	}
-	end := strings.IndexFunc(rest, func(r rune) bool { return r < '0' || r > '9' })
-	if end == 0 {
-		return nil, false
-	}
-	if end > 0 {
-		rest = rest[:end]
-	}
-	minor, err := strconv.Atoi(rest)
-	if err != nil || minor < 1 {
-		return nil, false
-	}
-	tags := make([]string, 0, minor)
-	for i := 1; i <= minor; i++ {
-		tags = append(tags, "go1."+strconv.Itoa(i))
-	}
-	return tags, true
+	ctxt.ToolTags = strings.Fields(tags[0])
+	ctxt.ReleaseTags = strings.Fields(tags[1])
+	return ctxt, nil
 }
 
 // ignoredDir reports whether the go command skips dir, relative to the root and written with
@@ -119,9 +102,9 @@ func ignoredDir(dir string, patterns []string) bool {
 // unnamed walks the root for `.go` files that no package of the inventory names, in the
 // directories the go tool considers, and sorts them: excluded by the build context, or built
 // and so missed by the inventory.
-func unnamed(root string, inv *Inventory, ignored []string, goVersion string) (constrained, missed []string, err error) {
+func unnamed(ctx context.Context, root string, inv *Inventory, ignored []string, goTool string, vars []string) (constrained, missed []string, err error) {
 	named := inv.named()
-	ctxt := buildContext(goVersion)
+	loadContext := sync.OnceValues(func() (build.Context, error) { return buildContext(ctx, root, goTool, vars) })
 	imported := map[string]*build.Package{}
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -148,6 +131,10 @@ func unnamed(root string, inv *Inventory, ignored []string, goVersion string) (c
 		dir := filepath.Dir(path)
 		pkg, ok := imported[dir]
 		if !ok {
+			ctxt, err := loadContext()
+			if err != nil {
+				return err
+			}
 			pkg, _ = ctxt.ImportDir(dir, 0)
 			imported[dir] = pkg
 		}

@@ -145,10 +145,10 @@ func run(ctx context.Context, cfg Config, out *Outcome) error {
 		return fail("dependencies-missing", "%s", detail)
 	}
 	out.Inventory = inv
-	return index(ctx, cfg, out, inv, modfile.Ignore, scipGo, work)
+	return index(ctx, cfg, out, inv, modfile.Ignore, goTool, scipGo, work)
 }
 
-func index(ctx context.Context, cfg Config, out *Outcome, inv *Inventory, ignore []struct{ Path string }, scipGo string, work env.Work) error {
+func index(ctx context.Context, cfg Config, out *Outcome, inv *Inventory, ignore []struct{ Path string }, goTool, scipGo string, work env.Work) error {
 	rootInfo, err := os.Stat(cfg.Root)
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func index(ctx context.Context, cfg Config, out *Outcome, inv *Inventory, ignore
 	for _, i := range ignore {
 		ignored = append(ignored, i.Path)
 	}
-	constrained, missed, err := unnamed(cfg.Root, inv, ignored, out.Tools[0].Version)
+	constrained, missed, err := unnamed(ctx, cfg.Root, inv, ignored, goTool, out.Env)
 	if err != nil {
 		return err
 	}
@@ -286,15 +286,26 @@ func checkDestinations(cfg Config, v env.Values) (env.Values, error) {
 		if err != nil {
 			return nil, err
 		}
+		// A link whose target holds the list separator would split into other entries when
+		// the child reads the joined list.
+		if strings.ContainsRune(r, filepath.ListSeparator) {
+			return nil, fail("tool-home-unresolvable", "the GOPATH entry %s resolves to %s, which holds the list separator", entry, r)
+		}
 		entries = append(entries, r)
 	}
+	resolved["GOPATH"] = strings.Join(entries, string(filepath.ListSeparator))
 	if len(entries) > 0 {
 		if _, err := check(filepath.Join(entries[0], "pkg", "sumdb")); err != nil {
 			return nil, err
 		}
-		resolved["GOPATH"] = strings.Join(entries, string(filepath.ListSeparator))
 	}
-	if cache := v["GOMODCACHE"]; cache != "" {
+	// The module cache the children use: the one named, or else the go command's default
+	// under the first entry of the GOPATH they get, which is checked and passed explicitly.
+	cache := v["GOMODCACHE"]
+	if cache == "" && len(entries) > 0 {
+		cache = filepath.Join(entries[0], "pkg", "mod")
+	}
+	if cache != "" {
 		r, err := check(cache)
 		if err != nil {
 			return nil, err

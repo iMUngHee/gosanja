@@ -48,7 +48,7 @@ func realGo(t *testing.T) string {
 // telemetry off (directHome), so that none writes into the caller's home, and none leaves a
 // detached telemetry process writing in a directory a test is about to remove. They keep the
 // caller's module cache and GOPATH (cache, gopath), read once from the caller's own settings.
-var directHome, cache, gopath string
+var directHome, cache, gopath, buildCache string
 
 // isolate prepares directHome under scratch and reads the caller's module cache and GOPATH.
 // The query reads the caller's env file but writes its telemetry under directHome: on Linux
@@ -70,25 +70,26 @@ func isolate(scratch string) error {
 	if envFile == "" {
 		envFile = filepath.Join(config, "go", "env")
 	}
-	cmd := exec.Command("go", "env", "GOMODCACHE", "GOPATH")
+	cmd := exec.Command("go", "env", "GOMODCACHE", "GOPATH", "GOCACHE")
 	cmd.Env = append(os.Environ(), "GOENV="+envFile, "XDG_CONFIG_HOME="+filepath.Join(directHome, ".config"))
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("go env GOMODCACHE GOPATH: %w", err)
+		return fmt.Errorf("go env GOMODCACHE GOPATH GOCACHE: %w", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) != 2 {
-		return fmt.Errorf("go env GOMODCACHE GOPATH printed %q", out)
+	if len(lines) != 3 {
+		return fmt.Errorf("go env GOMODCACHE GOPATH GOCACHE printed %q", out)
 	}
-	cache, gopath = lines[0], lines[1]
+	cache, gopath, buildCache = lines[0], lines[1], lines[2]
 	return nil
 }
 
 // isolated is env with the isolated home and the caller's module cache and GOPATH, which
-// replace any earlier value (exec keeps the last of a duplicated name).
+// replace any earlier value (exec keeps the last of a duplicated name), and the caller's
+// build cache unless env names one.
 func isolated(env []string) []string {
-	return append(env, "HOME="+directHome, "XDG_CONFIG_HOME="+filepath.Join(directHome, ".config"),
-		"GOMODCACHE="+cache, "GOPATH="+gopath)
+	return append(append([]string{"GOCACHE=" + buildCache}, env...), "HOME="+directHome,
+		"XDG_CONFIG_HOME="+filepath.Join(directHome, ".config"), "GOMODCACHE="+cache, "GOPATH="+gopath)
 }
 
 // moduleCache is the caller's module cache, which holds the adapter's build list and so

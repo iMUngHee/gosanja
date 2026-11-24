@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -275,18 +276,26 @@ func TestEnvironmentTelemetry(t *testing.T) {
 }
 
 // checkTelemetryOff checks that the adapter's Go processes kept telemetry off: the mode file
-// it wrote, no counters or upload directory under <out>/work, and no process left that runs
-// with that configuration directory.
+// it wrote, no counters or upload directory in the configuration directory they see, and, on
+// Linux, no process left that runs with it. That directory is os.UserConfigDir's for the
+// children's environment: XDG_CONFIG_HOME, or on Darwin the home's Library.
 func checkTelemetryOff(t *testing.T, out string) {
 	t.Helper()
-	telemetry := filepath.Join(out, "work", "config", "go", "telemetry")
+	config := filepath.Join(out, "work", "config")
+	if runtime.GOOS == "darwin" {
+		config = filepath.Join(out, "work", "home", "Library", "Application Support")
+	}
+	telemetry := filepath.Join(config, "go", "telemetry")
 	if mode, err := os.ReadFile(filepath.Join(telemetry, "mode")); err != nil || strings.TrimSpace(string(mode)) != "off" {
 		t.Errorf("telemetry mode %q: %v", mode, err)
 	}
 	for _, dir := range []string{"local", "upload"} {
 		if _, err := os.Lstat(filepath.Join(telemetry, dir)); err == nil {
-			t.Errorf("telemetry wrote %s under <out>/work/config", dir)
+			t.Errorf("telemetry wrote %s under %s", dir, config)
 		}
+	}
+	if runtime.GOOS != "linux" {
+		return
 	}
 	if pids := lingering(t, "XDG_CONFIG_HOME="+filepath.Join(out, "work", "config")); len(pids) != 0 {
 		t.Errorf("processes still run with the adapter's configuration directory: %v", pids)
@@ -294,7 +303,7 @@ func checkTelemetryOff(t *testing.T, out string) {
 }
 
 // lingering lists the processes of this user whose environment holds the variable, as /proc
-// shows them on Linux.
+// shows them; it is called on Linux only.
 func lingering(t *testing.T, variable string) []string {
 	t.Helper()
 	entries, err := os.ReadDir("/proc")
@@ -576,5 +585,58 @@ func TestVendorMarkerNotAFile(t *testing.T) {
 		if inv.vars["GOFLAGS"] != "-buildvcs=false -mod=readonly" {
 			t.Errorf("%v: GOFLAGS=%q", inv.args, inv.vars["GOFLAGS"])
 		}
+	}
+}
+
+// TestEnvironmentGOPATHDefaultCache covers a module cache the children would derive from
+// GOPATH themselves: with GOMODCACHE set nowhere and a leading empty GOPATH entry, the go
+// command reports no module cache, and a child that gets the resolved GOPATH defaults to
+// <first entry>/pkg/mod. A cold cache and a file proxy make a run download, so a cache the
+// adapter did not check would show as a change in the root.
+func TestEnvironmentGOPATHDefaultCache(t *testing.T) {
+	for _, c := range []struct {
+		name, code string
+		gopath     func(w *world, root string) string
+	}{
+		{"an entry whose link target holds the list separator", "tool-home-unresolvable", func(w *world, root string) string {
+			// root + ":" + outside reads, once joined into a list, as the root and outside.
+			target := root + ":" + filepath.Join(w.dir, "outside")
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link(t, target, filepath.Join(w.dir, "gp"))
+			return ":" + filepath.Join(w.dir, "gp")
+		}},
+		{"a default cache that links into the root", "tool-home-inside-root", func(w *world, root string) string {
+			inside := filepath.Join(root, "inside")
+			if err := os.Mkdir(inside, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link(t, inside, filepath.Join(w.dir, "gp", "pkg", "mod"))
+			return ":" + filepath.Join(w.dir, "gp")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			t.Cleanup(func() {
+				_ = filepath.WalkDir(w.dir, func(path string, d fs.DirEntry, err error) error {
+					if err == nil && d.IsDir() {
+						_ = os.Chmod(path, 0o755)
+					}
+					return nil
+				})
+			})
+			root := w.flow("go-flow")
+			gopath := c.gopath(w, root)
+			before := listing(t, root)
+			proxy := "file://" + filepath.Join(moduleCache(t), "cache", "download")
+			out, code, stderr := w.index(w.caller(map[string]string{"GOPATH": gopath, "GOMODCACHE": "", "GOPROXY": proxy}), root)
+			if after := listing(t, root); !reflect.DeepEqual(before, after) {
+				t.Errorf("the root changed")
+			}
+			if e := baseEntry(t, out); code != 0 || e.Status != "failed" || e.Diagnostics[0].Code != c.code {
+				t.Errorf("exit %d, base %+v, want %s: %s", code, e, c.code, stderr)
+			}
+		})
 	}
 }
