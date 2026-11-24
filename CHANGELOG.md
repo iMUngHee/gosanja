@@ -63,10 +63,22 @@ documents which of these it runs or leaves in force.
   give its path.
 - When an adapter's base layer fails, the error names the adapter's first diagnostic code.
 - The adapter cache directory may not lie in the output directory.
+- `gosanja diff <old> <new> --out <dir>` compares two snapshots and writes a diff (diff schema
+  0.1). It exits 2 for an input of another schema or with no scope or several, and for an
+  output that is, contains or lies inside an input, or that is a non-empty directory other
+  than an earlier diff; it exits 3 for an input that fails validation. How to read a diff is
+  in [docs/diff.md](docs/diff.md).
+- `gosanja validate` also reports `parent-cycle`, a chain of `parent` or `member_of` that
+  returns to itself, and `invalid-symbol`, a `symbol` that is not a global SCIP symbol. A
+  snapshot that holds either now fails validation; the engine writes neither.
 - Rust API: `AdapterManifest` and `LayerResult` have new fields that a struct literal must
   give; `GapKind` has a new variant that an exhaustive `match` must handle;
   `adapter::describe` takes an `Invocation` and returns a `Described`, and running the adapter
-  is `Described::run`.
+  is `Described::run`. New: `publish::publish_guarded` publishes to a path that may not
+  overlap any of a list of protected directories and replaces only an earlier output with a
+  given `format` marker (`publish::publish` is unchanged); `diff::compare` validates and
+  compares two snapshots read with `write::SnapshotFiles::read`; `write::write_diff` and
+  `write::serialise_diff` write the result.
 
 ### Snapshot schema 0.1
 
