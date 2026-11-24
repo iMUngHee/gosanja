@@ -1,0 +1,16 @@
+[package]
+name = "calls-lib"
+version = "0.1.0"
+edition = "2024"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(calls_flag)"] }
+
+[features]
+default = ["fast"]
+fast = []
+off = []
+
+[dependencies]
+calls-derive = { path = "../calls-derive" }
+lookalike = { package = "fake-core", path = "../fake-core" }

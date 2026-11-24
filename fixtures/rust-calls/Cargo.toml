@@ -1,0 +1,4 @@
+[workspace]
+members = ["calls-app", "calls-derive", "calls-lib"]
+exclude = ["fake-core"]
+resolver = "3"

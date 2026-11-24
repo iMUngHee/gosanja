@@ -1,0 +1,27 @@
+[package]
+name = "calls-app"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["front"]
+front = ["engine"]
+engine = []
+extra = []
+
+[dependencies]
+calls-lib = { path = "../calls-lib" }
+
+[[bin]]
+name = "calls-app"
+path = "src/main.rs"
+required-features = ["engine"]
+
+[[bin]]
+name = "calls-extra"
+path = "src/bin/extra.rs"
+required-features = ["extra"]
+
+[[bin]]
+name = "calls-twin"
+path = "src/bin/twin.rs"

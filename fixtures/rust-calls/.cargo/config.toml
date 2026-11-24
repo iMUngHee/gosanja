@@ -1,0 +1,2 @@
+# The project configuration includes a second file, which sets a --cfg flag.
+include = ["flags.toml"]
