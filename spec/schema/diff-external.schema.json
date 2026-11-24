@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "diff-external.schema.json",
+  "type": "object",
+  "properties": {
+    "change": {"enum": ["added", "removed", "rekeyed"]},
+    "old": {"$ref": "entity.schema.json#/$defs/key"},
+    "new": {"$ref": "entity.schema.json#/$defs/key"},
+    "package": {"$ref": "diff-manifest.schema.json#/$defs/package"},
+    "properties": false
+  },
+  "required": ["change"],
+  "allOf": [
+    {
+      "if": {"properties": {"change": {"const": "added"}}, "required": ["change"]},
+      "then": {"required": ["new", "package"], "properties": {"old": false}}
+    },
+    {
+      "if": {"properties": {"change": {"const": "removed"}}, "required": ["change"]},
+      "then": {"required": ["old", "package"], "properties": {"new": false}}
+    },
+    {
+      "if": {"properties": {"change": {"const": "rekeyed"}}, "required": ["change"]},
+      "then": {"required": ["old", "new"], "properties": {"package": false}}
+    }
+  ]
+}

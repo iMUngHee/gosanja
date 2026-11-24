@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "diff-manifest.schema.json",
+  "type": "object",
+  "properties": {
+    "format": {"const": "gosanja-diff"},
+    "schema": {"$ref": "adapter-manifest.schema.json#/$defs/version"},
+    "tool": {"$ref": "adapter-result.schema.json#/$defs/tool"},
+    "weights": {
+      "type": "object",
+      "properties": {
+        "name": {"$ref": "diff-manifest.schema.json#/$defs/weight"},
+        "file": {"$ref": "diff-manifest.schema.json#/$defs/weight"},
+        "parents": {"$ref": "diff-manifest.schema.json#/$defs/weight"},
+        "size": {"$ref": "diff-manifest.schema.json#/$defs/weight"},
+        "outgoing": {"$ref": "diff-manifest.schema.json#/$defs/weight"},
+        "incoming": {"$ref": "diff-manifest.schema.json#/$defs/weight"},
+        "threshold": {"$ref": "diff-candidate.schema.json#/$defs/measure"}
+      },
+      "required": ["name", "file", "parents", "size", "outgoing", "incoming", "threshold"]
+    },
+    "old": {"$ref": "diff-manifest.schema.json#/$defs/side"},
+    "new": {"$ref": "diff-manifest.schema.json#/$defs/side"},
+    "counts": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "object",
+          "properties": {
+            "added": {"$ref": "diff-manifest.schema.json#/$defs/count"},
+            "removed": {"$ref": "diff-manifest.schema.json#/$defs/count"},
+            "changed": {"$ref": "diff-manifest.schema.json#/$defs/count"},
+            "rekeyed": {"$ref": "diff-manifest.schema.json#/$defs/count"}
+          },
+          "required": ["added", "removed", "changed", "rekeyed"]
+        },
+        "externals": {
+          "type": "object",
+          "properties": {
+            "added": {"$ref": "diff-manifest.schema.json#/$defs/count"},
+            "removed": {"$ref": "diff-manifest.schema.json#/$defs/count"},
+            "rekeyed": {"$ref": "diff-manifest.schema.json#/$defs/count"}
+          },
+          "required": ["added", "removed", "rekeyed"]
+        },
+        "relations": {
+          "type": "object",
+          "properties": {
+            "added": {"$ref": "diff-manifest.schema.json#/$defs/count"},
+            "removed": {"$ref": "diff-manifest.schema.json#/$defs/count"}
+          },
+          "required": ["added", "removed"]
+        },
+        "candidates": {"$ref": "diff-manifest.schema.json#/$defs/count"}
+      },
+      "required": ["entities", "externals", "relations", "candidates"]
+    },
+    "packages_added": {"$ref": "diff-manifest.schema.json#/$defs/packages"},
+    "packages_removed": {"$ref": "diff-manifest.schema.json#/$defs/packages"},
+    "not_compared": {
+      "type": "array",
+      "items": {"enum": ["calls", "syntax"]},
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "format",
+    "schema",
+    "tool",
+    "weights",
+    "old",
+    "new",
+    "counts",
+    "packages_added",
+    "packages_removed",
+    "not_compared"
+  ],
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0},
+    "weight": {"type": "integer", "minimum": 0, "maximum": 100},
+    "package": {
+      "type": "string",
+      "pattern": "^(?:[^%:@~]|%(?:25|3A|40|7E))+:(?:[^%:@~]|%(?:25|3A|40|7E))+$"
+    },
+    "packages": {
+      "type": "array",
+      "items": {"$ref": "diff-manifest.schema.json#/$defs/package"},
+      "uniqueItems": true
+    },
+    "side": {
+      "type": "object",
+      "properties": {
+        "schema": {"$ref": "adapter-manifest.schema.json#/$defs/version"},
+        "project": {"$ref": "snapshot-manifest.schema.json#/properties/project"},
+        "adapter": {"$ref": "snapshot-manifest.schema.json#/properties/scopes/items/properties/adapter"},
+        "layers": {"$ref": "snapshot-manifest.schema.json#/properties/scopes/items/properties/layers"},
+        "builds": {"$ref": "snapshot-manifest.schema.json#/properties/scopes/items/properties/builds"},
+        "counts": {"$ref": "snapshot-manifest.schema.json#/properties/counts"},
+        "gaps": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z][a-z-]*$"},
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        }
+      },
+      "required": ["schema", "project", "layers", "builds", "counts", "gaps"]
+    }
+  }
+}

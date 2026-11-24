@@ -21,6 +21,16 @@ pub enum Schema {
     CallEvidence,
     /// `snapshot-manifest.schema.json`
     SnapshotManifest,
+    /// `diff-manifest.schema.json`
+    DiffManifest,
+    /// `diff-entity.schema.json`
+    DiffEntity,
+    /// `diff-external.schema.json`
+    DiffExternal,
+    /// `diff-relation.schema.json`
+    DiffRelation,
+    /// `diff-candidate.schema.json`
+    DiffCandidate,
     /// `file.schema.json`
     File,
     /// `entity.schema.json`
@@ -53,6 +63,11 @@ bundled! {
     SyntaxFact => "syntax-fact",
     CallEvidence => "call-evidence",
     SnapshotManifest => "snapshot-manifest",
+    DiffManifest => "diff-manifest",
+    DiffEntity => "diff-entity",
+    DiffExternal => "diff-external",
+    DiffRelation => "diff-relation",
+    DiffCandidate => "diff-candidate",
     File => "file",
     Entity => "entity",
     External => "external",

@@ -1,0 +1,12 @@
+{"old":"cargo:diff-basic:mover().","new":"cargo:diff-basic:util/mover().","rank":1,"score":640000,"name":1000000,"file":0,"parents":0,"size":1000000,"outgoing":1000000,"incoming":1000000}
+{"old":"cargo:diff-basic:mover().","new":"cargo:diff-basic:added().","rank":2,"score":540000,"name":200000,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}
+{"old":"cargo:diff-basic:mover().","new":"cargo:diff-basic:inner/meander().","rank":3,"score":518571,"name":428571,"file":1000000,"parents":0,"size":1000000,"outgoing":0,"incoming":1000000}
+{"old":"cargo:diff-basic:old_name().","new":"cargo:diff-basic:new_name().","rank":1,"score":797500,"name":625000,"file":1000000,"parents":1000000,"size":1000000,"outgoing":1000000,"incoming":0}
+{"old":"cargo:diff-basic:old_name().","new":"cargo:diff-basic:added().","rank":2,"score":517500,"name":125000,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}
+{"old":"cargo:diff-basic:old_name().","new":"cargo:diff-basic:width().","rank":3,"score":517500,"name":125000,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}
+{"old":"cargo:diff-basic:removed().","new":"cargo:diff-basic:added().","rank":1,"score":565714,"name":285714,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}
+{"old":"cargo:diff-basic:removed().","new":"cargo:diff-basic:uses_dep2().","rank":2,"score":546666,"name":222222,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}
+{"old":"cargo:diff-basic:removed().","new":"cargo:diff-basic:new_name().","rank":3,"score":517500,"name":125000,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}
+{"old":"cargo:diff-basic:wander().","new":"cargo:diff-basic:inner/meander().","rank":1,"score":734285,"name":714285,"file":1000000,"parents":0,"size":1000000,"outgoing":1000000,"incoming":1000000}
+{"old":"cargo:diff-basic:wander().","new":"cargo:diff-basic:added().","rank":2,"score":630000,"name":500000,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}
+{"old":"cargo:diff-basic:wander().","new":"cargo:diff-basic:width().","rank":3,"score":579999,"name":333333,"file":1000000,"parents":1000000,"size":1000000,"outgoing":0,"incoming":0}

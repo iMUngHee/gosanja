@@ -6,6 +6,23 @@ change may break compatibility, and an entry here says so when it does.
 
 ## Unreleased
 
+### Diff schema 0.1
+
+A new interface, specified in [spec/diff.md](spec/diff.md): the directory `gosanja diff`
+writes, five files marked by `format: "gosanja-diff"` in its manifest. A reader of a diff
+has to:
+
+- read a row as a difference between two recorded snapshots, not as a change of the code,
+  and weigh it with each side's gap counts and layer states in the manifest;
+- take identity across the two sides from the pairing rules alone: a row names an entity by
+  `old` and `new`, and two keys that are equal as text are not the same thing unless they are
+  paired;
+- read `candidates.jsonl` as suggestions with their evidence, never as renames or moves;
+- treat a comparison named in `not_compared` as not made: the absence of rows of that kind
+  says nothing.
+
+A diff of snapshot schema 0.2 only: both inputs are refused unless they are 0.2.
+
 ### Snapshot schema 0.2
 
 Breaks 0.1. A reader written for 0.1 must refuse a 0.2 snapshot until it is upgraded. An

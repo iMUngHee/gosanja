@@ -1,17 +1,18 @@
 # gosanja specifications
 
-Two interfaces of gosanja are specified here and are normative:
+Three interfaces of gosanja are specified here and are normative:
 
 | Document | Interface | Version |
 | --- | --- | --- |
 | [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.2 |
 | [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.2 |
+| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.1 |
 
 The JSON Schemas under [schema/](schema/) define the shape of every file. Where a document and
 a schema disagree, that is a defect in both: report it, and until it is fixed the schema decides
 the shape and the document decides the meaning.
 
-## Conventions shared by both interfaces
+## Conventions shared by all interfaces
 
 - Text is UTF-8 with LF line endings. A `.jsonl` file holds one JSON object per line, no blank
   lines, and ends with a newline. An empty table is an empty file.
@@ -23,15 +24,17 @@ the shape and the document decides the meaning.
 - Field order in a JSON object carries no meaning. The engine writes fields in the order the
   documents list them so that its output is byte-identical between runs.
 
-## Three independent versions
+## Four independent versions
 
 | Version | Where it is recorded | Governs |
 | --- | --- | --- |
 | gosanja release | the workspace package version, semver | the command line and the Rust API |
 | snapshot schema | `schema` in `manifest.json` | every file of a snapshot |
 | adapter contract | `contract` in an adapter's manifest and `result.json` | `describe`, `index` and every file an adapter writes |
+| diff schema | `schema` in a diff's `manifest.json` | every file of a diff |
 
-A release may change without either interface changing, and the reverse.
+A release may change without any interface changing, and the reverse. A diff records the
+schema of the two snapshots it compares; reading a snapshot of another schema is refused.
 
 ## Change classes
 
@@ -48,7 +51,8 @@ for each such change.
 
 ## What a reader must do
 
-These rules bind the engine when it reads adapter output, and any program that reads a snapshot.
+These rules bind the engine when it reads adapter output or a snapshot, and any program that
+reads a snapshot or a diff.
 
 1. Ignore fields it does not know.
 2. While the writer's major is 0: accept only its own minor. Refuse anything else before doing

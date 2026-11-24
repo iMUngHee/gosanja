@@ -32,7 +32,7 @@ file for file to `spec/examples/diff-basic`, where the derivation of every row i
 
 The renamed, moved, and moved-and-renamed functions each score at or above the threshold of
 440 000 against their counterpart and above every other added function. Worked by hand from
-the two snapshots with the features and weights of the plan (D5):
+the two snapshots with the features and weights of `spec/diff.md`:
 
 - `file`: whether `def.file` is equal.
 - `parents`: the names along the `parent` chain. A crate-root item has no `parent`, so its

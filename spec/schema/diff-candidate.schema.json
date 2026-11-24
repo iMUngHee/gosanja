@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "diff-candidate.schema.json",
+  "type": "object",
+  "properties": {
+    "old": {"$ref": "entity.schema.json#/$defs/key"},
+    "new": {"$ref": "entity.schema.json#/$defs/key"},
+    "rank": {"type": "integer", "minimum": 1, "maximum": 3},
+    "score": {"$ref": "diff-candidate.schema.json#/$defs/measure"},
+    "name": {"$ref": "diff-candidate.schema.json#/$defs/measure"},
+    "file": {"$ref": "diff-candidate.schema.json#/$defs/measure"},
+    "parents": {"$ref": "diff-candidate.schema.json#/$defs/measure"},
+    "size": {"$ref": "diff-candidate.schema.json#/$defs/measure"},
+    "outgoing": {"$ref": "diff-candidate.schema.json#/$defs/measure"},
+    "incoming": {"$ref": "diff-candidate.schema.json#/$defs/measure"}
+  },
+  "required": [
+    "old",
+    "new",
+    "rank",
+    "score",
+    "name",
+    "file",
+    "parents",
+    "size",
+    "outgoing",
+    "incoming"
+  ],
+  "$defs": {
+    "measure": {"type": "integer", "minimum": 0, "maximum": 1000000}
+  }
+}

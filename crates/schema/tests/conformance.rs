@@ -53,7 +53,7 @@ impl Schemas {
                 .expect("schema registers");
             count += 1;
         }
-        assert_eq!(count, 11, "the specification names eleven schemas");
+        assert_eq!(count, 16, "the specification names sixteen schemas");
         Self {
             registry: registry
                 .prepare()
@@ -758,80 +758,306 @@ fn only_a_call_node_names_a_callee_and_it_may_omit_it() {
     schemas.assert_invalid("syntax-fact", &fact(branch_with));
 }
 
-/// Maps a file of a snapshot directory to the schema of its rows.
-fn schema_of(file_name: &str) -> Option<&'static str> {
-    Some(match file_name {
-        "manifest.json" => "snapshot-manifest",
-        "files.jsonl" => "file",
-        "entities.jsonl" => "entity",
-        "externals.jsonl" => "external",
-        "relations.jsonl" => "relation",
-        "syntax.jsonl" => "syntax",
-        "gaps.jsonl" => "gap",
-        _ => return None,
-    })
+/// The marker and the schema version of a diff, as `spec/diff.md` states them.
+const DIFF_FORMAT: &str = "gosanja-diff";
+const DIFF_SCHEMA: &str = "0.1";
+
+/// What a directory with a `manifest.json` holds, told by the manifest's `format`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Output {
+    Snapshot,
+    Diff,
 }
 
-fn snapshot_directories() -> Vec<PathBuf> {
-    let root = repository();
-    let mut found = Vec::new();
-    for parent in ["spec/examples", "fixtures"] {
-        let Ok(entries) = fs::read_dir(root.join(parent)) else {
-            continue;
+impl Output {
+    fn of(manifest: &Value, directory: &Path) -> Self {
+        match manifest["format"].as_str() {
+            Some(FORMAT) => Self::Snapshot,
+            Some(DIFF_FORMAT) => Self::Diff,
+            other => panic!("{}: unknown format {other:?}", directory.display()),
+        }
+    }
+
+    /// Every file of the directory, with the schema of its rows.
+    fn files(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Snapshot => &[
+                ("manifest.json", "snapshot-manifest"),
+                ("files.jsonl", "file"),
+                ("entities.jsonl", "entity"),
+                ("externals.jsonl", "external"),
+                ("relations.jsonl", "relation"),
+                ("syntax.jsonl", "syntax"),
+                ("gaps.jsonl", "gap"),
+            ],
+            Self::Diff => &[
+                ("manifest.json", "diff-manifest"),
+                ("entities.jsonl", "diff-entity"),
+                ("externals.jsonl", "diff-external"),
+                ("relations.jsonl", "diff-relation"),
+                ("candidates.jsonl", "diff-candidate"),
+            ],
+        }
+    }
+
+    fn schema(self) -> String {
+        match self {
+            Self::Snapshot => SCHEMA_VERSION.to_string(),
+            Self::Diff => DIFF_SCHEMA.to_owned(),
+        }
+    }
+}
+
+/// Every directory under `spec/examples` and `fixtures`, down to three levels, that holds a
+/// `manifest.json`: a fixture's `expected`, each side's `old/expected` and `new/expected`, and
+/// a frozen pair of snapshots side by side.
+fn output_directories() -> Vec<(PathBuf, Output)> {
+    fn visit(directory: &Path, depth: u32, found: &mut Vec<(PathBuf, Output)>) {
+        let manifest = directory.join("manifest.json");
+        if manifest.is_file() {
+            let text = fs::read_to_string(&manifest).expect("manifest is readable");
+            let value: Value = serde_json::from_str(&text).expect("manifest is JSON");
+            found.push((directory.to_path_buf(), Output::of(&value, directory)));
+            return;
+        }
+        if depth == 0 {
+            return;
+        }
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
         };
         for entry in entries {
             let path = entry.expect("readable directory entry").path();
-            for candidate in [path.clone(), path.join("expected")] {
-                if candidate.join("manifest.json").is_file() {
-                    found.push(candidate);
-                }
+            if path.is_dir() {
+                visit(&path, depth - 1, found);
             }
         }
     }
-    found.sort();
+    let root = repository();
+    let mut found = Vec::new();
+    for parent in ["spec/examples", "fixtures"] {
+        visit(&root.join(parent), 3, &mut found);
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0));
     found
 }
 
 #[test]
-fn snapshots_in_the_repository_pass_the_schemas() {
+fn outputs_in_the_repository_pass_the_schemas() {
     let schemas = Schemas::load();
-    let directories = snapshot_directories();
-    assert!(
-        directories
-            .iter()
-            .any(|d| d.ends_with("spec/examples/rust-basic")),
-        "the hand-written example must exist, found {directories:?}"
-    );
-    for directory in directories {
-        for name in [
-            "manifest.json",
-            "files.jsonl",
-            "entities.jsonl",
-            "externals.jsonl",
-            "relations.jsonl",
-            "syntax.jsonl",
-            "gaps.jsonl",
-        ] {
+    let directories = output_directories();
+    for (expected, kind) in [
+        ("spec/examples/rust-basic", Output::Snapshot),
+        ("spec/examples/diff-basic", Output::Diff),
+        ("fixtures/diff-basic/expected", Output::Diff),
+        ("fixtures/diff-basic/old/expected", Output::Snapshot),
+        ("fixtures/diff-basic/new/expected", Output::Snapshot),
+        ("fixtures/diff-public/v0.20.0", Output::Snapshot),
+        ("fixtures/diff-public/v0.21.0", Output::Snapshot),
+    ] {
+        assert!(
+            directories
+                .iter()
+                .any(|(d, k)| d.ends_with(expected) && *k == kind),
+            "{expected} must be found as a {kind:?}, found {directories:?}"
+        );
+    }
+    for (directory, kind) in directories {
+        for (name, schema) in kind.files() {
             let path = directory.join(name);
             let text = fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("{} must exist: {e}", path.display()));
-            let schema = schema_of(name).expect("every snapshot file has a schema");
-            if name == "manifest.json" {
+            if *name == "manifest.json" {
                 let manifest: Value = serde_json::from_str(&text).expect("manifest is JSON");
                 schemas.assert_valid(schema, &manifest);
                 assert_eq!(
                     manifest["schema"],
-                    json!(SCHEMA_VERSION.to_string()),
+                    json!(kind.schema()),
                     "{} is stamped with the current schema",
                     path.display()
                 );
                 continue;
             }
+            // One validator per file: the public pair holds thousands of rows.
+            let validator = schemas.validator(schema);
             for (number, line) in text.lines().enumerate() {
                 let row: Value = serde_json::from_str(line)
                     .unwrap_or_else(|e| panic!("{}:{}: not JSON: {e}", path.display(), number + 1));
-                schemas.assert_valid(schema, &row);
+                let errors: Vec<String> = validator
+                    .iter_errors(&row)
+                    .map(|e| format!("{e} at {}", e.instance_path()))
+                    .collect();
+                assert!(
+                    errors.is_empty(),
+                    "{}:{}: {errors:?}",
+                    path.display(),
+                    number + 1
+                );
             }
         }
+    }
+}
+
+#[test]
+fn the_diff_golden_is_the_specification_example() {
+    let root = repository();
+    for (name, _) in Output::Diff.files() {
+        let example = fs::read(root.join("spec/examples/diff-basic").join(name))
+            .unwrap_or_else(|e| panic!("spec/examples/diff-basic/{name}: {e}"));
+        let golden = fs::read(root.join("fixtures/diff-basic/expected").join(name))
+            .unwrap_or_else(|e| panic!("fixtures/diff-basic/expected/{name}: {e}"));
+        assert!(
+            example == golden,
+            "{name}: the golden differs from the example"
+        );
+    }
+}
+
+/// A changed row needs properties, each side of a property is a value, and a removed or rekeyed row carries none.
+#[test]
+fn diff_entity_rows_the_specification_forbids_fail() {
+    let schemas = Schemas::load();
+    for (schema, row) in [
+        (
+            "diff-entity",
+            json!({"change": "changed", "old": "cargo:d:a().", "new": "cargo:d:a()."}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "moved", "old": "cargo:d:a().", "new": "cargo:d:b()."}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "removed", "old": "cargo:d:a().", "name": "a", "properties": {"lines": {"old": 1, "new": 2}}}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "added", "old": "cargo:d:a().", "new": "cargo:d:a().", "name": "a"}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "rekeyed", "old": "cargo:d:a().", "new": "cargo:d:a().~1", "properties": {"lines": {"old": 1, "new": 2}}}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "changed", "old": "cargo:d:a().", "new": "cargo:d:a().", "properties": {}}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "changed", "old": "cargo:d:a().", "new": "cargo:d:a().", "properties": {"lines": {}}}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "changed", "old": "cargo:d:a().", "new": "cargo:d:a().", "name": "a", "properties": {"lines": {"old": 1, "new": 2}}}),
+        ),
+        (
+            "diff-entity",
+            json!({"change": "changed", "old": "cargo:d:a().", "new": "cargo:d:a().", "properties": {"outline": {"old": {"call": 0}, "new": {}}}}),
+        ),
+    ] {
+        schemas.assert_invalid(schema, &row);
+    }
+}
+
+/// An external is never changed and never has properties.
+#[test]
+fn diff_external_rows_the_specification_forbids_fail() {
+    let schemas = Schemas::load();
+    for (schema, row) in [
+        (
+            "diff-external",
+            json!({"change": "added", "new": "cargo:d:x().", "package": "cargo:d", "properties": {}}),
+        ),
+        (
+            "diff-external",
+            json!({"change": "changed", "old": "cargo:d:x().", "new": "cargo:d:x()."}),
+        ),
+        (
+            "diff-external",
+            json!({"change": "added", "new": "cargo:d:x()."}),
+        ),
+    ] {
+        schemas.assert_invalid(schema, &row);
+    }
+}
+
+/// A row carries its discriminators, and `endpoint` agrees with which ends are single.
+#[test]
+fn diff_relation_rows_the_specification_forbids_fail() {
+    let schemas = Schemas::load();
+    for (schema, row) in [
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "endpoint": "from", "rel": "ref"}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a().", "new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "rel": "call", "resolution": "declared", "src": "adapter:x/syntax"}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a().", "new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "rel": "call", "mechanism": "unknown", "src": "adapter:x/syntax"}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a().", "new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "rel": "call", "mechanism": "unknown", "resolution": "declared"}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "rel": "ref", "roles": []}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a().", "new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "endpoint": "both", "rel": "ref", "roles": []}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "endpoint": "to", "rel": "ref", "roles": []}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "endpoint": "from", "rel": "ref", "roles": []}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "removed", "from": {"new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "endpoint": "from", "rel": "ref", "roles": []}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a().", "new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "rel": "ref", "roles": [], "src": "core:reference-in-body"}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a().", "new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "rel": "call", "mechanism": "unknown", "resolution": "direct", "src": "adapter:x/syntax"}),
+        ),
+        (
+            "diff-relation",
+            json!({"change": "added", "from": {"old": "cargo:d:a().", "new": "cargo:d:a()."}, "to": {"old": "cargo:d:b().", "new": "cargo:d:b()."}, "rel": "call", "mechanism": "static", "resolution": "declared", "src": "adapter:x/calls"}),
+        ),
+    ] {
+        schemas.assert_invalid(schema, &row);
+    }
+}
+
+/// A measure is at most 1 000 000, every feature is present, a rank is 1 to 3; a snapshot manifest is not a diff manifest.
+#[test]
+fn diff_candidate_and_manifest_rows_the_specification_forbids_fail() {
+    let schemas = Schemas::load();
+    for (schema, row) in [
+        (
+            "diff-candidate",
+            json!({"old": "cargo:d:a().", "new": "cargo:d:b().", "rank": 1, "score": 1_000_001, "name": 0, "file": 0, "parents": 0, "size": 0, "outgoing": 0, "incoming": 0}),
+        ),
+        (
+            "diff-candidate",
+            json!({"old": "cargo:d:a().", "new": "cargo:d:b().", "rank": 1, "score": 500_000, "name": 0, "file": 0, "parents": 0, "size": 0, "outgoing": 0}),
+        ),
+        (
+            "diff-candidate",
+            json!({"old": "cargo:d:a().", "new": "cargo:d:b().", "rank": 4, "score": 500_000, "name": 0, "file": 0, "parents": 0, "size": 0, "outgoing": 0, "incoming": 0}),
+        ),
+        ("diff-manifest", json!({"format": "gosanja-snapshot"})),
+    ] {
+        schemas.assert_invalid(schema, &row);
     }
 }

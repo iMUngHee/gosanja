@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "diff-entity.schema.json",
+  "type": "object",
+  "properties": {
+    "change": {"enum": ["added", "removed", "changed", "rekeyed"]},
+    "old": {"$ref": "entity.schema.json#/$defs/key"},
+    "new": {"$ref": "entity.schema.json#/$defs/key"},
+    "kind": {"$ref": "entity.schema.json#/properties/kind"},
+    "role": {"$ref": "entity.schema.json#/properties/role"},
+    "name": {"type": "string"},
+    "parent": {"$ref": "entity.schema.json#/$defs/key"},
+    "virtual": {"const": true},
+    "group": {"const": true},
+    "member_of": {"$ref": "entity.schema.json#/$defs/key"},
+    "file": {"$ref": "file.schema.json#/$defs/path"},
+    "properties": {
+      "type": "object",
+      "properties": {
+        "parent": {"$ref": "diff-entity.schema.json#/$defs/sides/key"},
+        "kind": {"$ref": "diff-entity.schema.json#/$defs/sides/kind"},
+        "role": {"$ref": "diff-entity.schema.json#/$defs/sides/role"},
+        "file": {"$ref": "diff-entity.schema.json#/$defs/sides/file"},
+        "lines": {"$ref": "diff-entity.schema.json#/$defs/sides/lines"},
+        "visibility": {"$ref": "diff-entity.schema.json#/$defs/sides/text"},
+        "qualifiers": {"$ref": "diff-entity.schema.json#/$defs/sides/texts"},
+        "attributes": {"$ref": "diff-entity.schema.json#/$defs/sides/texts"},
+        "outline": {"$ref": "diff-entity.schema.json#/$defs/sides/outline"}
+      },
+      "minProperties": 1
+    }
+  },
+  "required": ["change"],
+  "allOf": [
+    {
+      "if": {"properties": {"change": {"const": "added"}}, "required": ["change"]},
+      "then": {"required": ["new", "name"], "properties": {"old": false, "properties": false}}
+    },
+    {
+      "if": {"properties": {"change": {"const": "removed"}}, "required": ["change"]},
+      "then": {"required": ["old", "name"], "properties": {"new": false, "properties": false}}
+    },
+    {
+      "if": {"properties": {"change": {"enum": ["changed", "rekeyed"]}}, "required": ["change"]},
+      "then": {
+        "required": ["old", "new"],
+        "properties": {
+          "kind": false,
+          "role": false,
+          "name": false,
+          "parent": false,
+          "virtual": false,
+          "group": false,
+          "member_of": false,
+          "file": false
+        }
+      }
+    },
+    {
+      "if": {"properties": {"change": {"const": "changed"}}, "required": ["change"]},
+      "then": {"required": ["properties"]}
+    },
+    {
+      "if": {"properties": {"change": {"const": "rekeyed"}}, "required": ["change"]},
+      "then": {"properties": {"properties": false}}
+    },
+    {
+      "if": {"required": ["group"]},
+      "then": {"properties": {"kind": false, "file": false, "member_of": false, "virtual": false}}
+    },
+    {
+      "if": {"required": ["virtual"]},
+      "then": {"properties": {"file": false, "member_of": false, "group": false}}
+    }
+  ],
+  "$defs": {
+    "sides": {
+      "key": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/$defs/key"}, "new": {"$ref": "entity.schema.json#/$defs/key"}}},
+      "kind": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/properties/kind"}, "new": {"$ref": "entity.schema.json#/properties/kind"}}},
+      "role": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/properties/role"}, "new": {"$ref": "entity.schema.json#/properties/role"}}},
+      "file": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "file.schema.json#/$defs/path"}, "new": {"$ref": "file.schema.json#/$defs/path"}}},
+      "lines": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "integer", "minimum": 1}, "new": {"type": "integer", "minimum": 1}}},
+      "text": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "string"}, "new": {"type": "string"}}},
+      "texts": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "array", "items": {"type": "string"}}, "new": {"type": "array", "items": {"type": "string"}}}},
+      "outline": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "diff-entity.schema.json#/$defs/outline-counts"}, "new": {"$ref": "diff-entity.schema.json#/$defs/outline-counts"}}}
+    },
+    "pair": {"type": "object", "minProperties": 1},
+    "outline-counts": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z-]*$"},
+      "additionalProperties": {"type": "integer", "minimum": 1}
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{"change":"rekeyed","old":"cargo:dep:crate/","new":"cargo:dep:crate/@0.1.0"}
+{"change":"rekeyed","old":"cargo:dep:helper().","new":"cargo:dep:helper().@0.1.0"}
+{"change":"removed","old":"cargo:pair:f().","package":"cargo:pair"}
+{"change":"added","new":"cargo:core:mem/","package":"cargo:core"}
+{"change":"added","new":"cargo:core:mem/size_of().","package":"cargo:core"}
+{"change":"added","new":"cargo:dep:crate/@0.2.0","package":"cargo:dep"}
+{"change":"added","new":"cargo:dep:helper().@0.2.0","package":"cargo:dep"}
+{"change":"added","new":"cargo:pair:f().","package":"cargo:pair"}
+{"change":"added","new":"cargo:std:crate/","package":"cargo:std"}

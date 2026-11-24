@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "diff-relation.schema.json",
+  "type": "object",
+  "properties": {
+    "change": {"enum": ["added", "removed"]},
+    "from": {"$ref": "diff-relation.schema.json#/$defs/end"},
+    "to": {"$ref": "diff-relation.schema.json#/$defs/end"},
+    "endpoint": {"enum": ["from", "to", "both"]},
+    "rel": {"$ref": "relation.schema.json#/properties/rel"},
+    "roles": {"$ref": "relation.schema.json#/properties/roles"},
+    "mechanism": {"$ref": "relation.schema.json#/$defs/mechanism"},
+    "resolution": {"$ref": "relation.schema.json#/$defs/resolution"},
+    "src": {"type": "string", "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"}
+  },
+  "required": ["change", "from", "to", "rel"],
+  "allOf": [
+    {
+      "if": {"properties": {"change": {"const": "removed"}}, "required": ["change"]},
+      "then": {"properties": {"from": {"required": ["old"]}, "to": {"required": ["old"]}}},
+      "else": {"properties": {"from": {"required": ["new"]}, "to": {"required": ["new"]}}}
+    },
+    {
+      "if": {
+        "properties": {
+          "from": {"required": ["old", "new"]},
+          "to": {"required": ["old", "new"]}
+        }
+      },
+      "then": {"properties": {"endpoint": false}},
+      "else": {"required": ["endpoint"]}
+    },
+    {
+      "if": {"properties": {"endpoint": {"const": "from"}}, "required": ["endpoint"]},
+      "then": {
+        "properties": {
+          "from": {"not": {"required": ["old", "new"]}},
+          "to": {"required": ["old", "new"]}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"endpoint": {"const": "to"}}, "required": ["endpoint"]},
+      "then": {
+        "properties": {
+          "from": {"required": ["old", "new"]},
+          "to": {"not": {"required": ["old", "new"]}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"endpoint": {"const": "both"}}, "required": ["endpoint"]},
+      "then": {
+        "properties": {
+          "from": {"not": {"required": ["old", "new"]}},
+          "to": {"not": {"required": ["old", "new"]}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"rel": {"const": "ref"}}, "required": ["rel"]},
+      "then": {
+        "required": ["roles"],
+        "properties": {"mechanism": false, "resolution": false, "src": false}
+      }
+    },
+    {
+      "if": {"properties": {"rel": {"const": "call"}}, "required": ["rel"]},
+      "then": {
+        "required": ["mechanism", "resolution", "src"],
+        "properties": {"roles": false}
+      }
+    },
+    {
+      "if": {"properties": {"rel": {"const": "implements"}}, "required": ["rel"]},
+      "then": {
+        "properties": {"roles": false, "mechanism": false, "resolution": false, "src": false}
+      }
+    },
+    {
+      "if": {"properties": {"src": {"pattern": "/syntax$"}}, "required": ["src"]},
+      "then": {
+        "properties": {"resolution": {"const": "declared"}, "mechanism": {"const": "unknown"}}
+      }
+    },
+    {
+      "if": {"properties": {"src": {"pattern": "/calls$"}}, "required": ["src"]},
+      "then": {"properties": {"resolution": {"not": {"const": "declared"}}}}
+    }
+  ],
+  "$defs": {
+    "end": {
+      "type": "object",
+      "properties": {
+        "old": {"$ref": "entity.schema.json#/$defs/key"},
+        "new": {"$ref": "entity.schema.json#/$defs/key"}
+      },
+      "minProperties": 1
+    }
+  }
+}
