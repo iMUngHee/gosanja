@@ -8,6 +8,7 @@ mod similarity;
 #[cfg(test)]
 mod tests;
 use crate::validate::{Diagnostic, ReadSnapshot};
+use crate::write::SnapshotFiles;
 use gosanja_schema::{
     diff::{
         self, CandidateRow, Change, Counts, EntityRow, Excluded, ExternalRow, Manifest,
@@ -16,6 +17,7 @@ use gosanja_schema::{
     snapshot::{LayerState, Scope, Tool},
 };
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Structural differences and the cross-snapshot key mapping used by candidate ranking.
 #[derive(Debug)]
@@ -57,14 +59,23 @@ impl std::fmt::Display for CompareError {
 
 impl std::error::Error for CompareError {}
 
-fn side(snapshot: &ReadSnapshot) -> Result<(Side, &Scope), CompareError> {
+fn single_scope(snapshot: &ReadSnapshot) -> Result<&Scope, CompareError> {
     let manifest = snapshot
         .manifest
         .as_ref()
         .expect("validated snapshot has a manifest");
-    let [scope] = manifest.scopes.as_slice() else {
-        return Err(CompareError::ScopeCount(manifest.scopes.len()));
-    };
+    match manifest.scopes.as_slice() {
+        [scope] => Ok(scope),
+        scopes => Err(CompareError::ScopeCount(scopes.len())),
+    }
+}
+
+fn side(snapshot: &ReadSnapshot) -> Result<(Side, &Scope), CompareError> {
+    let scope = single_scope(snapshot)?;
+    let manifest = snapshot
+        .manifest
+        .as_ref()
+        .expect("validated snapshot has a manifest");
     let mut gaps = BTreeMap::new();
     for (_, gap) in &snapshot.gaps {
         let name = serde_json::to_value(gap.gap).expect("gap kind is a string");
@@ -94,28 +105,48 @@ fn side(snapshot: &ReadSnapshot) -> Result<(Side, &Scope), CompareError> {
 ///
 /// # Errors
 /// Returns a version or scope refusal, or a diagnostic for an invalid input.
-pub fn compare(
-    old: &crate::write::SnapshotFiles,
-    new: &crate::write::SnapshotFiles,
+pub fn compare(old: &Path, new: &Path) -> Result<Comparison, CompareError> {
+    compare_inputs(old, new, SnapshotFiles::read_tables)
+}
+
+fn compare_inputs(
+    old: &Path,
+    new: &Path,
+    load_tables: impl Fn(&mut SnapshotFiles, &Path),
 ) -> Result<Comparison, CompareError> {
-    let read = |files: &crate::write::SnapshotFiles| {
-        use gosanja_schema::compat::Refusal;
-        crate::validate::read(files, gosanja_schema::snapshot::SCHEMA_VERSION).map_err(|err| {
+    use crate::validate;
+    use gosanja_schema::compat::Refusal;
+    let prepare = |path| {
+        let files = SnapshotFiles::read_manifest(path);
+        let (rows, acceptance) = validate::read_manifest(
+            &files,
+            gosanja_schema::snapshot::SCHEMA_VERSION,
+        )
+        .map_err(|err| {
             let (Refusal::Major { writer, .. } | Refusal::UnstableMinor { writer, .. }) = err;
             CompareError::SchemaVersion(writer.to_string())
-        })
+        })?;
+        Ok((files, rows, acceptance))
     };
-    let old_rows = read(old)?;
-    let new_rows = read(new)?;
-    let validate = |rows, files: &crate::write::SnapshotFiles| {
-        let (rows, index) = crate::validate::checked(rows, files, None);
+    let (old_files, old_rows, old_mode) = prepare(old)?;
+    let (new_files, new_rows, new_mode) = prepare(new)?;
+    for rows in [&old_rows, &new_rows] {
         if let Some(diagnostic) = rows.diagnostics.first() {
             return Err(CompareError::Invalid(diagnostic.clone()));
         }
-        Ok((rows, index))
+        single_scope(rows)?;
+    }
+    let load = |path, mut files: SnapshotFiles, rows, acceptance| {
+        load_tables(&mut files, path);
+        let rows = validate::read_tables(rows, &files, acceptance);
+        let (rows, symbols) = validate::checked(rows, &files, None);
+        if let Some(diagnostic) = rows.diagnostics.first() {
+            return Err(CompareError::Invalid(diagnostic.clone()));
+        }
+        Ok((rows, symbols))
     };
-    let (left, old_symbols) = validate(old_rows, old)?;
-    let (right, new_symbols) = validate(new_rows, new)?;
+    let (left, old_symbols) = load(old, old_files, old_rows, old_mode)?;
+    let (right, new_symbols) = load(new, new_files, new_rows, new_mode)?;
     compare_rows(&left, &right, &old_symbols, &new_symbols)
 }
 
@@ -156,9 +187,12 @@ fn compare_rows(
         &pairs,
         !excluded.contains(&Excluded::Syntax),
     );
-    let externals = externals::changes(old_snapshot, new_snapshot, &pairs);
-    let old_relations = relations::SideRelations::new(old_snapshot, &pairs, true, &excluded);
-    let new_relations = relations::SideRelations::new(new_snapshot, &reverse, false, &excluded);
+    let externals =
+        externals::changes(old_snapshot, new_snapshot, &pairs, old_symbols, new_symbols);
+    let old_relations =
+        relations::SideRelations::new(old_snapshot, &pairs, true, &excluded, old_symbols);
+    let new_relations =
+        relations::SideRelations::new(new_snapshot, &reverse, false, &excluded, new_symbols);
     let mut relations: Vec<_> = old_relations
         .differences(&new_relations, Change::Removed)
         .chain(new_relations.differences(&old_relations, Change::Added))

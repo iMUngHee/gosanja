@@ -100,6 +100,14 @@ pub fn check_version(files: &SnapshotFiles) -> Result<(), Refusal> {
 /// Returns the [`Refusal`] when the snapshot's schema version may not be read at all; nothing
 /// else is read then.
 pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refusal> {
+    let (rows, acceptance) = read_manifest(files, reader)?;
+    Ok(read_tables(rows, files, acceptance))
+}
+
+pub(crate) fn read_manifest(
+    files: &SnapshotFiles,
+    reader: Version,
+) -> Result<(ReadSnapshot, Acceptance), Refusal> {
     let mut out = ReadSnapshot::default();
     let mut acceptance = Acceptance::Full;
     match files.manifest.as_deref() {
@@ -123,6 +131,14 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
             }
         },
     }
+    Ok((out, acceptance))
+}
+
+pub(crate) fn read_tables(
+    mut out: ReadSnapshot,
+    files: &SnapshotFiles,
+    acceptance: Acceptance,
+) -> ReadSnapshot {
     for (name, error) in &files.unreadable {
         out.diag(name, None, "unreadable", error.clone());
     }
@@ -169,7 +185,7 @@ pub fn read(files: &SnapshotFiles, reader: Version) -> Result<ReadSnapshot, Refu
         acceptance,
     );
     out.skip_dependents();
-    Ok(out)
+    out
 }
 
 impl ReadSnapshot {

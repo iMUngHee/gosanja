@@ -1,6 +1,6 @@
 //! Compare relation identities and the packages reached by their targets.
 use super::externals::package;
-use crate::validate::ReadSnapshot;
+use crate::validate::{ReadSnapshot, SymbolIndex};
 use gosanja_schema::diff::{Change, Endpoint, Excluded, RelationKind, RelationRow, Sides};
 use gosanja_schema::snapshot::Rel;
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +30,7 @@ impl SideRelations {
         pairs: &BTreeMap<&str, &str>,
         old: bool,
         excluded: &[Excluded],
+        symbols: &SymbolIndex,
     ) -> Self {
         let endpoint = |key: &str| {
             let partner = pairs.get(key).copied().map(str::to_owned);
@@ -73,7 +74,7 @@ impl SideRelations {
             };
             rows.insert((endpoint(&relation.from), endpoint(&relation.to), kind));
             if let Some(external) = externals.get(relation.to.as_str()) {
-                packages.insert(package(external));
+                packages.insert(package(&external.symbol, symbols));
             }
         }
         Self { rows, packages }

@@ -432,3 +432,44 @@ fn diff_needs_two_inputs_and_an_output() {
         );
     }
 }
+
+#[test]
+fn another_schema_version_is_refused_whatever_its_tables_hold() {
+    for (name, damage) in [
+        (
+            "unreadable",
+            Box::new(|dir: &Path| {
+                fs::remove_file(dir.join("entities.jsonl")).unwrap();
+                fs::create_dir(dir.join("entities.jsonl")).unwrap();
+            }) as Box<dyn Fn(&Path)>,
+        ),
+        (
+            "malformed",
+            Box::new(|dir: &Path| {
+                fs::write(dir.join("relations.jsonl"), b"{not json\n\xff\xfe\n").unwrap();
+            }),
+        ),
+        (
+            "missing",
+            Box::new(|dir: &Path| {
+                fs::remove_file(dir.join("syntax.jsonl")).unwrap();
+            }),
+        ),
+    ] {
+        let input = edited(name, "manifest.json", |m| {
+            m.replace(r#""schema":"0.2""#, r#""schema":"9.9""#)
+        });
+        damage(&input);
+        for (a, b) in [(&input, &new()), (&old(), &input)] {
+            let out = scratch("version-first");
+            let output = gosanja(&[&"diff", a, b, &"--out", &out]);
+            assert_refused(&output, name);
+            assert!(
+                stderr(&output).contains("9.9"),
+                "{name}: a version refusal: {}",
+                stderr(&output)
+            );
+            assert!(!out.exists(), "{name}: nothing is written");
+        }
+    }
+}

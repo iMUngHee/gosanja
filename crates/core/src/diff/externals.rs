@@ -1,6 +1,6 @@
 //! Report added, removed and rekeyed external symbols and their packages.
 use crate::identity::escape_component;
-use crate::validate::ReadSnapshot;
+use crate::validate::{ReadSnapshot, SymbolIndex};
 use gosanja_schema::diff::ExternalRow;
 use std::collections::BTreeMap;
 
@@ -8,6 +8,8 @@ pub(super) fn changes(
     old_snapshot: &ReadSnapshot,
     new_snapshot: &ReadSnapshot,
     pairs: &BTreeMap<&str, &str>,
+    old_symbols: &SymbolIndex,
+    new_symbols: &SymbolIndex,
 ) -> Vec<ExternalRow> {
     let mut rows = Vec::new();
     let mut new: BTreeMap<_, _> = new_snapshot
@@ -24,7 +26,7 @@ pub(super) fn changes(
         match pairs.get(key).and_then(|new_key| new.remove(new_key)) {
             None => rows.push(ExternalRow::Removed {
                 old: key.into(),
-                package: package(external),
+                package: package(&external.symbol, old_symbols),
             }),
             Some(paired) if paired.key != key => rows.push(ExternalRow::Rekeyed {
                 old: key.into(),
@@ -35,7 +37,7 @@ pub(super) fn changes(
     }
     rows.extend(new.into_iter().map(|(key, external)| ExternalRow::Added {
         new: key.into(),
-        package: package(external),
+        package: package(&external.symbol, new_symbols),
     }));
     rows
 }
@@ -52,10 +54,10 @@ pub(super) fn counts(rows: &[ExternalRow]) -> gosanja_schema::diff::ExternalCoun
     counts
 }
 
-pub(super) fn package(external: &gosanja_schema::snapshot::ExternalRow) -> String {
-    format!(
-        "{}:{}",
-        escape_component(&external.package.manager),
-        escape_component(&external.package.name)
-    )
+pub(super) fn package(symbol: &str, symbols: &SymbolIndex) -> String {
+    let (manager, name) = &symbols
+        .get(symbol)
+        .expect("validation indexed the external symbol")
+        .package;
+    format!("{}:{}", escape_component(manager), escape_component(name))
 }

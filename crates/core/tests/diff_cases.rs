@@ -1,6 +1,7 @@
 //! Public diff input validation and fixture conformance.
 mod support;
 use gosanja_core::diff::compare;
+use gosanja_core::write::SnapshotFiles;
 use serde_json::to_value;
 use support::{fixture, read_dir};
 
@@ -13,20 +14,34 @@ fn jsonl<T: serde::Serialize>(rows: &[T]) -> Vec<u8> {
     bytes
 }
 
+fn materialize(files: &SnapshotFiles) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, bytes) in files.named() {
+        if let Some(bytes) = bytes {
+            std::fs::write(dir.path().join(name), bytes).unwrap();
+        }
+    }
+    dir
+}
+
 #[test]
 fn manifest_counts_match_the_emitted_rows_with_and_without_excluded_layers() {
     use gosanja_schema::diff::{Counts, Excluded};
     let root = fixture("diff-basic");
-    let new = read_dir(&root.join("new/expected"));
+    let new = root.join("new/expected");
     let mut calls_only = read_dir(&fixture("rust-basic").join("expected"));
     let mut manifest: serde_json::Value =
         serde_json::from_slice(calls_only.manifest.as_ref().unwrap()).unwrap();
     manifest["scopes"][0]["layers"]["calls"] = "present".into();
     calls_only.manifest = Some(serde_json::to_vec(&manifest).unwrap());
 
+    let calls_only = materialize(&calls_only);
     for (old, excluded) in [
-        (read_dir(&root.join("old/expected")), vec![]),
-        (calls_only, vec![Excluded::Calls, Excluded::Syntax]),
+        (root.join("old/expected"), vec![]),
+        (
+            calls_only.path().to_owned(),
+            vec![Excluded::Calls, Excluded::Syntax],
+        ),
     ] {
         let result = compare(&old, &new).unwrap();
         assert_eq!(result.manifest.not_compared, excluded);
@@ -49,7 +64,7 @@ fn manifest_counts_match_the_emitted_rows_with_and_without_excluded_layers() {
 #[test]
 fn fixture_change_rows_match_the_hand_derived_rows_byte_for_byte() {
     let root = fixture("diff-basic");
-    let load = |side: &str| read_dir(&root.join(side).join("expected"));
+    let load = |side: &str| root.join(side).join("expected");
     let comparison = compare(&load("old"), &load("new")).unwrap();
     for (file, actual) in [
         ("entities", jsonl(&comparison.entities)),
@@ -158,7 +173,7 @@ fn public_base64_list_reproduces_the_measured_ranks() {
             0xeb, 0x46, 0x0d, 0x25
         ]
     );
-    let load = |tag| read_dir(&root.join(tag));
+    let load = |tag| root.join(tag);
     let comparison = compare(&load("v0.20.0"), &load("v0.21.0")).unwrap();
     let mut correct = 0;
     let mut deletions = 0;
@@ -207,7 +222,7 @@ fn public_compare_returns_the_validator_diagnostic_on_either_side() {
     use gosanja_core::diff::CompareError;
     use gosanja_core::validate::validate;
     use serde_json::{Value, json};
-    let load = || read_dir(&fixture("rust-basic").join("expected"));
+    let valid = fixture("rust-basic").join("expected");
     for (field, value, code) in [
         ("key", json!("cargo:demo:views/"), "duplicate-key"),
         ("parent", json!("cargo:demo:missing/"), "dangling-key"),
@@ -215,7 +230,7 @@ fn public_compare_returns_the_validator_diagnostic_on_either_side() {
         ("symbol", json!("malformed"), "invalid-symbol"),
         ("body", json!([5, 0, 2, 0]), "position-outside-file"),
     ] {
-        let mut invalid = load();
+        let mut invalid = read_dir(&valid);
         let mut rows: Vec<Value> = std::str::from_utf8(invalid.entities.as_ref().unwrap())
             .unwrap()
             .lines()
@@ -230,9 +245,9 @@ fn public_compare_returns_the_validator_diagnostic_on_either_side() {
         let diagnostics = validate(&invalid, None).unwrap();
         assert_eq!(diagnostics[0].code, code);
         let expected = CompareError::Invalid(diagnostics[0].clone());
-        let valid = load();
-        assert_eq!(compare(&invalid, &valid).unwrap_err(), expected);
-        assert_eq!(compare(&valid, &invalid).unwrap_err(), expected);
+        let invalid = materialize(&invalid);
+        assert_eq!(compare(invalid.path(), &valid).unwrap_err(), expected);
+        assert_eq!(compare(&valid, invalid.path()).unwrap_err(), expected);
     }
 }
 
@@ -240,8 +255,8 @@ fn public_compare_returns_the_validator_diagnostic_on_either_side() {
 fn two_scopes_are_refused_and_missing_roles_keep_the_schema_diagnostic() {
     use gosanja_core::diff::CompareError;
     use gosanja_core::validate::validate;
-    let good = read_dir(&fixture("rust-basic").join("expected"));
-    let mut bad = good.clone();
+    let good = fixture("rust-basic").join("expected");
+    let mut bad = read_dir(&good);
     let mut manifest: serde_json::Value =
         serde_json::from_slice(bad.manifest.as_ref().unwrap()).unwrap();
     let mut other = manifest["scopes"][0].clone();
@@ -249,10 +264,10 @@ fn two_scopes_are_refused_and_missing_roles_keep_the_schema_diagnostic() {
     manifest["scopes"].as_array_mut().unwrap().push(other);
     bad.manifest = Some(serde_json::to_vec(&manifest).unwrap());
     assert_eq!(
-        compare(&bad, &good).unwrap_err(),
+        compare(materialize(&bad).path(), &good).unwrap_err(),
         CompareError::ScopeCount(2)
     );
-    bad = good.clone();
+    bad = read_dir(&good);
     let mut rows: Vec<serde_json::Value> = std::str::from_utf8(bad.relations.as_ref().unwrap())
         .unwrap()
         .lines()
@@ -268,7 +283,7 @@ fn two_scopes_are_refused_and_missing_roles_keep_the_schema_diagnostic() {
     let diagnoses = validate(&bad, None).unwrap();
     assert_eq!(diagnoses[0].code, "schema");
     assert_eq!(
-        compare(&good, &bad).unwrap_err(),
+        compare(&good, materialize(&bad).path()).unwrap_err(),
         CompareError::Invalid(diagnoses[0].clone())
     );
 }
@@ -283,7 +298,65 @@ fn unsupported_version_precedes_the_other_inputs_row_diagnostic() {
         serde_json::from_slice(new.manifest.as_ref().unwrap()).unwrap();
     manifest["schema"] = "1.1".into();
     new.manifest = Some(serde_json::to_vec(&manifest).unwrap());
-    let error = compare(&old, &new).unwrap_err();
+    let error = compare(materialize(&old).path(), materialize(&new).path()).unwrap_err();
     assert_eq!(error, CompareError::SchemaVersion("1.1".into()));
     assert_eq!(error.to_string(), "unsupported snapshot schema 1.1");
+}
+
+#[test]
+fn diff_packages_use_the_global_symbol_even_when_row_metadata_disagrees() {
+    use serde_json::{Value, json};
+    let root = fixture("diff-basic");
+    let old = root.join("old/expected");
+    for (manager, name, expected) in [
+        ("cargo", "std", "cargo:std"),
+        (".", ".", ".:."),
+        ("m:@", "~%", "m%3A%40:%7E%25"),
+        ("", "std", ""),
+    ] {
+        let mut new = read_dir(&root.join("new/expected"));
+        let mut rows: Vec<Value> = new
+            .externals
+            .as_ref()
+            .unwrap()
+            .split(|&byte| byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).unwrap())
+            .collect();
+        let row = rows
+            .iter_mut()
+            .find(|row| row["package"]["name"] == "std")
+            .unwrap();
+        row["symbol"] = format!("ra {manager} {name} 1 crate/").into();
+        row["package"]["manager"] = "".into();
+        row["package"]["name"] = "wrong".into();
+        new.externals = Some(jsonl(&rows));
+        let new = materialize(&new);
+        let result = compare(&old, new.path());
+        if manager.is_empty() {
+            assert!(
+                matches!(result.unwrap_err(), gosanja_core::diff::CompareError::Invalid(d)
+                if d.code == "invalid-symbol")
+            );
+            continue;
+        }
+        let added = result.unwrap();
+        assert_eq!(added.manifest.packages_added, [expected]);
+        assert!(
+            to_value(added.externals)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .contains(&json!({"change":"added","new":"cargo:std:crate/","package":expected}))
+        );
+        let removed = compare(new.path(), &old).unwrap();
+        assert_eq!(removed.manifest.packages_removed, [expected]);
+        assert!(
+            to_value(removed.externals)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .contains(&json!({"change":"removed","old":"cargo:std:crate/","package":expected}))
+        );
+    }
 }

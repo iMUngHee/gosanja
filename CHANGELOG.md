@@ -76,9 +76,10 @@ documents which of these it runs or leaves in force.
   `adapter::describe` takes an `Invocation` and returns a `Described`, and running the adapter
   is `Described::run`. New: `publish::publish_guarded` publishes to a path that may not
   overlap any of a list of protected directories and replaces only an earlier output with a
-  given `format` marker (`publish::publish` is unchanged); `diff::compare` validates and
-  compares two snapshots read with `write::SnapshotFiles::read`; `write::write_diff` and
-  `write::serialise_diff` write the result.
+  given `format` marker (`publish::publish` is unchanged); `diff::compare` takes two
+  snapshot directories, refuses either by its manifest's schema before any table is read, and
+  then validates and compares them; `write::write_diff` and `write::serialise_diff` write the
+  result.
 
 ### Snapshot schema 0.1
 

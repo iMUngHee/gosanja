@@ -1006,3 +1006,34 @@ fn scheme_suffix_and_version_suffix_do_not_establish_identity() {
         ])
     );
 }
+
+#[test]
+fn version_and_scope_refusals_precede_loading_either_inputs_tables() {
+    let valid_dir = fixture("rust-basic").join("expected");
+    let manifest = std::fs::read(valid_dir.join("manifest.json")).unwrap();
+    let invalid_dir = tempfile::tempdir().unwrap();
+    for (field, value, expected) in [
+        (
+            "schema",
+            json!("1.0"),
+            CompareError::SchemaVersion("1.0".into()),
+        ),
+        ("scopes", json!([]), CompareError::ScopeCount(0)),
+    ] {
+        let mut invalid: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        invalid[field] = value;
+        std::fs::write(
+            invalid_dir.path().join("manifest.json"),
+            invalid.to_string(),
+        )
+        .unwrap();
+        for (old, new) in [
+            (valid_dir.as_path(), invalid_dir.path()),
+            (invalid_dir.path(), valid_dir.as_path()),
+        ] {
+            let result =
+                super::compare_inputs(old, new, |_, _| panic!("table read before refusal"));
+            assert_eq!(result.unwrap_err(), expected);
+        }
+    }
+}

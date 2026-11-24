@@ -462,16 +462,13 @@ fn diff(options: &Options) -> Result<(), Failure> {
         return Err(usage("diff takes two snapshot directories"));
     };
     let out = options.require("--out")?;
-    let comparison =
-        gosanja_core::diff::compare(&SnapshotFiles::read(old), &SnapshotFiles::read(new)).map_err(
-            |e| {
-                let code = match e {
-                    gosanja_core::diff::CompareError::Invalid(_) => INPUT_FAILED,
-                    _ => REFUSED,
-                };
-                fail(code, e.to_string())
-            },
-        )?;
+    let comparison = gosanja_core::diff::compare(old, new).map_err(|e| {
+        let code = match e {
+            gosanja_core::diff::CompareError::Invalid(_) => INPUT_FAILED,
+            _ => REFUSED,
+        };
+        fail(code, e.to_string())
+    })?;
     publish::publish_guarded(&[old, new], gosanja_schema::diff::FORMAT, out, |stage| {
         write::write_diff(stage, &comparison)
     })
