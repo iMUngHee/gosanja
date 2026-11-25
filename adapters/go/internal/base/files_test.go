@@ -93,10 +93,14 @@ func TestFallbackUsesSelectedGoToolTags(t *testing.T) {
 		t.Fatal("the adapter fails on Windows before the fallback runs; this test needs a Unix host")
 	}
 	arch, ok := archTag[runtime.GOARCH]
-	if !ok {
+	switch {
+	case ok:
+	case runtime.GOARCH == "s390x" || runtime.GOARCH == "loong64" || runtime.GOARCH == "wasm":
 		// s390x and loong64 have no architecture-level variable, and wasm cannot start the go
 		// command, so the adapter's process and that command cannot differ in such a tag there.
 		t.Skipf("GOARCH=%s has no architecture-level build tag; the case cannot arise", runtime.GOARCH)
+	default:
+		t.Fatalf("no architecture level variable is known for GOARCH=%s; add one to archTag", runtime.GOARCH)
 	}
 	const subprocess = "GOSANJA_BUILD_TAG_TEST_CHILD"
 	if os.Getenv(subprocess) != "1" {
