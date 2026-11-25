@@ -136,6 +136,12 @@ tree with the base and syntax layers, and reports four things:
   indexer does not record, inside a `macro_rules!` body, in a format string or in an attribute
   string, leaves a used item listed. Each line is removed with the code or explained.
 
+The indexer does not always give the same references on two runs of one tree (rust-analyzer on
+this workspace resolves a few references in one run and not in the next), so each side is
+indexed twice and the report says how many rows each pair of runs differs in. A difference of
+that size in the other sections is the indexer's, not the change's; two runs that agree do not
+prove the indexer deterministic.
+
 It exits 1 when a snapshot does not validate, a layer failed, or an edge breaks the layering.
 The Go module under `adapters/go` is mapped the same way when the change touched it and `go`
 and `scip-go` are on `PATH`. The check needs `jq`, and writes only to a temporary directory.

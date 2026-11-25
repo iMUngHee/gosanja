@@ -71,11 +71,32 @@ gaps() {
     sort "$work/gap-kinds" | uniq -c | awk '{ print "gap " $2 ": " $1 }' >>"$2"
 }
 
+# noise SIDE OUT AGAIN_OUT: the indexer is not bound to give the same references twice
+# (rust-analyzer on this workspace does not), so each side is indexed a second time and what
+# differs between the two runs is reported as noise rather than as the change. Two runs that
+# agree do not prove the indexer is deterministic; the noise comes and goes.
+noise() {
+    side=$1 one=$2 two=$3
+    lines=0
+    for table in relations gaps; do
+        n=$(diff "$one/$table.jsonl" "$two/$table.jsonl" | grep -c '^[<>]' || true)
+        lines=$((lines + n))
+    done
+    if [ "$lines" -gt 0 ]; then
+        echo "noise: two runs on the $side differ in $lines relation and gap rows;"
+        echo "differences of that size below are the indexer's, not the change's"
+    else
+        echo "noise: two runs on the $side agree"
+    fi
+}
+
 # report NAME BASE_OUT HEAD_OUT ROOT
 report() {
     name=$1 old=$2 new=$3 root=$4
     echo
     echo "== $name: function"
+    noise base "$old" "$old.again"
+    noise "working tree" "$new" "$new.again"
     gaps "$old" "$work/gaps.old"
     gaps "$new" "$work/gaps.new"
     diff -U0 "$work/gaps.old" "$work/gaps.new" | grep '^[-+][^-+]' || echo "no change in row counts or gaps"
@@ -126,7 +147,9 @@ report() {
 
 # The Rust workspace.
 index "$work/base" "$work/rust.old"
+index "$work/base" "$work/rust.old.again"
 index "$here" "$work/rust.new"
+index "$here" "$work/rust.new.again"
 report rust "$work/rust.old" "$work/rust.new" "$here"
 
 echo
@@ -168,7 +191,9 @@ else
         (cd "$src/adapters/go" && GOFLAGS=-mod=readonly go build -o "$work/bin.$side/gosanja-adapter-go" ./cmd/gosanja-adapter-go)
     done
     index "$work/base/adapters/go" "$work/go.old" --adapter "$work/bin.new/gosanja-adapter-go"
+    index "$work/base/adapters/go" "$work/go.old.again" --adapter "$work/bin.new/gosanja-adapter-go"
     index "$here/adapters/go" "$work/go.new" --adapter "$work/bin.new/gosanja-adapter-go"
+    index "$here/adapters/go" "$work/go.new.again" --adapter "$work/bin.new/gosanja-adapter-go"
     report go "$work/go.old" "$work/go.new" "$here/adapters/go"
 fi
 
