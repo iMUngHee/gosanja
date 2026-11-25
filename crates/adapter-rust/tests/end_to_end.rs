@@ -332,7 +332,7 @@ fn the_engine_finds_and_runs_the_adapter_and_gives_the_golden_snapshot() {
             .expect("JSON");
     let scope = &manifest["scopes"][0];
     assert_eq!(scope["adapter"]["name"], "rust");
-    assert_eq!(scope["adapter"]["contract"], "0.3");
+    assert_eq!(scope["adapter"]["contract"], "0.4");
     assert_eq!(
         scope["layers"],
         json!({"base": "present", "syntax": "present", "calls": "present"})

@@ -5,6 +5,7 @@ import (
 	"context"
 	"go/build"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"io/fs"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"gosanja/adapters/go/internal/paths"
+	"gosanja/adapters/go/internal/scipindex"
 )
 
 // Codes of the adapter's own read of a module file; "" is readable.
@@ -29,10 +31,13 @@ type Read struct {
 	Code string
 	// LineDirective reports a `//line ` or `/*line ` in the raw bytes, found before parsing.
 	LineDirective bool
+	// PackageName and PackageRange record a valid clause independently of Code.
+	PackageName  string
+	PackageRange scipindex.Range
 }
 
-// readFile reads one module file through the root boundary and parses it with go/parser
-// alone. A link that leaves the root, or anything but a regular file, is unreadable.
+// readFile reads and parses one module file through the root boundary.
+// A link that leaves the root, or anything but a regular file, is unreadable.
 func readFile(root os.FileInfo, f file) Read {
 	resolved, err := filepath.EvalSymlinks(f.abs)
 	if err != nil {
@@ -54,9 +59,33 @@ func readFile(root os.FileInfo, f file) Read {
 		read.Code = InvalidUTF8
 		return read
 	}
-	if _, err := parser.ParseFile(token.NewFileSet(), f.abs, src, parser.SkipObjectResolution); err != nil {
+	fset := token.NewFileSet()
+	tree, err := parser.ParseFile(fset, f.abs, src, parser.SkipObjectResolution)
+	var name string
+	var pos token.Pos
+	if err == nil {
+		name, pos = tree.Name.Name, tree.Name.Pos()
+	} else {
 		read.Code = ParseFailed
+		// The indexer can recover the package clause. Stop at its semicolon so a
+		// scanner error in the next declaration cannot invalidate the clause.
+		var lex scanner.Scanner
+		lex.Init(fset.AddFile(f.abs, -1, len(src)), src, nil, 0)
+		_, keyword, _ := lex.Scan()
+		identifierPos, identifier, text := lex.Scan()
+		_, terminator, _ := lex.Scan()
+		if keyword != token.PACKAGE || identifier != token.IDENT || terminator != token.SEMICOLON || lex.ErrorCount != 0 {
+			return read
+		}
+		name, pos = text, identifierPos
 	}
+	if name == "_" {
+		return read
+	}
+	start := fset.PositionFor(pos, false)
+	line, col := int32(start.Line-1), int32(start.Column-1)
+	read.PackageName = name
+	read.PackageRange = scipindex.Range{line, col, line, col + int32(len(name))}
 	return read
 }
 

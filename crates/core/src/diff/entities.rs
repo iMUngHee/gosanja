@@ -53,17 +53,15 @@ fn properties(
         }),
         kind: difference(old.kind.clone(), new.kind.clone()),
         role: difference(old.role, new.role),
-        file: difference(
-            old.def.as_ref().map(|definition| definition.file.clone()),
-            new.def.as_ref().map(|definition| definition.file.clone()),
-        ),
         ..Properties::default()
     };
-    if let (Some(left), Some(right)) = (&old.def, &new.def)
-        && left.body_src == right.body_src
-        && let Some((old_lines, new_lines)) = lines(left).zip(lines(right))
-    {
-        properties.lines = difference(Some(old_lines), Some(new_lines));
+    if let (Some(left), Some(right)) = (&old.def, &new.def) {
+        properties.file = difference(Some(left.file.clone()), Some(right.file.clone()));
+        if left.body_src == right.body_src
+            && let Some((old_lines, new_lines)) = lines(left).zip(lines(right))
+        {
+            properties.lines = difference(Some(old_lines), Some(new_lines));
+        }
     }
     if let Some((left, right)) = syntax {
         properties.visibility = difference(left.visibility.clone(), right.visibility.clone());

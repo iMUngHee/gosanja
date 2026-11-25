@@ -160,6 +160,7 @@ pub fn extract(root: &Path, out: &Path, index: &scip::types::Index) -> io::Resul
         status: LayerStatus::Ok,
         diagnostics: None,
         skipped: (!layer.skipped.is_empty()).then_some(layer.skipped),
+        merged: None,
     })
 }
 

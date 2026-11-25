@@ -41,8 +41,8 @@ gosanja adapter list
 ```
 
 ```text
-old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.2, this reader implements 0.3; 0.x versions are only compatible with themselves
-rust 1.2.3 contract=0.3 languages=rust layers=base,syntax,calls markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
+old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.3, this reader implements 0.4; 0.x versions are only compatible with themselves
+rust 1.2.3 contract=0.4 languages=rust layers=base,syntax,calls markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
   requires rust-analyzer: found /usr/bin/rust-analyzer
   requires cargo: missing
 ```
@@ -98,11 +98,9 @@ gosanja index --root <project> --out <dir> --layers base,syntax
 
 `--layers` names the layers to ask the adapter for: `base`, `syntax` and `calls`, separated by
 commas, each at most once, with no spaces, always including `base`. Without it all three are
-asked for, which gives the same rows as before the option existed. The snapshot differs only in
-its version stamps (snapshot schema 0.3, adapter contract 0.3), in build contexts reported by an
-adapter whose manifest does not offer the calls layer, which are no longer copied, and in an
-entry the adapter wrote for a layer it does not offer, which the engine discards before
-validating the result, so a malformed one no longer fails the run by itself. A list that breaks
+asked for. Build contexts reported by an adapter whose manifest does not offer the calls layer
+are not copied, and an entry the adapter wrote for a layer it does not offer is discarded
+before the result is validated, so a malformed one does not fail the run by itself. A list that breaks
 these rules exits with code 2 and says what is wrong with it, and no adapter runs. So does
 `--layers` together with `--scip`: a snapshot made from an index has no adapter to ask.
 
@@ -140,6 +138,12 @@ engine refuses the older one rather than look further. Remove or move the old co
 the new executable with `--adapter <path>`. Of two adapters of different names whose markers
 both match a project, an unusable one is set aside before markers are matched, so the usable
 one runs; two usable ones are still refused as ambiguous.
+
+### Upgrading to adapter contract 0.4
+
+An engine of contract 0.4 refuses an adapter of 0.3, as above. An adapter of 0.4 may list in
+its base entry's `merged` the symbols whose definitions at several sites declare one entity;
+an adapter with nothing to list writes what it wrote under 0.3, with `0.4` as its contract.
 
 ## Trying it without a real adapter
 
@@ -194,3 +198,11 @@ your ecosystem's marker files under `markers` if the engine should choose it by 
 `index` takes `--layers`, the layers it is asked for: produce only those, write a
 `result.json` entry for each of them and none for another, and report build contexts only
 when `calls` is among them.
+
+When your language declares one thing at several sites without a body there, such as a Go
+package in each of its files, list the symbol in the base entry's `merged` (global SCIP
+symbols, sorted by bytes, each once): the engine then writes one entity with `decls` instead
+of a collision group. Do not list a symbol whose definitions are distinct things, such as two
+functions of one name; and do not send a syntax row at any of its sites, because a published
+syntax row, or a body at a site, keeps the symbol a collision group. A malformed list fails the
+run whatever the base layer's status.

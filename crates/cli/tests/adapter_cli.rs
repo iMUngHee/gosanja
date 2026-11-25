@@ -76,7 +76,7 @@ fn standalone_describe_and_conflicting_index_sources() {
     check(&result, 0);
     let value: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(value["name"], "fake");
-    assert_eq!(value["contract"], "0.3");
+    assert_eq!(value["contract"], "0.4");
     let mut cmd = binary();
     cmd.args(["adapter", "describe"]).arg(program);
     Command::env(&mut cmd, "GOSANJA_FAKE_MODE", "incompatible");
@@ -402,4 +402,113 @@ fn unrequested_adapter_diagnostics_do_not_escape() {
             if expected { "failed" } else { "not-requested" }
         );
     }
+}
+
+/// Runs the fake adapter in `mode` on rust-basic with its commands recorded, and returns the
+/// CLI's output, the recorded commands and whether a snapshot was published.
+fn merged_run(mode: &str) -> (Output, Vec<String>, bool) {
+    let temp = tempdir().unwrap();
+    let out = temp.path().join("out");
+    let record = temp.path().join("commands");
+    let mut cmd = binary();
+    cmd.args(["index", "--adapter"])
+        .arg(fixture().join("fake-adapter/adapter.sh"))
+        .arg("--root")
+        .arg(fixture().join("rust-basic"))
+        .arg("--out")
+        .arg(&out);
+    configure(&mut cmd, mode, &temp.path().join("cache"));
+    Command::env(&mut cmd, "GOSANJA_FAKE_RECORD", &record);
+    let output = cmd.output().unwrap();
+    let commands = fs::read_to_string(&record)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    (output, commands, out.exists())
+}
+
+/// The adapter's commands as the fake recorded them: `describe` accepted, then `index` run.
+fn assert_described_and_indexed(commands: &[String]) {
+    assert_eq!(commands, ["describe", "index"], "{commands:?}");
+}
+
+fn merged_refused(mode: &str, expected: &str) {
+    let (output, commands, published) = merged_run(mode);
+    assert_described_and_indexed(&commands);
+    check(&output, 3);
+    let err = String::from_utf8(output.stderr).unwrap();
+    assert!(err.contains(expected), "{mode}: {err}");
+    assert!(!published, "{mode}: a snapshot was published");
+}
+
+#[test]
+fn merged_entry_not_global() {
+    merged_refused(
+        "merged-not-global",
+        "merged: \"local 1\" is not a global SCIP symbol",
+    );
+}
+
+/// The scheme `locality` starts with `local`, which the SCIP grammar forbids.
+#[test]
+fn merged_entry_with_a_local_scheme() {
+    merged_refused(
+        "merged-local-scheme",
+        "merged: \"locality m p 1 pkg/\" is not a global SCIP symbol",
+    );
+}
+
+/// The index reader takes `café` unescaped; a `merged` entry is held to the SCIP grammar,
+/// which requires the name escaped.
+#[test]
+fn merged_entry_with_a_bare_unicode_name() {
+    merged_refused(
+        "merged-bare-unicode",
+        "merged: \"s m p 1 café#\" is not a global SCIP symbol",
+    );
+}
+
+/// The SCIP grammar escapes only a name a simple name cannot spell, so `` `pkg` `` is not a
+/// descriptor name of a `merged` entry.
+#[test]
+fn merged_entry_with_a_needlessly_escaped_name() {
+    merged_refused(
+        "merged-needless-escape",
+        "merged: \"s m p 1 `pkg`/\" is not a global SCIP symbol",
+    );
+}
+
+#[test]
+fn merged_unsorted() {
+    merged_refused("merged-unsorted", "the list is not sorted");
+}
+
+#[test]
+fn merged_repeated() {
+    merged_refused("merged-repeated", "is listed twice");
+}
+
+#[test]
+fn merged_on_failed_base() {
+    let (output, commands, published) = merged_run("merged-failed-base");
+    assert_described_and_indexed(&commands);
+    check(&output, 3);
+    let err = String::from_utf8(output.stderr).unwrap();
+    assert!(err.contains("is not a global SCIP symbol"), "{err}");
+    assert!(!err.contains("base layer failed"), "{err}");
+    assert!(!published);
+}
+
+#[test]
+fn merged_old_result_after_accepted_describe() {
+    let (output, commands, published) = merged_run("old-result");
+    assert_described_and_indexed(&commands);
+    check(&output, 3);
+    let err = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        err.contains("result contract differs from describe"),
+        "{err}"
+    );
+    assert!(!published);
 }

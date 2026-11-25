@@ -45,10 +45,7 @@
       "then": {
         "allOf": [
           {"if": {"required": ["group"]}, "else": {"required": ["role"]}},
-          {
-            "if": {"anyOf": [{"required": ["group"]}, {"required": ["virtual"]}]},
-            "else": {"required": ["file"]}
-          }
+          {"if": {"required": ["member_of"]}, "then": {"required": ["file"]}}
         ]
       }
     },
@@ -90,7 +87,7 @@
       "key": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/$defs/key"}, "new": {"$ref": "entity.schema.json#/$defs/key"}}},
       "kind": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/properties/kind"}, "new": {"$ref": "entity.schema.json#/properties/kind"}}},
       "role": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "entity.schema.json#/properties/role"}, "new": {"$ref": "entity.schema.json#/properties/role"}}},
-      "file": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"$ref": "file.schema.json#/$defs/path"}, "new": {"$ref": "file.schema.json#/$defs/path"}}},
+      "file": {"$ref": "diff-entity.schema.json#/$defs/pair", "required": ["old", "new"], "properties": {"old": {"$ref": "file.schema.json#/$defs/path"}, "new": {"$ref": "file.schema.json#/$defs/path"}}},
       "lines": {"$ref": "diff-entity.schema.json#/$defs/pair", "required": ["old", "new"], "properties": {"old": {"type": "integer", "minimum": 1}, "new": {"type": "integer", "minimum": 1}}},
       "text": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "string"}, "new": {"type": "string"}}},
       "texts": {"$ref": "diff-entity.schema.json#/$defs/pair", "properties": {"old": {"type": "array", "items": {"type": "string"}}, "new": {"type": "array", "items": {"type": "string"}}}},

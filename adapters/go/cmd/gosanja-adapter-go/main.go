@@ -1,5 +1,5 @@
 // Command gosanja-adapter-go is the Go adapter of gosanja: it answers `describe` and `index`
-// as spec/adapter-contract.md (version 0.3) defines them.
+// as spec/adapter-contract.md (version 0.4) defines them.
 package main
 
 import (
@@ -156,7 +156,9 @@ func syntaxLayer(root, out string, outcome base.Outcome, stderr io.Writer) (cont
 	}
 	files := make(map[string]syntax.File, len(outcome.Reads))
 	for rel, read := range outcome.Reads {
-		files[rel] = syntax.File{Code: read.Code, HasLineDirective: read.LineDirective}
+		files[rel] = syntax.File{
+			Code: read.Code, HasLineDirective: read.LineDirective, MergedPackage: outcome.MergedPackageFiles[rel],
+		}
 	}
 	entry, facts := layer(context.Background(), syntax.Input{
 		Root: root, Env: outcome.Env, Files: files, Documents: outcome.Documents,

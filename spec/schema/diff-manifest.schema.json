@@ -4,7 +4,7 @@
   "type": "object",
   "properties": {
     "format": {"const": "gosanja-diff"},
-    "schema": {"$ref": "adapter-manifest.schema.json#/$defs/version"},
+    "schema": {"description": "Diff schema version, 0.3 for this format.", "$ref": "adapter-manifest.schema.json#/$defs/version"},
     "tool": {"$ref": "adapter-result.schema.json#/$defs/tool"},
     "weights": {
       "type": "object",
@@ -90,7 +90,7 @@
     "side": {
       "type": "object",
       "properties": {
-        "schema": {"$ref": "adapter-manifest.schema.json#/$defs/version"},
+        "schema": {"description": "Input snapshot schema version, 0.4 for this format.", "$ref": "adapter-manifest.schema.json#/$defs/version"},
         "project": {"$ref": "snapshot-manifest.schema.json#/properties/project"},
         "adapter": {"$ref": "snapshot-manifest.schema.json#/properties/scopes/items/properties/adapter"},
         "layers": {"$ref": "snapshot-manifest.schema.json#/properties/scopes/items/properties/layers"},

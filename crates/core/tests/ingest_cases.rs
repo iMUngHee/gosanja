@@ -11,8 +11,8 @@ use gosanja_schema::position::{Range, Site};
 use gosanja_schema::snapshot::{GapKind, Rel, SCHEMA_VERSION};
 use scip::types::{Document, PositionEncoding};
 use support::{
-    DEF, MemSource, REF, Recording, build, diagnostics, doc, doc_in, entity, gaps, index, occ,
-    relations, text, typed_occ,
+    DEF, MemSource, REF, Recording, build, build_merged, diagnostics, doc, doc_in, entity, gaps,
+    index, occ, relations, text, typed_occ,
 };
 
 /// Ten ASCII lines of forty characters, long enough for every synthetic range.
@@ -596,11 +596,17 @@ fn a_body_supplied_before_references_takes_part_in_ownership() {
             ],
         )],
     );
-    let snapshot = gosanja_core::graph::build_with(&mut &*bytes, &sources, "t", |s| {
-        let def = s.entities[0].def.as_mut().expect("def");
-        def.body = Some(Range::new(0, 0, 3, 0));
-        def.body_src = Some("adapter:fake/syntax".to_owned());
-    })
+    let snapshot = gosanja_core::graph::build_with(
+        &mut &*bytes,
+        &sources,
+        "t",
+        &std::collections::BTreeSet::new(),
+        |s| {
+            let def = s.entities[0].def.as_mut().expect("def");
+            def.body = Some(Range::new(0, 0, 3, 0));
+            def.body_src = Some("adapter:fake/syntax".to_owned());
+        },
+    )
     .expect("builds");
     assert_eq!(diagnostics(&snapshot), Vec::<String>::new());
     assert_eq!(relations(&snapshot, "m:p:a().", "m:p:b().").len(), 1);
@@ -675,7 +681,7 @@ fn another_minor_or_major_is_refused_before_reading() {
     let manifest = String::from_utf8(files.manifest.clone().expect("manifest")).expect("utf-8");
     assert!(manifest.contains(&own), "{manifest}");
     let _own = validate::read(&files, SCHEMA_VERSION).expect("its own version");
-    for schema in ["0.2", "0.4", "1.0"] {
+    for schema in ["0.3", "0.5", "1.0"] {
         files.manifest = Some(
             manifest
                 .replace(&own, &format!("\"schema\":\"{schema}\""))
@@ -943,4 +949,261 @@ fn a_statement_in_a_document_without_the_definition_makes_no_row() {
             .count(),
         0
     );
+}
+
+// Entities declared at several sites (`merged`).
+
+const PACKAGE: &str = "s m p 1 pkg/";
+
+/// A package declared in a.go and b.go, at the package clause of each, without a body.
+fn package_clause(file: &str, line: i32) -> Document {
+    doc(file, vec![occ(PACKAGE, DEF, &[line, 8, 11], &[])])
+}
+
+#[test]
+fn merged_reference_in_another_file_points_at_the_merged_key() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank()), ("c.go", &blank())]);
+    let user = doc(
+        "c.go",
+        vec![
+            occ("s m q 1 use/f().", DEF, &[0, 5, 6], &[0, 0, 3, 0]),
+            occ(PACKAGE, REF, &[1, 4, 7], &[]),
+        ],
+    );
+    let bytes = index(
+        "t",
+        vec![package_clause("a.go", 0), package_clause("b.go", 0), user],
+    );
+    let snapshot = build_merged(&bytes, &sources, &[PACKAGE]);
+    let package = entity(&snapshot, "m:p:pkg/");
+    assert!(package.def.is_none() && !package.group && package.member_of.is_none());
+    let decls: Vec<_> = package
+        .decls
+        .iter()
+        .flatten()
+        .map(|d| (d.file.as_str(), d.name))
+        .collect();
+    assert_eq!(
+        decls,
+        [
+            ("a.go", Range::new(0, 8, 0, 11)),
+            ("b.go", Range::new(0, 8, 0, 11))
+        ]
+    );
+    assert!(
+        !snapshot
+            .entities
+            .iter()
+            .any(|e| e.key.starts_with("m:p:pkg/~"))
+    );
+    assert_eq!(gaps(&snapshot, GapKind::SymbolCollision).len(), 0);
+    assert_eq!(relations(&snapshot, "m:q:use/f().", "m:p:pkg/").len(), 1);
+    // Control: without the list the same input is a collision group.
+    let plain = build(&bytes, &sources);
+    assert!(entity(&plain, "m:p:pkg/").group);
+    assert_eq!(gaps(&plain, GapKind::SymbolCollision).len(), 1);
+}
+
+#[test]
+fn merged_child_declared_in_a_second_file_has_it_as_parent() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank())]);
+    let mut b = package_clause("b.go", 0);
+    b.occurrences
+        .push(occ("s m p 1 pkg/F().", DEF, &[2, 5, 6], &[2, 0, 4, 1]));
+    let bytes = index("t", vec![package_clause("a.go", 0), b]);
+    let snapshot = build_merged(&bytes, &sources, &[PACKAGE]);
+    assert!(entity(&snapshot, "m:p:pkg/").decls.is_some());
+    assert_eq!(
+        entity(&snapshot, "m:p:pkg/F().").parent.as_deref(),
+        Some("m:p:pkg/")
+    );
+}
+
+#[test]
+fn merged_externals_of_another_version_or_scheme_keep_their_own_keys() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank()), ("c.go", &blank())]);
+    let user = doc(
+        "c.go",
+        vec![
+            occ("s m q 1 use/f().", DEF, &[0, 5, 6], &[0, 0, 3, 0]),
+            occ("s m p 2 pkg/", REF, &[1, 4, 7], &[]),
+            occ("t m p 1 pkg/", REF, &[2, 4, 7], &[]),
+        ],
+    );
+    let bytes = index(
+        "t",
+        vec![package_clause("a.go", 0), package_clause("b.go", 0), user],
+    );
+    let snapshot = build_merged(&bytes, &sources, &[PACKAGE]);
+    let merged: Vec<_> = snapshot
+        .entities
+        .iter()
+        .filter(|e| e.decls.is_some())
+        .collect();
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].symbol.as_deref(), Some(PACKAGE));
+    let externals: Vec<_> = snapshot.externals.iter().map(|e| e.key.as_str()).collect();
+    assert_eq!(externals.len(), 2, "{externals:?}");
+    for key in &externals {
+        assert_ne!(*key, merged[0].key);
+    }
+    assert_ne!(externals[0], externals[1]);
+}
+
+#[test]
+fn merged_implements_come_from_the_declarations_in_the_stating_document() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank())]);
+    let mut stating = doc(
+        "a.go",
+        vec![
+            occ(PACKAGE, DEF, &[0, 8, 11], &[]),
+            occ("s m p 1 I#", DEF, &[5, 5, 6], &[]),
+        ],
+    );
+    stating.symbols = vec![support::implementing(PACKAGE, &["s m p 1 I#"])];
+    let mut silent = package_clause("b.go", 0);
+    silent.symbols = vec![support::implementing(PACKAGE, &[])];
+    let snapshot = both_orders_merged(&[stating, silent], &sources);
+    let rows: Vec<_> = snapshot
+        .relations
+        .iter()
+        .filter(|r| r.rel == Rel::Implements)
+        .map(|r| (r.from.as_str(), r.to.as_str(), r.sites.clone()))
+        .collect();
+    assert_eq!(
+        rows,
+        [("m:p:pkg/", "m:p:I#", Some(vec![site("a.go", 0, 8, 0, 11)]))]
+    );
+}
+
+#[test]
+fn merged_kind_follows_the_per_symbol_rule() {
+    use scip::types::symbol_information::Kind;
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank())]);
+    let with_kind = |file: &str, kind: Option<Kind>| {
+        let mut d = package_clause(file, 0);
+        if let Some(kind) = kind {
+            d.symbols = vec![support::info(PACKAGE, kind)];
+        }
+        d
+    };
+    let kind = |a, b| {
+        let bytes = index("t", vec![with_kind("a.go", a), with_kind("b.go", b)]);
+        let snapshot = build_merged(&bytes, &sources, &[PACKAGE]);
+        entity(&snapshot, "m:p:pkg/").kind.clone()
+    };
+    assert_eq!(
+        kind(None, Some(Kind::Namespace)).as_deref(),
+        Some("test:namespace")
+    );
+    assert_eq!(
+        kind(Some(Kind::Package), Some(Kind::Namespace)).as_deref(),
+        Some("test:namespace")
+    );
+    assert_eq!(kind(None, None), None);
+}
+
+#[test]
+fn merged_src_is_the_smallest_of_its_sites() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank())]);
+    let mut bytes = index("second", vec![package_clause("a.go", 0)]);
+    bytes.extend(index("first", vec![package_clause("b.go", 0)]));
+    let snapshot = build_merged(&bytes, &sources, &[PACKAGE]);
+    assert_eq!(entity(&snapshot, "m:p:pkg/").src, "scip:first");
+}
+
+/// [`both_orders`] for a package listed in `merged`.
+fn both_orders_merged(documents: &[Document], sources: &MemSource) -> Snapshot {
+    let forward = build_merged(&index("t", documents.to_vec()), sources, &[PACKAGE]);
+    let mut reversed = documents.to_vec();
+    reversed.reverse();
+    let backward = build_merged(&index("t", reversed), sources, &[PACKAGE]);
+    assert_eq!(
+        text(&forward),
+        text(&backward),
+        "output depends on document order"
+    );
+    forward
+}
+
+/// Another collision group, of a symbol that sorts first, precedes the folded symbol among the
+/// entities: the folded row is built from the folded symbol's own group row.
+#[test]
+fn merged_row_comes_from_its_own_group_when_another_group_precedes_it() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank())]);
+    let mut a = package_clause("a.go", 0);
+    a.occurrences
+        .push(occ("s m p 1 a/f().", DEF, &[3, 5, 6], &[]));
+    let mut b = package_clause("b.go", 0);
+    b.occurrences
+        .push(occ("s m p 1 a/f().", DEF, &[3, 5, 6], &[]));
+    let snapshot = build_merged(&index("t", vec![a, b]), &sources, &[PACKAGE]);
+    let package = entity(&snapshot, "m:p:pkg/");
+    assert!(package.decls.is_some());
+    assert_eq!(package.name, "pkg");
+    assert_eq!(package.symbol.as_deref(), Some(PACKAGE));
+    assert_eq!(
+        package.role,
+        Some(gosanja_schema::snapshot::Role::Container)
+    );
+    assert_eq!(package.parent, None);
+    assert!(entity(&snapshot, "m:p:a/f().").group);
+}
+
+/// A folded symbol beside a real collision, two functions of one name: the collision keeps its
+/// group, members and gap.
+#[test]
+fn merged_fold_leaves_an_unrelated_collision_and_its_gap() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank())]);
+    let mut a = package_clause("a.go", 0);
+    a.occurrences
+        .push(occ("s m p 1 pkg/init().", DEF, &[3, 5, 9], &[3, 0, 4, 1]));
+    let mut b = package_clause("b.go", 0);
+    b.occurrences
+        .push(occ("s m p 1 pkg/init().", DEF, &[3, 5, 9], &[3, 0, 4, 1]));
+    let snapshot = build_merged(&index("t", vec![a, b]), &sources, &[PACKAGE]);
+    assert!(entity(&snapshot, "m:p:pkg/").decls.is_some());
+    let init = entity(&snapshot, "m:p:pkg/init().");
+    assert!(init.group);
+    assert_eq!(
+        entity(&snapshot, "m:p:pkg/init().~1").parent.as_deref(),
+        Some("m:p:pkg/")
+    );
+    let collisions = gaps(&snapshot, GapKind::SymbolCollision);
+    assert_eq!(collisions.len(), 1);
+    assert_eq!(
+        collisions[0].keys.as_deref(),
+        Some(
+            &[
+                "m:p:pkg/init().".to_owned(),
+                "m:p:pkg/init().~1".to_owned(),
+                "m:p:pkg/init().~2".to_owned()
+            ][..]
+        )
+    );
+}
+
+/// Two admitted documents share the path a.go: the one that declares the folded package states
+/// nothing, and the one that states `implements` declares nothing. The statement is tied to its
+/// own document, which has no declaration, so it gives no row.
+#[test]
+fn merged_implements_from_a_document_sharing_a_path_without_a_declaration_gives_no_row() {
+    let sources = MemSource::with(&[("a.go", &blank()), ("b.go", &blank())]);
+    let declaring = package_clause("a.go", 0);
+    let mut stating = doc("a.go", vec![occ(PACKAGE, REF, &[4, 0, 3], &[])]);
+    stating.symbols = vec![support::implementing(PACKAGE, &["s m p 1 I#"])];
+    let mut b = package_clause("b.go", 0);
+    b.occurrences.push(occ("s m p 1 I#", DEF, &[5, 5, 6], &[]));
+    let snapshot = build_merged(
+        &index("t", vec![declaring, stating, b]),
+        &sources,
+        &[PACKAGE],
+    );
+    assert!(entity(&snapshot, "m:p:pkg/").decls.is_some());
+    let rows: Vec<_> = snapshot
+        .relations
+        .iter()
+        .filter(|r| r.rel == Rel::Implements)
+        .collect();
+    assert!(rows.is_empty(), "{rows:?}");
 }

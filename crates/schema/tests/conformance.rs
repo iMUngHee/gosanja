@@ -154,6 +154,7 @@ fn entity(key: &str) -> EntityRow {
             body: Some(Range::new(2, 0, 8, 1)),
             body_src: Some("scip:rust-analyzer".into()),
         }),
+        decls: None,
         src: "scip:rust-analyzer".into(),
     }
 }
@@ -237,6 +238,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
         group: false,
         member_of: None,
         def: None,
+        decls: None,
         src: "core:containment".into(),
     };
     schemas.assert_valid("entity", &to_value(&container));
@@ -438,13 +440,12 @@ fn every_gap_kind_passes_its_schema() {
 
 #[test]
 fn the_interfaces_are_at_their_current_versions() {
-    assert_eq!(CONTRACT_VERSION.to_string(), "0.3");
-    assert_eq!(SCHEMA_VERSION.to_string(), "0.3");
+    assert_eq!(CONTRACT_VERSION.to_string(), "0.4");
+    assert_eq!(SCHEMA_VERSION.to_string(), "0.4");
     assert_eq!(
         gosanja_schema::diff::SCHEMA_VERSION.to_string(),
         DIFF_SCHEMA
     );
-    assert_eq!(DIFF_SCHEMA, "0.2");
     assert_eq!(to_value(&GapKind::SkippedFile), json!("skipped-file"));
     assert_eq!(to_value(&LayerState::NotRequested), json!("not-requested"));
 }
@@ -546,6 +547,7 @@ fn every_adapter_file_type_passes_its_schema() {
                         file: "src/generated.rs".into(),
                         code: "parse-error".into(),
                     }]),
+                    merged: None,
                 },
             ),
             (
@@ -557,6 +559,7 @@ fn every_adapter_file_type_passes_its_schema() {
                         message: Some("src/a.rs: pid 4242 after 31 ms".into()),
                     }]),
                     skipped: None,
+                    merged: None,
                 },
             ),
         ]),
@@ -833,7 +836,38 @@ fn only_a_call_node_names_a_callee_and_it_may_omit_it() {
 
 /// The marker and the schema version of a diff, as `spec/diff.md` states them.
 const DIFF_FORMAT: &str = "gosanja-diff";
-const DIFF_SCHEMA: &str = "0.2";
+const DIFF_SCHEMA: &str = "0.3";
+
+#[test]
+fn diff_schema_version_accepts_0_3_and_refuses_0_2() {
+    use gosanja_schema::diff::SCHEMA_VERSION as DIFF_VERSION;
+    let path = repository().join("spec/examples/diff-basic/manifest.json");
+    let current: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(current["schema"], "0.3");
+    assert_eq!(current["old"]["schema"], "0.4");
+    assert_eq!(current["new"]["schema"], "0.4");
+    let writer = |manifest: &Value| {
+        manifest["schema"]
+            .as_str()
+            .unwrap()
+            .parse::<Version>()
+            .unwrap()
+    };
+    assert_eq!(
+        compat::accept(DIFF_VERSION, writer(&current)),
+        Ok(compat::Acceptance::Full)
+    );
+    let mut previous = current;
+    previous["schema"] = json!("0.2");
+    let writer = writer(&previous);
+    assert_eq!(
+        compat::accept(DIFF_VERSION, writer),
+        Err(compat::Refusal::UnstableMinor {
+            reader: DIFF_VERSION,
+            writer
+        })
+    );
+}
 
 /// What a directory with a `manifest.json` holds, told by the manifest's `format`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1191,8 +1225,9 @@ fn diff_entity_rows_carry_what_their_variant_and_property_require() {
     let schemas = Schemas::load();
     for row in [
         json!({"change": "added", "new": "cargo:d:f().", "name": "f", "file": "src/lib.rs"}),
-        json!({"change": "removed", "old": "cargo:d:f().", "name": "f", "role": "callable"}),
+        json!({"change": "removed", "old": "cargo:d:f().~1", "name": "f", "role": "callable", "member_of": "cargo:d:f()."}),
         json!({"change": "added", "new": "cargo:d:m/", "name": "m", "virtual": true}),
+        json!({"change": "changed", "old": "cargo:d:m/", "new": "cargo:d:m/", "properties": {"file": {"new": "src/lib.rs"}}}),
         json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"lines": {"old": 2}}}),
         json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"outline": {"new": {}}}}),
         json!({"change": "changed", "old": "cargo:d:f().", "new": "cargo:d:f().", "properties": {"kind": {"note": "x"}}}),
@@ -1200,6 +1235,8 @@ fn diff_entity_rows_carry_what_their_variant_and_property_require() {
         schemas.assert_invalid("diff-entity", &row);
     }
     for row in [
+        json!({"change": "removed", "old": "cargo:d:f().", "name": "f", "role": "callable"}),
+        json!({"change": "added", "new": "cargo:d:m/", "name": "m", "role": "container"}),
         json!({"change": "added", "new": "cargo:d:g().", "name": "g", "group": true}),
         json!({"change": "added", "new": "cargo:d:m/", "name": "m", "role": "container", "virtual": true}),
         json!({"change": "removed", "old": "cargo:d:f().~1", "name": "f", "role": "callable", "member_of": "cargo:d:f().", "file": "src/a.rs"}),

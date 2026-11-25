@@ -8,7 +8,7 @@ use crate::position::{PositionEncoding, Range};
 use crate::snapshot::{BuildContext, Mechanism, OutlineNode, Resolution, Tool};
 
 /// Adapter contract version this crate reads and writes.
-pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 3);
+pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 4);
 
 /// File name of the result an adapter writes into its output directory.
 pub const RESULT_FILE: &str = "result.json";
@@ -160,6 +160,10 @@ pub struct LayerResult {
     /// Files the layer was meant to cover and could not process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<Vec<SkippedFile>>,
+    /// On the base entry: SCIP symbols whose definitions at several sites declare one entity,
+    /// sorted by bytes, each once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged: Option<Vec<String>>,
 }
 
 /// A file a layer could not process.

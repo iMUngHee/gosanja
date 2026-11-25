@@ -4,9 +4,9 @@ Three interfaces of gosanja are specified here and are normative:
 
 | Document | Interface | Version |
 | --- | --- | --- |
-| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.3 |
-| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.3 |
-| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.2 |
+| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.4 |
+| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.4 |
+| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.3 |
 
 The JSON Schemas under [schema/](schema/) define the shape of every file. Where a document and
 a schema disagree, that is a defect in both: report it, and until it is fixed the schema decides
@@ -50,6 +50,22 @@ While the major version is 0, a minor change may also break compatibility. The c
 for each such change.
 
 The current versions were classified this way:
+
+- **Adapter contract 0.4.** The `base` entry of `result.json` gains an optional `merged`, the
+  symbols whose definitions at several sites declare one entity (minor). An engine of 0.4
+  checks the list whatever the base status and refuses a malformed one; under major 0 it
+  refuses a 0.3 adapter, and an adapter of 0.3 that lists nothing would otherwise be read
+  unchanged.
+- **Snapshot schema 0.4.** An entity may carry `decls` instead of `def`: one entity declared at
+  several sites, where 0.3 wrote a collision group with members and a `symbol-collision` gap.
+  The field is optional, but a reader that assumes every non-group, non-virtual entity has
+  `def` reads it wrongly, so under major 0 this is stated as breaking.
+- **Diff schema 0.3.** An `added` or `removed` entity row for an entity declared at several
+  sites has no `file`, as a group's row has none; 0.2 required `file` on every such row but a
+  group's or a virtual container's. A reader of 0.2 would refuse the row, so the minor rises,
+  breaking under major 0: a 0.3 reader refuses a 0.2 diff. It reads snapshot 0.4 inputs only.
+
+Earlier versions:
 
 - **Adapter contract 0.3.** `index` takes `--layers`, and `result.json` holds entries only for
   the layers the run was asked for. These are additions an adapter of 0.2 does not honour, so

@@ -185,7 +185,7 @@ func (s snapshot) skippedGaps() []string {
 }
 
 // synthIndex writes root/index.scip as scip-go would for the module's files that parse, except
-// those in leave: one document per file, a definition for each package (in its first file),
+// those in leave: one document per file, a definition for each package clause,
 // function, method, type and package-level variable or constant, with the declaration as the
 // enclosing range of functions, methods and types. narrow names functions
 // whose enclosing range is cut to their first line.
@@ -205,7 +205,6 @@ func synthIndex(t *testing.T, root, module string, leave []string, narrow ...str
 	sort.Strings(files)
 	idx := &scip.Index{Metadata: &scip.Metadata{ToolInfo: &scip.ToolInfo{Name: "scip-go", Version: "0.2.10"},
 		ProjectRoot: "file:///synthetic", TextDocumentEncoding: scip.TextEncoding_UTF8}}
-	packaged := map[string]bool{}
 	for _, rel := range files {
 		if slices.Contains(leave, rel) {
 			continue
@@ -238,10 +237,7 @@ func synthIndex(t *testing.T, root, module string, leave []string, narrow ...str
 			doc.Occurrences = append(doc.Occurrences, occ)
 			doc.Symbols = append(doc.Symbols, &scip.SymbolInformation{Symbol: symbol, Kind: kind, DisplayName: name.Name})
 		}
-		if !packaged[pkg] {
-			packaged[pkg] = true
-			define(prefix, scip.SymbolInformation_Package, f.Name, nil)
-		}
+		define(prefix, scip.SymbolInformation_Package, f.Name, nil)
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:

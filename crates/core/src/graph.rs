@@ -9,8 +9,8 @@ use std::io::Read;
 
 use gosanja_schema::position::{PositionEncoding, Range, Site};
 use gosanja_schema::snapshot::{
-    Def, EntityRow, ExternalRow, FileRow, GapKind, GapRow, LayerState, Layers, Package, Project,
-    RefRole, Rel, RelationRow, Scope, SyntaxRow, Tool,
+    Decl, Def, EntityRow, ExternalRow, FileRow, GapKind, GapRow, LayerState, Layers, Package,
+    Project, RefRole, Rel, RelationRow, Scope, SyntaxRow, Tool,
 };
 use protobuf::EnumFull;
 use scip::types::occurrence::{Typed_enclosing_range, Typed_range};
@@ -88,14 +88,17 @@ pub fn build(
     sources: &dyn SourceReader,
     project_name: &str,
 ) -> Result<Snapshot, BuildError> {
-    build_with(index, sources, project_name, |_| {})
+    build_with(index, sources, project_name, &BTreeSet::new(), |_| {})
 }
 
-/// [`build`], with a step between building the entities and attributing references.
+/// [`build`], with a step between building the entities and attributing references, and the
+/// symbols an adapter declared at several sites (`merged`).
 ///
 /// `before_references` sees the snapshot with its files, entities, externals and the gaps found
 /// so far, and no relations. A body it sets on an entity's `def` takes part in ownership, which
-/// is how a syntax layer supplies bodies the index lacks.
+/// is how a syntax layer supplies bodies the index lacks. After it, each symbol of `merged`
+/// that is a collision group of sites without bodies and without syntax rows becomes one
+/// entity with `decls` (`spec/snapshot.md`).
 ///
 /// # Errors
 ///
@@ -104,6 +107,7 @@ pub fn build_with(
     index: &mut dyn Read,
     sources: &dyn SourceReader,
     project_name: &str,
+    merged: &BTreeSet<String>,
     before_references: impl FnOnce(&mut Snapshot),
 ) -> Result<Snapshot, BuildError> {
     let mut input = Input::default();
@@ -127,7 +131,7 @@ pub fn build_with(
         }
     })
     .map_err(BuildError::Decode)?;
-    Ok(input.finish(project_name, before_references))
+    Ok(input.finish(project_name, merged, before_references))
 }
 
 /// An occurrence whose positions were converted to UTF-8 bytes.
@@ -148,8 +152,11 @@ struct Occ {
 struct Implementation {
     from: String,
     to: String,
-    /// The document whose symbol information states it.
+    /// The path of the document whose symbol information states it.
     file: String,
+    /// The name ranges at which that document itself defines `from`. Two documents may share
+    /// a path, so the statement is tied to its own document's definitions, not to the path's.
+    sites: BTreeSet<Range>,
     src: String,
 }
 
@@ -239,6 +246,8 @@ impl Input {
                 &text,
             )
         });
+        let (first_implementation, first_occurrence) =
+            (self.implementations.len(), self.occurrences.len());
         for info in &document.symbols {
             self.named.insert(info.symbol.clone());
             for relationship in &info.relationships {
@@ -248,6 +257,7 @@ impl Input {
                         from: info.symbol.clone(),
                         to: relationship.symbol.clone(),
                         file: path.to_owned(),
+                        sites: BTreeSet::new(),
                         src: self.src.clone(),
                     });
                 }
@@ -281,9 +291,28 @@ impl Input {
                 *count += 1;
             }
         }
+        self.tie_statements(first_implementation, first_occurrence);
     }
 
-    fn finish(self, project_name: &str, before_references: impl FnOnce(&mut Snapshot)) -> Snapshot {
+    /// Gives each statement the document made since `first_implementation` the name ranges at
+    /// which that document itself, from `first_occurrence` on, defines its `from`.
+    fn tie_statements(&mut self, first_implementation: usize, first_occurrence: usize) {
+        let defined = &self.occurrences[first_occurrence..];
+        for statement in &mut self.implementations[first_implementation..] {
+            statement.sites = defined
+                .iter()
+                .filter(|o| is_definition(o.roles) && o.symbol == statement.from)
+                .map(|o| o.range)
+                .collect();
+        }
+    }
+
+    fn finish(
+        self,
+        project_name: &str,
+        merged: &BTreeSet<String>,
+        before_references: impl FnOnce(&mut Snapshot),
+    ) -> Snapshot {
         let mut out = Snapshot {
             project: Project {
                 name: project_name.to_owned(),
@@ -311,8 +340,9 @@ impl Input {
         let graph = Graph::new(&self.occurrences, &self.implementations);
         graph.entities(&self, &mut out);
         before_references(&mut out);
+        let folded = graph.fold(&self, merged, &mut out);
         graph.references(&self, &mut out);
-        graph.implements(&mut out);
+        graph.implements(&folded, &mut out);
         out
     }
 
@@ -652,6 +682,7 @@ impl<'a> Graph<'a> {
                 group: false,
                 member_of: None,
                 def: None,
+                decls: None,
                 src: CONTAINMENT.to_owned(),
             };
             let Some(observations) = self.defs.get(raw) else {
@@ -713,9 +744,83 @@ impl<'a> Graph<'a> {
         }
     }
 
+    /// Folds each listed symbol that is a collision group into one entity with `decls`, when
+    /// no site has a body (from the index or a syntax row) and no syntax row is keyed to a
+    /// member. Returns the folded symbols.
+    fn fold<'s>(
+        &self,
+        input: &Input,
+        merged: &'s BTreeSet<String>,
+        out: &mut Snapshot,
+    ) -> BTreeSet<&'s str> {
+        let mut folded = BTreeSet::new();
+        for raw in merged {
+            let Some(observations) = self.defs.get(raw.as_str()) else {
+                continue;
+            };
+            if observations.len() < 2 {
+                continue;
+            }
+            let key = &self.keys[raw.as_str()];
+            let members: BTreeSet<String> = out
+                .entities
+                .iter()
+                .filter(|e| e.member_of.as_ref() == Some(key))
+                .map(|e| e.key.clone())
+                .collect();
+            let has_body = out
+                .entities
+                .iter()
+                .filter(|e| members.contains(&e.key))
+                .any(|e| e.def.as_ref().is_some_and(|d| d.body.is_some()));
+            let has_row = out.syntax.iter().any(|r| members.contains(&r.key));
+            if has_body || has_row {
+                continue;
+            }
+            let Some(group) = out.entities.iter().position(|e| &e.key == key && e.group) else {
+                continue;
+            };
+            let src = observations
+                .values()
+                .map(|(_, src)| src)
+                .min()
+                .cloned()
+                .unwrap_or_default();
+            let row = EntityRow {
+                kind: input
+                    .kinds
+                    .get(raw.as_str())
+                    .and_then(|k| k.first().cloned()),
+                group: false,
+                decls: Some(
+                    observations
+                        .keys()
+                        .map(|(file, name)| Decl {
+                            file: file.clone(),
+                            name: *name,
+                        })
+                        .collect(),
+                ),
+                src,
+                ..out.entities[group].clone()
+            };
+            out.entities
+                .retain(|e| e.key != *key && !members.contains(&e.key));
+            out.entities.push(row);
+            out.gaps.retain(|g| {
+                !(g.gap == GapKind::SymbolCollision
+                    && g.keys.as_ref().and_then(|k| k.first()) == Some(key))
+            });
+            folded.insert(raw.as_str());
+        }
+        folded
+    }
+
     /// `implements` rows from the index's relationships, for definitions only. `from` is the
     /// definition in the document that states the relationship and `sites` its name range.
-    fn implements(&self, out: &mut Snapshot) {
+    /// For a folded symbol it is the folded entity and the name ranges of its declarations in
+    /// that document.
+    fn implements(&self, folded: &BTreeSet<&str>, out: &mut Snapshot) {
         let mut rows: BTreeMap<(String, String, String), BTreeSet<Site>> = BTreeMap::new();
         for imp in self.implementations {
             let (Some(observations), Some(to)) =
@@ -731,12 +836,14 @@ impl<'a> Graph<'a> {
             let here: Vec<(usize, &Range)> = observations
                 .keys()
                 .enumerate()
-                .filter(|(_, (file, _))| *file == imp.file)
+                .filter(|(_, (file, name))| *file == imp.file && imp.sites.contains(name))
                 .map(|(n, (_, name))| (n, name))
                 .collect();
             let from = match here[..] {
                 [] => continue,
-                [(n, _)] if observations.len() > 1 => format!("{key}~{}", n + 1),
+                [(n, _)] if observations.len() > 1 && !folded.contains(imp.from.as_str()) => {
+                    format!("{key}~{}", n + 1)
+                }
                 _ => key.clone(),
             };
             let sites = rows.entry((from, to.clone(), imp.src.clone())).or_default();

@@ -34,4 +34,3 @@
 {"key":"gomod:example.com/goflow:`example.com/goflow`/next().","outline":[{"k":"exit","detail":"return","range":[124,23,124,35]}],"src":"adapter:go/syntax"}
 {"key":"gomod:example.com/goflow:`example.com/goflow`/seed().","attributes":["//go:noinline"],"outline":[{"k":"exit","detail":"return","range":[38,23,38,31]}],"src":"adapter:go/syntax"}
 {"key":"gomod:example.com/goflow:`example.com/goflow`/signal().","src":"adapter:go/syntax"}
-{"key":"gomod:example.com/goflow:`example.com/goflow`/~3","attributes":["//go:build go1.21"],"src":"adapter:go/syntax"}

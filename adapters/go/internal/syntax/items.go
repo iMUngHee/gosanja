@@ -48,8 +48,10 @@ func (s *selection) items(file string, syntax *ast.File, fset *token.FileSet, in
 		rows = append(rows, row)
 	}
 
-	if tag := buildTag(syntax); tag != "" {
-		add(syntax.Name, []string{tag}, nil)
+	if !s.in.Files[file].MergedPackage {
+		if tag := buildTag(syntax); tag != "" {
+			add(syntax.Name, []string{tag}, nil)
+		}
 	}
 	for _, declaration := range syntax.Decls {
 		switch decl := declaration.(type) {

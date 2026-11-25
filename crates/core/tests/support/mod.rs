@@ -213,6 +213,16 @@ pub fn build(bytes: &[u8], sources: &dyn SourceReader) -> Snapshot {
     snapshot
 }
 
+/// [`build`] with the symbols an adapter declared at several sites.
+#[must_use]
+pub fn build_merged(bytes: &[u8], sources: &dyn SourceReader, merged: &[&str]) -> Snapshot {
+    let merged = merged.iter().map(|s| (*s).to_owned()).collect();
+    let snapshot =
+        graph::build_with(&mut &*bytes, sources, "test", &merged, |_| {}).expect("builds");
+    assert_eq!(diagnostics(&snapshot), Vec::<String>::new());
+    snapshot
+}
+
 /// The serialised files of a snapshot, as text.
 #[must_use]
 pub fn text(snapshot: &Snapshot) -> BTreeMap<&'static str, String> {

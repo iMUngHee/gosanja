@@ -23,6 +23,19 @@
       "required": ["file", "name"],
       "dependentRequired": {"body": ["body_src"], "body_src": ["body"]}
     },
+    "decls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {"$ref": "file.schema.json#/$defs/path"},
+          "name": {"$ref": "file.schema.json#/$defs/range"},
+          "body": false,
+          "body_src": false
+        },
+        "required": ["file", "name"]
+      }
+    },
     "src": {"$ref": "entity.schema.json#/$defs/provenance"}
   },
   "required": ["key", "name", "src"],
@@ -37,7 +50,13 @@
     },
     {
       "if": {"anyOf": [{"required": ["group"]}, {"required": ["virtual"]}]},
-      "else": {"required": ["symbol", "def"]}
+      "else": {"required": ["symbol"], "anyOf": [{"required": ["def"]}, {"required": ["decls"]}]}
+    },
+    {
+      "if": {"required": ["decls"]},
+      "then": {
+        "properties": {"def": false, "group": false, "member_of": false, "virtual": false}
+      }
     },
     {
       "if": {"required": ["virtual"]},

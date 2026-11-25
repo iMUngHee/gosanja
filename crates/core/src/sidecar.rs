@@ -380,6 +380,7 @@ pub fn build(
         mut layers,
         syntax,
         calls,
+        merged,
         mut gaps,
         ..
     } = output;
@@ -399,17 +400,19 @@ pub fn build(
         needed,
         bytes: std::cell::RefCell::default(),
     };
-    let mut snapshot = crate::graph::build_with(&mut index, &reader, project_name, |snapshot| {
-        reader.with_columns(manifest.position_encoding, |column| {
-            snapshot.syntax = apply_syntax(
-                &mut snapshot.entities,
-                &syntax,
-                &manifest.name,
-                column,
-                &mut snapshot.gaps,
-            );
-        });
-    })?;
+    let merged: BTreeSet<String> = merged.into_iter().collect();
+    let mut snapshot =
+        crate::graph::build_with(&mut index, &reader, project_name, &merged, |snapshot| {
+            reader.with_columns(manifest.position_encoding, |column| {
+                snapshot.syntax = apply_syntax(
+                    &mut snapshot.entities,
+                    &syntax,
+                    &manifest.name,
+                    column,
+                    &mut snapshot.gaps,
+                );
+            });
+        })?;
     if snapshot
         .gaps
         .iter()

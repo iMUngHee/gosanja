@@ -11,6 +11,46 @@ change may break compatibility, and an entry here says so when it does.
 - `gosanja index` and `gosanja diff` resolve `--out` paths ending in `.` or `..` to an existing
   directory before checking for overlap and deciding whether the output can be replaced.
 
+### Adapter contract 0.4
+
+Breaks 0.3. An engine of 0.4 refuses an adapter that declares 0.3. An adapter has to declare
+`0.4` in its manifest and in `result.json`, and may list in the `base` entry's new `merged` the
+global SCIP symbols whose definitions at several sites declare one entity, sorted by bytes,
+each once. The engine checks the list whatever the base layer's status, and a malformed list
+fails the run (exit 3, no snapshot). A global symbol follows the SCIP grammar in full: a scheme
+that starts with `local`, such as `locality`, is not one, in `merged` and in an index alike,
+where such a symbol is no longer read as a definition or reference. A listed symbol is folded only when its kept sites are two
+or more, none has a body and no syntax row is published at any of them; a symbol that is two
+distinct things, such as two functions of one name, must not be listed.
+
+### Snapshot schema 0.4
+
+Breaks 0.3. A reader of 0.3 refuses a 0.4 snapshot. An entity may now carry `decls`, its
+declaration sites `{file, name}`, sorted and two or more, instead of `def`: one entity declared
+at several sites, with the symbol's key and no collision group, members or `symbol-collision`
+gap. A reader has to accept a definition without `def`: such an entity has no body and owns no
+references, its sites are where it is declared, and relations, `parent`s and `implements` name
+it by its key. The validator checks the new form, including that no syntax row is keyed to it.
+
+### Diff schema 0.3
+
+Breaks 0.2. A reader of 0.3 refuses a 0.2 diff, and the diff reads snapshot 0.4 inputs only.
+An `added` or `removed` row for an entity declared at several sites has no `file`, as a
+group's has none; a collision member's row keeps `file`. An entity with `decls` pairs with a
+plain definition of the same symbol, compares `file` and `lines` only when both sides have
+`def`, and is never a rename candidate. `fixtures/diff-public` keeps its frozen 0.2 snapshots,
+which are refused.
+
+### Go adapter: packages declared in several files
+
+A Go package declared in several files is now one entity with a `decls` entry per file, where
+it was a collision group with one member per file and a `symbol-collision` gap: the adapter
+lists such packages in `merged`. The package-clause syntax row of a file whose package has
+several files is no longer sent, so the `//go:build` lines of those files are not recorded; a
+package of one file keeps its row and its tag. Two `init` functions of one package stay a
+collision group. `fixtures/go-flow/expected` changes accordingly: `example.com/goflow` has four
+`decls`, the snapshot one gap fewer, and tagged.go no package-clause row.
+
 ### Go adapter
 
 `gosanja-adapter-go`, a Go program in `adapters/go`, gives the base layer from `scip-go` and

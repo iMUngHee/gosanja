@@ -7,7 +7,6 @@
 {"gap":"skipped-file","file":"cgo.go","layer":"base","code":"build-constraint","src":"adapter:go/base"}
 {"gap":"skipped-file","file":"ignored.go","layer":"base","code":"build-constraint","src":"adapter:go/base"}
 {"gap":"skipped-file","file":"ignored/ignored.go","layer":"base","code":"build-constraint","src":"adapter:go/base"}
-{"gap":"symbol-collision","keys":["gomod:example.com/goflow:`example.com/goflow`/","gomod:example.com/goflow:`example.com/goflow`/~1","gomod:example.com/goflow:`example.com/goflow`/~2","gomod:example.com/goflow:`example.com/goflow`/~3","gomod:example.com/goflow:`example.com/goflow`/~4"],"src":"core:identity"}
 {"gap":"unattributed-references","file":"external_test.go","count":3,"src":"core:reference-in-body"}
 {"gap":"unattributed-references","file":"flow.go","count":13,"src":"core:reference-in-body"}
 {"gap":"unattributed-references","file":"flow_test.go","count":1,"src":"core:reference-in-body"}

@@ -8,10 +8,12 @@ layers='["base","syntax","calls"]'
 encoding=utf-8
 markers=''
 requires=''
-record=''
+record=${GOSANJA_FAKE_RECORD:-}
 record_argv=''
 index_file=''
 syntax_file=''
+calls_file=''
+merged=''
 while [ "$#" -ge 2 ]; do
     case "$1" in
         --mode) mode=$2 ;;
@@ -26,6 +28,8 @@ while [ "$#" -ge 2 ]; do
         --record-argv) record_argv=$2 ;;
         --index-file) index_file=$2 ;;
         --syntax-file) syntax_file=$2 ;;
+        --calls-file) calls_file=$2 ;;
+        --merged) merged=$2 ;;
         *) break ;;
     esac
     shift 2
@@ -39,7 +43,7 @@ fi
 if [ -n "$record_argv" ]; then printf '%s\n' "$@" >> "$record_argv"; fi
 case "$1" in
 describe)
-    contract=0.3
+    contract=0.4
     extra=''
     case "$mode" in
         incompatible) contract=1.0 ;;
@@ -61,7 +65,7 @@ index)
         nonzero) exit 1 ;;
         no-result) exit 0 ;;
         not-json) echo '{' > "$out/result.json"; exit 0 ;;
-        invalid-result) echo '{"contract":"0.3","layers":{"base":{"status":"invalid"}}}' > "$out/result.json"; exit 0 ;;
+        invalid-result) echo '{"contract":"0.4","layers":{"base":{"status":"invalid"}}}' > "$out/result.json"; exit 0 ;;
     esac
     builds='[{"id":"dev","features":["fast"]},{"id":"release","features":["full"]}]'
     base='"base":{"status":"ok"},'
@@ -74,7 +78,7 @@ index)
         malformed-calls) calls='"calls":false' ;;
         failing-calls) builds='[{"id":"dev"}]'; calls='"calls":{"status":"failed","diagnostics":[{"code":"probe-calls-error","message":"the calls probe reported a failure"}]}' ;;
         no-calls-status) builds='[{"id":"dev"}]'; syntax=${syntax%,}; calls='' ;;
-        duplicate-builds) builds='[{"id":"dev"},{"id":"dev"}]' ;;
+        duplicate-builds|merged-not-global-duplicate-builds) builds='[{"id":"dev"},{"id":"dev"}]' ;;
         duplicate-builds-failed-base)
             builds='[{"id":"dev"},{"id":"dev"}]'
             base='"base":{"status":"failed","diagnostics":[{"code":"lockfile-missing","message":"missing project lockfile"}]},'
@@ -97,9 +101,25 @@ index)
         no-status|not-offered) syntax='' ;;
         reported-*) syntax='"syntax":{"status":"failed","diagnostics":[{"code":"parser-failed","message":"'"$mode"' in /tmp/run-'"$$"'"}]},' ;;
         extra) extra=',"extra":true' ;;
+        syntax-merged-false) syntax='"syntax":{"status":"ok","merged":false},' ;;
     esac
-    contract=0.3
+    case "$mode" in
+        merged-not-global|merged-not-global-duplicate-builds) merged='["local 1"]' ;;
+        merged-bare-unicode) merged='["s m p 1 café#"]' ;;
+        merged-needless-escape) merged='["s m p 1 `pkg`/"]' ;;
+        merged-local-scheme) merged='["locality m p 1 pkg/"]' ;;
+        merged-unsorted) merged='["s m p 1 b/","s m p 1 a/"]' ;;
+        merged-repeated) merged='["s m p 1 a/","s m p 1 a/"]' ;;
+        merged-failed-base) merged='["local 1"]' ;;
+    esac
+    if [ -n "$merged" ]; then
+        status=ok
+        if [ "$mode" = merged-failed-base ]; then status=failed; fi
+        base='"base":{"status":"'"$status"'","merged":'"$merged"'},'
+    fi
+    contract=0.4
     if [ "$mode" = wrong-result-contract ]; then contract=0.2; calls='"calls":false'; fi
+    if [ "$mode" = old-result ]; then contract=0.3; fi
     printf '{"contract":"%s","layers":{%s%s%s},"builds":%s%s}\n' "$contract" "$base" "$syntax" "$calls" "$builds" "$extra" > "$out/result.json"
     if [ "$mode" != no-index ]; then cp "${index_file:-$(dirname "$0")/../rust-basic/index.scip}" "$out/index.scip"; fi
     if [ "$mode" = broken-scip ]; then printf "\377" > "$out/index.scip"; fi
@@ -116,6 +136,7 @@ index)
     esac
     if [ -n "$syntax_file" ]; then cp "$syntax_file" "$out/syntax.jsonl"; fi
     : > "$out/calls.jsonl"
+    if [ -n "$calls_file" ]; then cp "$calls_file" "$out/calls.jsonl"; fi
     ;;
 *) exit 1 ;;
 esac

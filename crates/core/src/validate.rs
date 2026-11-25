@@ -10,7 +10,7 @@ use std::fmt;
 use gosanja_schema::compat::{self, Acceptance, Refusal, RowVerdict, Version};
 use gosanja_schema::position::{Range, Site};
 use gosanja_schema::snapshot::{
-    EntityRow, ExternalRow, FORMAT, FileRow, GapKind, GapRow, Manifest, RelationRow,
+    Decl, EntityRow, ExternalRow, FORMAT, FileRow, GapKind, GapRow, Manifest, RelationRow,
     SCHEMA_VERSION, SyntaxRow,
 };
 use serde::de::DeserializeOwned;
@@ -412,6 +412,12 @@ pub(crate) fn checked(
     v.relations(&snap, &lines);
     v.gaps(&snap, &lines);
     let entity_keys: BTreeSet<&str> = snap.entities.iter().map(|(_, e)| e.key.as_str()).collect();
+    let declared: BTreeSet<&str> = snap
+        .entities
+        .iter()
+        .filter(|(_, e)| e.decls.is_some())
+        .map(|(_, e)| e.key.as_str())
+        .collect();
     for (line, row) in &snap.syntax {
         if !entity_keys.contains(row.key.as_str()) {
             v.diag(
@@ -420,10 +426,26 @@ pub(crate) fn checked(
                 "dangling-key",
                 format!("`key` {} names no entity", row.key),
             );
+        } else if declared.contains(row.key.as_str()) {
+            v.diag(
+                "syntax.jsonl",
+                *line,
+                "syntax-on-decls",
+                format!(
+                    "`key` {} names an entity declared at several sites",
+                    row.key
+                ),
+            );
         }
     }
     snap.diagnostics = v.diagnostics;
     (snap, symbols)
+}
+
+/// Whether a key ends in a collision member's `~n` suffix.
+fn identity_suffix(key: &str) -> bool {
+    key.rsplit_once('~')
+        .is_some_and(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// What a table's order requires besides sorting.
@@ -729,6 +751,54 @@ impl Checks {
                     self.position("entities.jsonl", line, lines, &def.file, body);
                 }
             }
+            if let Some(decls) = &e.decls {
+                self.decls(line, &e.key, decls, lines);
+            }
+        }
+    }
+
+    /// An entity declared at several sites: two or more sites, sorted by file and name range,
+    /// each once, under the symbol's own key, each a range of its file. The schema already
+    /// refuses `decls` beside `def`, `group`, `member_of` and `virtual`.
+    fn decls(&mut self, line: usize, key: &str, decls: &[Decl], lines: &FileLines) {
+        if decls.len() < 2 {
+            self.diag(
+                "entities.jsonl",
+                line,
+                "decls-too-few",
+                format!("`decls` of {key} has {} site, not two or more", decls.len()),
+            );
+        }
+        for pair in decls.windows(2) {
+            if pair[0] == pair[1] {
+                self.diag(
+                    "entities.jsonl",
+                    line,
+                    "decls-repeated",
+                    format!(
+                        "`decls` of {key} lists {} {:?} twice",
+                        pair[0].file, pair[0].name.0
+                    ),
+                );
+            } else if pair[0] > pair[1] {
+                self.diag(
+                    "entities.jsonl",
+                    line,
+                    "decls-unsorted",
+                    format!("`decls` of {key} is not sorted by file and name"),
+                );
+            }
+        }
+        if identity_suffix(key) {
+            self.diag(
+                "entities.jsonl",
+                line,
+                "decls-suffixed-key",
+                format!("{key} has `decls` and a `~n` suffix"),
+            );
+        }
+        for decl in decls {
+            self.position("entities.jsonl", line, lines, &decl.file, decl.name);
         }
     }
 

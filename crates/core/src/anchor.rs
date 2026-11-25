@@ -1,4 +1,4 @@
-//! Matches an adapter anchor to one definition at an exact position or name.
+//! Matches an adapter anchor to one declaration site at an exact position or name.
 use gosanja_schema::{contract::Anchor, snapshot::EntityRow};
 use std::collections::HashMap;
 
@@ -18,12 +18,19 @@ pub(crate) struct Anchors {
 impl Anchors {
     pub(crate) fn new(entities: &[EntityRow]) -> Self {
         let mut result = Self::default();
+        // One candidate per declaration site: a definition's, or each site of an entity
+        // declared at several sites, so that uniqueness is counted by site, not by entity.
         for (index, entity) in entities.iter().enumerate() {
-            if let Some(def) = &entity.def {
-                let (line, column) = def.name.start();
+            let sites = entity
+                .def
+                .iter()
+                .map(|def| (&def.file, def.name))
+                .chain(entity.decls.iter().flatten().map(|d| (&d.file, d.name)));
+            for (file, name) in sites {
+                let (line, column) = name.start();
                 result
                     .lines
-                    .entry(def.file.clone())
+                    .entry(file.clone())
                     .or_default()
                     .entry(line)
                     .or_default()

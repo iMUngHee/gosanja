@@ -31,6 +31,8 @@ pub struct AdapterOutput {
     pub layers: Layers,
     pub syntax: Vec<SyntaxFact>,
     pub calls: Vec<CallEvidence>,
+    /// Symbols the base layer states are declared at several sites (`merged`).
+    pub merged: Vec<String>,
     pub gaps: Vec<GapRow>,
     _directory: TempDir,
 }
@@ -84,6 +86,15 @@ fn read_result(directory: &Path, contract: &str, passed: &[&str]) -> io::Result<
     }
     if let Some(layers) = value.get_mut("layers").and_then(Value::as_object_mut) {
         layers.retain(|k, _| passed.contains(&k.as_str()));
+        // `merged` belongs to the base entry; elsewhere it is an unknown field, which a
+        // reader ignores whatever its value.
+        for (name, entry) in layers.iter_mut() {
+            if name != "base"
+                && let Some(entry) = entry.as_object_mut()
+            {
+                entry.remove("merged");
+            }
+        }
     }
     if !passed.contains(&"calls")
         && let Some(object) = value.as_object_mut()
@@ -91,6 +102,9 @@ fn read_result(directory: &Path, contract: &str, passed: &[&str]) -> io::Result<
         object.remove("builds");
     }
     let result: AdapterResult = parse(validator(Schema::AdapterResult), value)?;
+    if let Some(merged) = result.layers.get("base").and_then(|b| b.merged.as_deref()) {
+        check_merged(merged)?;
+    }
     let mut ids = std::collections::HashSet::new();
     if result
         .builds
@@ -101,6 +115,32 @@ fn read_result(directory: &Path, contract: &str, passed: &[&str]) -> io::Result<
         return Err(io::Error::other("duplicate build context id"));
     }
     Ok(result)
+}
+
+/// The base entry's `merged`: global SCIP symbols by the grammar alone, sorted by bytes, each
+/// once. It is checked whatever the base layer's status, as part of reading `result.json`.
+fn check_merged(merged: &[String]) -> io::Result<()> {
+    if let Some(symbol) = merged.iter().find(|s| {
+        !matches!(
+            crate::identity::parse_strict(s),
+            Ok(crate::identity::Parsed::Global(_))
+        )
+    }) {
+        return Err(io::Error::other(format!(
+            "merged: {symbol:?} is not a global SCIP symbol"
+        )));
+    }
+    if let Some(pair) = merged.windows(2).find(|pair| pair[0] >= pair[1]) {
+        return Err(io::Error::other(if pair[0] == pair[1] {
+            format!("merged: {:?} is listed twice", pair[0])
+        } else {
+            format!(
+                "merged: {:?} comes after {:?}; the list is not sorted",
+                pair[1], pair[0]
+            )
+        }));
+    }
+    Ok(())
 }
 
 fn regular(path: &Path) -> io::Result<File> {
@@ -416,6 +456,7 @@ impl Described {
         }
         .read(dir.path(), &result, &mut gaps, regular, read_calls);
         let builds = result.builds.unwrap_or_default();
+        let merged = base.merged.clone().unwrap_or_default();
         Ok(AdapterOutput {
             index,
             manifest,
@@ -427,6 +468,7 @@ impl Described {
             },
             syntax,
             calls,
+            merged,
             gaps,
             _directory: dir,
         })

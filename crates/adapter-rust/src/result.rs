@@ -46,6 +46,7 @@ pub fn failed(code: &str) -> LayerResult {
             message: None,
         }]),
         skipped: None,
+        merged: None,
     }
 }
 /// What the requested layers gave.
@@ -66,6 +67,7 @@ pub fn publish(out: &Path, layers: Layers, mut tools: Vec<Tool>) -> io::Result<(
             status: LayerStatus::Ok,
             diagnostics: None,
             skipped: None,
+            merged: None,
         },
         Err(p) => {
             eprintln!("{}", p.code);

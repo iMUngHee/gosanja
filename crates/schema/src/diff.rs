@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const FORMAT: &str = "gosanja-diff";
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 2);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 3);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {

@@ -63,6 +63,14 @@ from it and added from a member. Members of a group pair
 only within a file whose digest is the same on both sides; in a changed file they are removed
 and added with their relations.
 
+**A package in several files.** An entity declared at several sites (`decls`, see
+[spec/snapshot.md](../spec/snapshot.md)) and a plain definition of the same symbol share the
+definition variant, so a Go package that goes from one file to two, from two to one or from two
+to three is the same entity on both sides: its sites changing gives no entity row. `file` and
+`lines` are compared only when both sides have `def`, so they are not compared for it. It is
+never a rename candidate, on either side. When it is added or removed, its row has no `file`, as
+a group's row has none.
+
 **One project.** Pairing assumes that both snapshots describe one project, at two moments.
 That is yours to know: the engine cannot check it, because `project.name` is only a display
 name. A diff of two unrelated projects is written all the same, and its pairs mean nothing.
@@ -123,7 +131,15 @@ without it (not requested, absent or failed), can differ:
 - a candidate's `size` is 0 when either definition has no body, so a missing body can change a
   score or drop a candidate below the threshold, whatever its relation features.
 
-The Rust adapter is not such an adapter: its syntax layer gives no `body`, so every body in its
+A syntax layer can also decide whether a symbol the adapter lists in `merged` is folded: for a
+symbol that otherwise meets the folding rules, a syntax row published at one of its sites keeps
+it a collision group. Two snapshots of the same
+index, one with such a row and one without it, then show a group with members on one side and
+one entity with `decls` on the other, and the diff reports the removed and added rows that
+change implies. The Go adapter sends no syntax row at the sites it lists, so its snapshots fold
+the same way with and without the syntax layer.
+
+The Rust adapter's syntax layer supplies no `body`, so every body in its
 snapshots comes from the index, and leaving out its syntax layer changes syntax properties and
 declared calls, which are then not compared, and the gaps the syntax layer reports, such as
 `open-call` and `opaque-region`, which changes that side's gap counts in the diff's manifest.

@@ -1,4 +1,4 @@
-# Snapshot, schema 0.3
+# Snapshot, schema 0.4
 
 A snapshot is what `gosanja index` writes: the facts established about one source tree at one
 moment. It is a directory of seven files. The same input always produces the same bytes.
@@ -99,6 +99,30 @@ Definitions with the same symbol, file and name range are one observation, not a
 Member keys depend on source positions. They identify a row within one snapshot only and must
 not be used to match rows between snapshots.
 
+### Entities declared at several sites
+
+When the adapter lists a symbol in `merged` (`adapter-contract.md`, result.json) and the
+symbol's kept definitions are two or more sites without bodies and without syntax rows, the
+symbol is one entity with `decls` instead of a collision group:
+
+- its key is the symbol's key, with no `~n`; it has `symbol`, `role` and, when a document gives
+  one, `kind`, by the same rule as any definition;
+- `decls` lists every site `{file, name}`, sorted by (file, name range), each once; there is no
+  `def`, `group`, `member_of` or `virtual`;
+- `src` is the smallest provenance in byte order among its sites;
+- anything that names the symbol points at the entity: a relation's `to`, and the `parent` of an
+  entity in any file;
+- an `implements` row from it has its key as `from` and, as `sites`, the name ranges of its
+  declarations in the document that states the relationship; a document with no declaration of
+  it states none;
+- it has no body, so it owns no references and takes part in no `overlapping-bodies` gap;
+- no `symbol-collision` gap is recorded for it.
+
+An adapter anchor resolves against declaration sites: a definition's, or each site of such an
+entity. It resolves only when exactly one site matches; a site of a folded entity gives that
+entity's key, and two sites that match one anchor leave it unresolved, whether they belong to two
+entities or to one.
+
 ### Containers
 
 Every proper prefix of a symbol's descriptors that ends at a descriptor boundary is itself a
@@ -115,7 +139,7 @@ manager, package and version as what it contains and is qualified by the same ru
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-snapshot"` | marks the directory as a snapshot; see Publication |
-| `schema` | version | snapshot schema version, `0.3` |
+| `schema` | version | snapshot schema version, `0.4` |
 | `tool` | `{name, version}` | the engine that wrote the snapshot |
 | `project` | `{name}` | a display name; it carries no identity |
 | `scopes` | array | one entry per indexed scope, in path order |
@@ -185,7 +209,8 @@ Sorted by `key`.
 | `virtual` | `true`, optional | a container with no definition in the inputs |
 | `group` | `true`, optional | a collision group |
 | `member_of` | key, optional | the group this definition belongs to |
-| `def` | object, optional | where it is defined; absent on virtual and group rows |
+| `def` | object, optional | where it is defined; absent on virtual and group rows and on an entity declared at several sites |
+| `decls` | array of `{file, name}`, optional | the sites of an entity declared at several sites, written where `def` stands; see Entities declared at several sites |
 | `src` | provenance | |
 
 `def`:
@@ -197,11 +222,15 @@ Sorted by `key`.
 | `body` | range, optional | the whole definition, used to decide which entity a reference belongs to |
 | `body_src` | provenance, optional | where `body` came from; present whenever `body` is |
 
-A row is exactly one of four variants:
+`decls`: `file` a `files.jsonl` path and `name` the range the index gives for that site, as in
+`def`; two or more, sorted by (`file`, `name`), distinct.
+
+A row is exactly one of five variants:
 
 | Variant | Marked by | Has | Has not |
 | --- | --- | --- | --- |
-| definition | none of the marks below | `symbol`, `role`, `def` | |
+| definition | none of the marks below | `symbol`, `role`, `def` | `decls` |
+| declared at several sites | `decls` | `symbol`, `role`, `decls` | `def`, `group`, `member_of`, `virtual` |
 | member of a collision group | `member_of` | `symbol`, `role`, `def` | |
 | collision group | `group: true` | `symbol` | `kind`, `def`, `member_of`, `virtual` |
 | virtual container | `virtual: true` | `role` | `def`, `member_of`, `group` |

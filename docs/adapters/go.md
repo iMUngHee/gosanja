@@ -167,8 +167,18 @@ them. Three of them read differently from what a Go programmer may expect:
   one extent for both names, so the engine reports an `overlapping-bodies` gap for each such
   pair and leaves both extents out of reference ownership: a reference inside the initializers
   belongs to neither name, and is counted with the file's `unattributed-references`.
-- **A package is defined once in each of its files.** Its symbol becomes a
-  `symbol-collision` group with one entity per file.
+- **A package is one entity, declared in each of its files.** scip-go defines the package's
+  symbol at the `package` clause of every file. The adapter lists, in `result.json`'s `merged`,
+  a namespace symbol that the index it publishes defines in two or more files only when it has
+  verified every retained definition of that symbol as the package clause of a file it read,
+  and all those clauses name the same package. The engine then writes the package as one
+  entity with a `decls` entry per file and no `def`, instead of a collision group. One
+  definition it cannot verify (one away from the package clause, one in a document whose
+  positions are not UTF-8 byte offsets, one in a file whose clause it could not read) or a
+  clause naming another package keeps the symbol out of the list, and it stays a collision
+  group. In `fixtures/go-flow`, `example.com/goflow` has `decls` for flow.go, flow_test.go,
+  tagged.go and zz_generated.go; the one-file `meter` package keeps its `def`. Two `init` functions of one package are distinct functions, are not
+  listed, and stay a `symbol-collision` group.
 
 References that lie in no definition's extent, such as imports, are counted in
 `unattributed-references` gaps. Local variables are `local` symbols, which the engine drops,
@@ -177,8 +187,14 @@ so a call of a local function value has no reference to join and is an `open-cal
 ## What the syntax layer reports
 
 One row for each function, method and interface method, each type (named or alias, generic
-included), each name of a package-level `const` and `var`, and the package clause of each file
-that carries a `//go:build` line, which is that row's attribute. Its attributes are the `//go:`
+included), each name of a package-level `const` and `var`, and the package clause of a file
+that carries a `//go:build` line when its package has that one file; the line is that row's
+attribute. A package declared in several files has no package-clause row, since a syntax row at
+one of its sites would keep it a collision group (`spec/adapter-contract.md`, `merged`), so the
+`//go:build` lines of its files are not recorded. The adapter decides this from its own count
+of the files it read; should the engine still drop one of two sites, for a reason the adapter
+does not check, such as a range it rejects, the package keeps `def` and has no row for its
+tag. Its attributes are the `//go:`
 directive lines of the declaration's doc comment, as written. A row has no `visibility`, since
 Go writes none (exportedness is the case of the first letter), no `qualifiers`, and no `body`:
 the base layer gives the extents. Nothing named `_` has a row, since scip-go never defines it,

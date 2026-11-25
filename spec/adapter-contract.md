@@ -1,4 +1,4 @@
-# Adapter contract, version 0.3
+# Adapter contract, version 0.4
 
 An adapter is a program that knows one language ecosystem. The engine knows none: it runs an
 adapter, reads the files the adapter wrote, and builds a [snapshot](snapshot.md) from them. An
@@ -126,6 +126,7 @@ A layer entry:
 | `status` | `ok` or `failed` | |
 | `diagnostics` | array of `{code, message?}`, optional | what went wrong |
 | `skipped` | array of `{file, code}`, optional | files the layer was meant to cover and could not process, in whole or in part |
+| `merged` | array of strings, optional, `base` entry only | global SCIP symbols whose definitions at several sites declare one entity; sorted by bytes, each once |
 
 `code` matches `^[a-z][a-z0-9-]{0,63}$` and names a kind of problem, for example
 `toolchain-missing`. `message` is free text for a human and may hold paths, process ids or
@@ -142,6 +143,25 @@ entry of a layer the engine asked for is an adapter failure whatever the layer's
 layer whose status is `ok`, the engine records one `skipped-file` gap for each distinct file
 and code of that layer, without opening the file. A layer that is missing, failed, discarded or
 not requested contributes none.
+
+`merged` states a fact of the language that the index cannot carry: that the definitions of a
+symbol at several sites, such as a Go package's `package` clause in each of its files, declare
+one entity rather than collide. For each listed symbol the engine folds the collision group into
+one entity with `decls` (`snapshot.md`, entities), on the definitions it keeps after document
+admission, the per-document range checks and the merging of repeated observations, and after
+the syntax layer is read:
+
+- two or more kept sites, none with a body (the index's enclosing range or a syntax row's
+  `body`) and no published syntax row at any of them: one entity with `decls`;
+- one kept site: a plain definition with `def`, as without the list;
+- no kept site: nothing changes; the symbol is an external, a virtual container or absent;
+- a site with a body, or a syntax row that the syntax layer publishes at a site: the list has
+  no effect for that symbol, which stays a collision group with its gap. A row the syntax layer
+  drops, and a layer it discards, do not count.
+
+An adapter lists a symbol only when its sites are declarations without bodies; it does not list
+a symbol whose definitions are distinct things, such as two `init` functions of one Go package
+or the crate roots of one Rust package.
 
 A build context:
 
@@ -178,8 +198,12 @@ The engine reads `result.json` in this order:
    outside the argument, and removes `builds` unless `calls` is in the argument, since only
    call evidence refers to them. When `calls` is in the argument, `builds` are kept whether
    the calls layer succeeded or failed.
-4. It checks what remains against the schema, then the build ids for duplicates, then reads
-   the diagnostics.
+4. It removes `merged` from every entry but `base`, where it is an unknown field. It checks
+   what remains against the schema, then the `base` entry's `merged`: every entry a global
+   SCIP symbol, the list sorted by bytes and without repeats; then the build ids for
+   duplicates. Each failure is a malformed result, whatever the base layer's status, and the
+   first one found is the one reported. Then it reads the diagnostics. The engine uses
+   `merged` only when the base layer is `ok`.
 
 So once `result.json` decodes as JSON, an entry or a build the engine did not ask for, however
 malformed or duplicated, can neither fail the run nor add a gap, and its diagnostics are never

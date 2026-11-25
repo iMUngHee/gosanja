@@ -408,6 +408,141 @@ fn compare_snapshots(
     compare(left.path(), right.path()).unwrap()
 }
 
+fn package_snapshot(name: &str, sites: usize) -> gosanja_core::graph::Snapshot {
+    use gosanja_core::graph::{Snapshot, file_row};
+    use gosanja_schema::snapshot::{LayerState::*, Layers, Project, Scope};
+    use serde_json::{from_value, json};
+    let key = format!("gomod:example.com/sample:{name}/");
+    let symbol = format!("scip-go gomod example.com/sample v0.0.0 {name}/");
+    let files: Vec<_> = ["a.go", "b.go", "c.go"][..sites]
+        .iter()
+        .map(|file| {
+            file_row(
+                file,
+                Some("go".into()),
+                b"package sample\nfunc f() { f() }\n",
+            )
+        })
+        .collect();
+    let mut entities = vec![];
+    if let Some(first) = files.first() {
+        let mut row = json!({
+            "key": key, "symbol": symbol, "kind": "go:package", "role": "container",
+            "name": name, "src": "scip:scip-go"
+        });
+        if sites == 1 {
+            row["def"] = json!({"file": first.path, "name": [0, 8, 0, 14]});
+        } else {
+            row["decls"] = json!(
+                files
+                    .iter()
+                    .map(|file| json!({"file": file.path, "name": [0, 8, 0, 14]}))
+                    .collect::<Vec<_>>()
+            );
+        }
+        entities.push(from_value(row).unwrap());
+    }
+    Snapshot {
+        project: Project {
+            name: "sample".into(),
+        },
+        scope: Scope {
+            path: ".".into(),
+            adapter: None,
+            indexers: vec![],
+            layers: Layers {
+                base: Present,
+                syntax: Absent,
+                calls: Absent,
+            },
+            builds: vec![],
+        },
+        files,
+        entities,
+        externals: vec![],
+        relations: vec![],
+        syntax: vec![],
+        gaps: vec![],
+        dropped_local_references: 0,
+    }
+}
+
+fn assert_merged_package_pairs(old_sites: usize, new_sites: usize) {
+    use serde_json::{from_value, json};
+    let with_reference = |sites| {
+        let mut snapshot = package_snapshot("sample", sites);
+        snapshot.entities.push(
+            from_value(json!({
+                "key": "gomod:example.com/sample:sample/f().",
+                "symbol": "scip-go gomod example.com/sample v0.0.0 sample/f().",
+                "kind": "go:function", "role": "callable", "name": "f",
+                "parent": "gomod:example.com/sample:sample/",
+                "def": {"file": "a.go", "name": [1, 5, 1, 6]},
+                "src": "scip:scip-go"
+            }))
+            .unwrap(),
+        );
+        snapshot.relations.push(from_value(json!({
+            "from": "gomod:example.com/sample:sample/f().", "to": "gomod:example.com/sample:sample/",
+            "rel": "ref", "roles": [], "sites": [["a.go", 1, 11, 1, 12]], "src": "core:reference-in-body"
+        })).unwrap());
+        snapshot
+    };
+    let result = compare_snapshots(&with_reference(old_sites), &with_reference(new_sites));
+    assert!(result.entities.is_empty(), "{:?}", result.entities);
+    assert!(result.relations.is_empty(), "{:?}", result.relations);
+}
+
+#[test]
+fn merged_package_pairs_from_one_to_two_sites() {
+    assert_merged_package_pairs(1, 2);
+}
+
+#[test]
+fn merged_package_pairs_from_two_to_one_site() {
+    assert_merged_package_pairs(2, 1);
+}
+
+#[test]
+fn merged_package_pairs_from_two_to_three_sites() {
+    assert_merged_package_pairs(2, 3);
+}
+
+#[test]
+fn merged_package_addition_and_removal_have_no_file() {
+    use serde_json::json;
+    let empty = package_snapshot("sample", 0);
+    let merged = package_snapshot("sample", 2);
+    for (old, new, change, side) in [
+        (&empty, &merged, "added", "new"),
+        (&merged, &empty, "removed", "old"),
+    ] {
+        let result = compare_snapshots(old, new);
+        assert_eq!(
+            to_value(&result.entities).unwrap(),
+            json!([{
+                "change": change, (side): "gomod:example.com/sample:sample/",
+                "kind": "go:package", "role": "container", "name": "sample"
+            }])
+        );
+    }
+}
+
+#[test]
+fn merged_package_is_never_a_rename_candidate() {
+    let plain = package_snapshot("same_package_a", 1);
+    let other = package_snapshot("same_package_b", 1);
+    let merged = package_snapshot("same_package_a", 2);
+    assert_eq!(compare_snapshots(&plain, &other).candidates.len(), 1);
+    assert_eq!(compare_snapshots(&other, &plain).candidates.len(), 1);
+    for (old, new) in [(&merged, &other), (&other, &merged)] {
+        let result = compare_snapshots(old, new);
+        assert_eq!(result.manifest.counts.entities.added, 1);
+        assert_eq!(result.manifest.counts.entities.removed, 1);
+        assert!(result.candidates.is_empty(), "{:?}", result.candidates);
+    }
+}
+
 #[test]
 fn optional_layer_comparison_has_the_same_table_for_calls_and_syntax() {
     use gosanja_schema::{diff::Excluded, snapshot::LayerState::*};

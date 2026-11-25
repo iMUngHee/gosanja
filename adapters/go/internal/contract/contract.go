@@ -1,4 +1,4 @@
-// Package contract holds the adapter contract's types (spec/adapter-contract.md, version 0.3)
+// Package contract holds the adapter contract's types (spec/adapter-contract.md, version 0.4)
 // as this adapter writes them. Field order follows the specification, and the tests check every
 // written file against spec/schema.
 package contract
@@ -9,7 +9,7 @@ import (
 )
 
 // Version is the adapter contract version the adapter speaks.
-const Version = "0.3"
+const Version = "0.4"
 
 // Layer names of the contract.
 const (
@@ -48,6 +48,7 @@ type Entry struct {
 	Status      string       `json:"status"`
 	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
 	Skipped     []Skipped    `json:"skipped,omitempty"`
+	Merged      []string     `json:"merged,omitempty"` // global SCIP symbols, in a successful base entry only
 }
 
 // Diagnostic names a kind of problem. The adapter writes the code alone, so that a failed

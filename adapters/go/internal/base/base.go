@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/scip-code/scip/bindings/go/scip"
 	"gosanja/adapters/go/internal/contract"
 	"gosanja/adapters/go/internal/env"
 	"gosanja/adapters/go/internal/paths"
@@ -40,6 +41,8 @@ type Outcome struct {
 	Reads     map[string]Read // module files of project packages, by relative path
 	Documents map[string]bool
 	Index     *scipindex.Index // the decoded index, when the base layer read one
+	// MergedPackageFiles have a package clause that contributes to a listed merge.
+	MergedPackageFiles map[string]bool
 }
 
 // Failed reports whether the base layer failed.
@@ -231,7 +234,60 @@ func index(ctx context.Context, cfg Config, out *Outcome, inv *Inventory, ignore
 		return err
 	}
 	out.Entry = contract.OK(sortSkipped(skipped))
+	out.Entry.Merged, out.MergedPackageFiles = mergedPackages(idx, out.Reads)
 	return nil
+}
+
+func mergedPackages(idx *scipindex.Index, reads map[string]Read) ([]string, map[string]bool) {
+	type packageSites struct {
+		name     string
+		paths    map[string]bool
+		rejected bool
+	}
+	sites := map[string]*packageSites{}
+	for _, doc := range idx.Documents {
+		read := reads[doc.RelativePath]
+		canVerifyClause := read.PackageName != "" && doc.PositionEncoding == scip.PositionEncoding_UTF8CodeUnitOffsetFromLineStart
+		for _, occ := range doc.Occurrences {
+			// Namespace descriptors end in '/'. Check the symbol before the site
+			// so even a definition whose range cannot be verified can veto a merge.
+			if !strings.HasSuffix(occ.Symbol, "/") || !scip.SymbolRole_Definition.Matches(occ) {
+				continue
+			}
+			pkg := sites[occ.Symbol]
+			if pkg == nil {
+				symbol, err := scip.ParseSymbol(occ.Symbol)
+				if err != nil || len(symbol.Descriptors) == 0 || symbol.Descriptors[len(symbol.Descriptors)-1].Suffix != scip.Descriptor_Namespace {
+					continue
+				}
+				pkg = &packageSites{paths: map[string]bool{}}
+				sites[occ.Symbol] = pkg
+			}
+			if pkg.rejected {
+				continue
+			}
+			name, ok := scipindex.OccurrenceRange(occ)
+			if !canVerifyClause || !ok || name != read.PackageRange || (pkg.name != "" && pkg.name != read.PackageName) {
+				pkg.rejected = true
+				continue
+			}
+			pkg.name = read.PackageName
+			pkg.paths[doc.RelativePath] = true
+		}
+	}
+	var merged []string
+	files := map[string]bool{}
+	for symbol, pkg := range sites {
+		if pkg.rejected || len(pkg.paths) < 2 {
+			continue
+		}
+		merged = append(merged, symbol)
+		for path := range pkg.paths {
+			files[path] = true
+		}
+	}
+	sort.Strings(merged)
+	return merged, files
 }
 
 func sortSkipped(s []contract.Skipped) []contract.Skipped {

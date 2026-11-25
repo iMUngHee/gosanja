@@ -439,3 +439,387 @@ fn calls_output_is_filtered_before_schema_and_build_checks() {
     assert_eq!(expected.scope.builds, []);
     assert_eq!(actual, expected);
 }
+
+// Symbols the base layer lists in `merged`: the fold, over the fake adapter.
+
+mod merged {
+    use super::support::{self, DEF, REF, doc, index, occ};
+    use gosanja_core::{graph::Snapshot, sidecar, write::FsSource};
+    use gosanja_schema::position::Range;
+    use gosanja_schema::snapshot::{EntityRow, GapKind, LayerState, Rel};
+    use scip::types::Document;
+    use scip::types::symbol_information::Kind;
+    use std::fs;
+
+    pub const PACKAGE: &str = "s m p 1 pkg/";
+    const USER: &str = "s m q 1 use/f().";
+
+    /// Ten lines of forty characters.
+    fn blank() -> String {
+        format!("{}\n", "x".repeat(40)).repeat(10)
+    }
+
+    /// The package clause of `file` at `line`, without a body.
+    fn clause(file: &str, line: i32) -> Document {
+        doc(file, vec![occ(PACKAGE, DEF, &[line, 8, 11], &[])])
+    }
+
+    /// c.go: a function with a body, for references and call endpoints.
+    fn user(extra: Vec<scip::types::Occurrence>) -> Document {
+        let mut occurrences = vec![occ(USER, DEF, &[0, 5, 6], &[0, 0, 3, 0])];
+        occurrences.extend(extra);
+        doc("c.go", occurrences)
+    }
+
+    pub struct Run {
+        pub documents: Vec<Document>,
+        pub syntax: String,
+        pub calls: String,
+        pub merged: String,
+    }
+
+    impl Run {
+        pub fn new(documents: Vec<Document>) -> Self {
+            Self {
+                documents,
+                syntax: String::new(),
+                calls: String::new(),
+                merged: format!(r#"["{PACKAGE}"]"#),
+            }
+        }
+
+        /// Runs the fake adapter on a root holding a.go, b.go and c.go, and builds the
+        /// snapshot the engine publishes.
+        pub fn snapshot(&self) -> Snapshot {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().join("root");
+            fs::create_dir(&root).unwrap();
+            for file in ["a.go", "b.go", "c.go"] {
+                fs::write(root.join(file), blank()).unwrap();
+            }
+            let index_file = tmp.path().join("index.scip");
+            fs::write(&index_file, index("t", self.documents.clone())).unwrap();
+            let syntax_file = tmp.path().join("syntax.jsonl");
+            fs::write(&syntax_file, &self.syntax).unwrap();
+            let calls_file = tmp.path().join("calls.jsonl");
+            fs::write(&calls_file, &self.calls).unwrap();
+            let described = gosanja_core::adapter::describe(
+                gosanja_core::adapter::Invocation::new(
+                    support::shell(),
+                    vec![
+                        support::repo("fixtures/fake-adapter/adapter.sh").into_os_string(),
+                        "--index-file".into(),
+                        index_file.into_os_string(),
+                        "--syntax-file".into(),
+                        syntax_file.into_os_string(),
+                        "--calls-file".into(),
+                        calls_file.into_os_string(),
+                        "--merged".into(),
+                        self.merged.clone().into(),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let output = described.run(&root, tmp.path()).unwrap();
+            let sources = FsSource::new(&root).unwrap();
+            sidecar::build(output, &sources, "t").unwrap()
+        }
+    }
+
+    pub fn entity<'a>(snapshot: &'a Snapshot, key: &str) -> &'a EntityRow {
+        snapshot
+            .entities
+            .iter()
+            .find(|e| e.key == key)
+            .unwrap_or_else(|| panic!("no entity {key}"))
+    }
+
+    fn sites(e: &EntityRow) -> Vec<(&str, Range)> {
+        e.decls
+            .iter()
+            .flatten()
+            .map(|d| (d.file.as_str(), d.name))
+            .collect()
+    }
+
+    fn collisions(snapshot: &Snapshot) -> usize {
+        snapshot
+            .gaps
+            .iter()
+            .filter(|g| g.gap == GapKind::SymbolCollision)
+            .count()
+    }
+
+    fn is_group(snapshot: &Snapshot) -> bool {
+        let package = entity(snapshot, "m:p:pkg/");
+        package.group && package.decls.is_none() && collisions(snapshot) == 1
+    }
+
+    fn folded(snapshot: &Snapshot) -> bool {
+        let package = entity(snapshot, "m:p:pkg/");
+        package.decls.is_some() && !package.group && collisions(snapshot) == 0
+    }
+
+    /// The list is checked while `result.json` is read, before the base layer's status.
+    #[test]
+    fn merged_invalid_lists_are_refused_whatever_the_base_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = support::fixture("rust-basic");
+        for (mode, expected) in [
+            ("merged-not-global", "is not a global SCIP symbol"),
+            ("merged-local-scheme", "is not a global SCIP symbol"),
+            ("merged-bare-unicode", "is not a global SCIP symbol"),
+            ("merged-needless-escape", "is not a global SCIP symbol"),
+            ("merged-unsorted", "the list is not sorted"),
+            ("merged-repeated", "is listed twice"),
+            ("merged-failed-base", "is not a global SCIP symbol"),
+        ] {
+            let err = super::run(mode, &root, tmp.path()).unwrap_err();
+            assert_eq!(err.exit_code(), 3, "{mode}");
+            assert!(err.to_string().contains(expected), "{mode}: {err}");
+        }
+    }
+
+    /// The list is checked before the build ids, so a result failing both reports the list.
+    #[test]
+    fn an_invalid_list_is_reported_before_duplicate_build_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = support::fixture("rust-basic");
+        let err = super::run("merged-not-global-duplicate-builds", &root, tmp.path()).unwrap_err();
+        assert_eq!(
+            (err.exit_code(), err.to_string().as_str()),
+            (3, "merged: \"local 1\" is not a global SCIP symbol")
+        );
+    }
+
+    /// `merged` on an optional layer's entry is an unknown field there: an ill-typed value is
+    /// ignored and the run stays usable.
+    #[test]
+    fn merged_on_an_optional_layer_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = support::fixture("rust-basic");
+        let output = super::run("syntax-merged-false", &root, tmp.path()).unwrap();
+        assert_eq!(output.layers.syntax, LayerState::Present);
+        assert_eq!(output.merged, Vec::<String>::new());
+    }
+
+    #[test]
+    fn merged_two_kept_sites_fold_and_an_excluded_document_leaves_no_fact() {
+        let mut a = clause("a.go", 0);
+        a.symbols = vec![support::info(PACKAGE, Kind::Namespace)];
+        a.occurrences.push(occ("s m p 1 I#", DEF, &[5, 5, 6], &[]));
+        // x.go is not in the root: source admission rejects the document, with its kind
+        // (which would sort first) and its implementation fact.
+        let mut excluded = clause("x.go", 0);
+        let mut info = support::implementing(PACKAGE, &["s m p 1 I#"]);
+        info.kind = protobuf::EnumOrUnknown::new(Kind::Interface);
+        excluded.symbols = vec![info];
+        let snapshot = Run::new(vec![a, clause("b.go", 0), excluded]).snapshot();
+        assert!(folded(&snapshot));
+        let package = entity(&snapshot, "m:p:pkg/");
+        assert_eq!(
+            sites(package),
+            [
+                ("a.go", Range::new(0, 8, 0, 11)),
+                ("b.go", Range::new(0, 8, 0, 11))
+            ]
+        );
+        assert_eq!(package.kind.as_deref(), Some("test:namespace"));
+        assert!(!snapshot.relations.iter().any(|r| r.rel == Rel::Implements));
+        assert!(
+            snapshot
+                .gaps
+                .iter()
+                .any(|g| g.gap == GapKind::SourceUnavailable && g.file.as_deref() == Some("x.go"))
+        );
+        assert!(!snapshot.files.iter().any(|f| f.path == "x.go"));
+    }
+
+    #[test]
+    fn merged_one_kept_site_is_a_plain_definition() {
+        let snapshot = Run::new(vec![clause("a.go", 0), clause("x.go", 0)]).snapshot();
+        let package = entity(&snapshot, "m:p:pkg/");
+        assert!(package.def.is_some() && package.decls.is_none() && !package.group);
+        assert!(
+            snapshot
+                .gaps
+                .iter()
+                .any(|g| g.gap == GapKind::SourceUnavailable)
+        );
+    }
+
+    #[test]
+    fn merged_no_kept_site_changes_nothing() {
+        let mut run = Run::new(vec![user(vec![
+            occ("s m p 1 ext/", REF, &[1, 4, 7], &[]),
+            occ("s m p 1 vir/F().", DEF, &[2, 5, 6], &[]),
+        ])]);
+        run.merged = r#"["s m p 1 ext/","s m p 1 vir/"]"#.to_owned();
+        let snapshot = run.snapshot();
+        assert!(
+            snapshot
+                .externals
+                .iter()
+                .any(|e| e.symbol == "s m p 1 ext/")
+        );
+        let vir = entity(&snapshot, "m:p:vir/");
+        assert!(vir.r#virtual && vir.decls.is_none());
+    }
+
+    #[test]
+    fn merged_a_site_with_an_index_body_stays_a_group() {
+        let a = doc("a.go", vec![occ(PACKAGE, DEF, &[0, 8, 11], &[0, 0, 9, 0])]);
+        let snapshot = Run::new(vec![a, clause("b.go", 0)]).snapshot();
+        assert!(is_group(&snapshot));
+    }
+
+    #[test]
+    fn merged_a_published_syntax_row_at_a_site_keeps_the_group_and_joins_the_others() {
+        let mut run = Run::new(vec![clause("a.go", 0), clause("b.go", 0), user(vec![])]);
+        run.syntax = concat!(
+            r#"{"anchor":{"file":"a.go","line":0,"col":8},"attributes":["//go:build x"]}"#,
+            "\n",
+            r#"{"anchor":{"file":"c.go","line":0,"col":5},"visibility":"pub"}"#,
+            "\n"
+        )
+        .to_owned();
+        let snapshot = run.snapshot();
+        assert!(is_group(&snapshot));
+        let keys: Vec<_> = snapshot.syntax.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"m:q:use/f()."));
+    }
+
+    #[test]
+    fn merged_a_row_dropped_in_phase_5_leaves_the_symbol_folded() {
+        let mut run = Run::new(vec![clause("a.go", 0), clause("b.go", 0)]);
+        run.syntax = concat!(
+            r#"{"anchor":{"file":"a.go","line":0,"col":8},"outline":[{"k":"exit","range":[0,8,0,99]}]}"#,
+            "\n"
+        )
+        .to_owned();
+        let snapshot = run.snapshot();
+        assert!(folded(&snapshot));
+        assert_eq!(snapshot.syntax, []);
+        assert!(
+            snapshot
+                .gaps
+                .iter()
+                .any(|g| g.gap == GapKind::PositionOutOfRange)
+        );
+    }
+
+    #[test]
+    fn merged_a_layer_discarded_in_phase_6_leaves_the_symbol_folded() {
+        let mut run = Run::new(vec![clause("a.go", 0), clause("b.go", 0), user(vec![])]);
+        run.syntax = concat!(
+            r#"{"anchor":{"file":"a.go","line":0,"col":8},"attributes":["//go:build x"]}"#,
+            "\n",
+            r#"{"anchor":{"file":"c.go","line":0,"col":5},"outline":[{"k":"exit","range":[5,0,5,1]}]}"#,
+            "\n"
+        )
+        .to_owned();
+        let snapshot = run.snapshot();
+        assert!(folded(&snapshot));
+        assert_eq!(snapshot.scope.layers.syntax, LayerState::Failed);
+        assert_eq!(snapshot.syntax, []);
+    }
+
+    #[test]
+    fn merged_repeated_observations_at_one_site_are_one_site() {
+        let a = doc(
+            "a.go",
+            vec![
+                occ(PACKAGE, DEF, &[0, 8, 11], &[]),
+                occ(PACKAGE, DEF, &[0, 8, 11], &[]),
+            ],
+        );
+        let snapshot = Run::new(vec![a, clause("b.go", 0)]).snapshot();
+        assert_eq!(sites(entity(&snapshot, "m:p:pkg/")).len(), 2);
+    }
+
+    fn call(callee: &str) -> String {
+        format!(
+            r#"{{"caller":{{"file":"c.go","line":0,"col":5}},"callee":{callee},"mechanism":"static","resolution":"direct","build":"dev"}}"#
+        ) + "\n"
+    }
+
+    fn calls_to_package(snapshot: &Snapshot) -> usize {
+        snapshot
+            .relations
+            .iter()
+            .filter(|r| r.rel == Rel::Call && r.to == "m:p:pkg/")
+            .count()
+    }
+
+    fn unanchored(snapshot: &Snapshot) -> usize {
+        snapshot
+            .gaps
+            .iter()
+            .filter(|g| g.gap == GapKind::Unanchored)
+            .count()
+    }
+
+    #[test]
+    fn merged_a_call_endpoint_at_one_folded_site_resolves_to_the_merged_key() {
+        let mut run = Run::new(vec![clause("a.go", 0), clause("b.go", 0), user(vec![])]);
+        run.calls = call(r#"{"file":"b.go","line":0,"col":8}"#);
+        let snapshot = run.snapshot();
+        assert!(folded(&snapshot));
+        assert_eq!(calls_to_package(&snapshot), 1);
+        assert_eq!(unanchored(&snapshot), 0);
+    }
+
+    #[test]
+    fn merged_a_call_endpoint_at_a_position_another_entity_shares_stays_unanchored() {
+        let a = doc(
+            "a.go",
+            vec![
+                occ(PACKAGE, DEF, &[0, 8, 11], &[]),
+                occ("s m p 1 other().", DEF, &[0, 8, 11], &[]),
+            ],
+        );
+        let mut run = Run::new(vec![a, clause("b.go", 0), user(vec![])]);
+        run.calls = call(r#"{"file":"a.go","line":0,"col":8}"#);
+        let snapshot = run.snapshot();
+        assert!(folded(&snapshot));
+        assert_eq!((calls_to_package(&snapshot), unanchored(&snapshot)), (0, 1));
+    }
+
+    #[test]
+    fn merged_a_call_endpoint_at_a_start_two_of_its_sites_share_stays_unanchored() {
+        let a = doc(
+            "a.go",
+            vec![
+                occ(PACKAGE, DEF, &[0, 8, 11], &[]),
+                occ(PACKAGE, DEF, &[0, 8, 12], &[]),
+            ],
+        );
+        let mut run = Run::new(vec![a, clause("b.go", 0), user(vec![])]);
+        run.calls = call(r#"{"file":"a.go","line":0,"col":8}"#);
+        let snapshot = run.snapshot();
+        assert_eq!(sites(entity(&snapshot, "m:p:pkg/")).len(), 3);
+        assert_eq!((calls_to_package(&snapshot), unanchored(&snapshot)), (0, 1));
+    }
+
+    #[test]
+    fn merged_a_call_endpoint_whose_line_and_name_match_two_sites_stays_unanchored() {
+        let a = doc(
+            "a.go",
+            vec![
+                occ(PACKAGE, DEF, &[0, 8, 11], &[]),
+                occ(PACKAGE, DEF, &[0, 20, 23], &[]),
+            ],
+        );
+        let mut run = Run::new(vec![a, clause("b.go", 0), user(vec![])]);
+        run.calls = call(r#"{"file":"a.go","line":0,"name":"pkg"}"#);
+        let snapshot = run.snapshot();
+        assert!(folded(&snapshot));
+        assert_eq!((calls_to_package(&snapshot), unanchored(&snapshot)), (0, 1));
+        // Control: the line and name of a site with no twin resolve.
+        let mut run = Run::new(vec![clause("a.go", 0), clause("b.go", 0), user(vec![])]);
+        run.calls = call(r#"{"file":"b.go","line":0,"name":"pkg"}"#);
+        assert_eq!(calls_to_package(&run.snapshot()), 1);
+    }
+}

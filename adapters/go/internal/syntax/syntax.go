@@ -25,6 +25,7 @@ import (
 type File struct {
 	Code             string
 	HasLineDirective bool
+	MergedPackage    bool
 }
 
 // Input carries the canonical module root, child environment and base layer

@@ -1,4 +1,4 @@
-# Diff, schema 0.2
+# Diff, schema 0.3
 
 A row of a diff says that one snapshot holds a statement and the other does not. It never says
 that the code changed. A snapshot that observed less, because a file was skipped, an anchor did
@@ -7,7 +7,7 @@ say so; the diff shows the same absence a reader of the two snapshots would see.
 gives each side's gap counts per kind and its layer states, so that a reader can weigh a row.
 
 A diff is what `gosanja diff <old> <new>` writes: the differences between two snapshots of one
-project, schema 0.3 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
+project, schema 0.4 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
 two inputs always produce the same bytes.
 
 | File | Holds | Schema |
@@ -50,8 +50,10 @@ Each input is a snapshot directory. It is read under the reader rules of
 [README.md](README.md) and checked with the validator without sources. A snapshot of another
 schema version, one with no scope or several, or one with any diagnostic is refused before
 anything is written. That includes the snapshots kept frozen in `fixtures/diff-public`, which
-stay at schema 0.2, the schema they were measured at: a reader of 0.3 refuses them, and only
+stay at schema 0.2, the schema they were measured at. A snapshot reader of 0.4 refuses them. Only
 scratch copies whose `schema` is re-stamped are compared in the repository's tests.
+
+A diff reader of schema 0.3 refuses a diff written with schema 0.2.
 
 ## Identity across the two snapshots
 
@@ -80,6 +82,9 @@ a scheme in the other. The steps, in order, over entities and externals together
    repeated until nothing changes, so that a chain of unnamed containers pairs from its paired
    descendants upwards.
 
+Entities with one definition (`def`) and entities with merged declarations (`decls`) share the
+definition variant. The same package can therefore pair when its declaration count changes.
+
 A definition whose symbol becomes a group because a second definition appeared is therefore
 removed, and the group and its members are added. This is what a new collision looks like in a
 diff.
@@ -94,7 +99,7 @@ An unpaired row never equals a row of the other side that has the same key text.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-diff"` | marks the directory as a diff; see Publication |
-| `schema` | version | diff schema version, `0.2` |
+| `schema` | version | diff schema version, `0.3` |
 | `tool` | `{name, version}` | the engine that wrote the diff |
 | `weights` | object | the weights and the threshold of candidates, below |
 | `old` | side | the old snapshot |
@@ -111,7 +116,7 @@ A side:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `schema` | version | the snapshot's `schema` |
+| `schema` | version | the snapshot's `schema`, `0.4` |
 | `project` | `{name}` | the snapshot's `project` |
 | `adapter` | `{name, version, contract}`, optional | the scope's `adapter`, absent when the snapshot's scope has none |
 | `layers` | `{base, syntax, calls}` | the scope's `layers` |
@@ -159,17 +164,19 @@ absent field sorts after any value.
 | `rekeyed` | a pair whose keys differ and that has no differing property | `old`, `new` | `properties` and the snapshot row's fields |
 
 A pair with equal keys and no differing property has no row. A position alone is never a change.
+An added or removed merged entity has no `file`. A collision member always carries its
+`def.file`.
 
 `properties` lists the differing properties in the order of the table below. Each member is
 `{old, new}`, the property's value on each side; a side's member is absent when the snapshot has
-no value there, and at least one side is present. `lines` and `outline` are compared only when
-both sides have them, so they always have both.
+no value there, and at least one side is present. `file`, `lines` and `outline` are compared
+only when both sides have them, so they always have both.
 
 | Property | Compared values |
 | --- | --- |
 | `parent` | the parent's key; equal when both are absent or the two parents are paired with each other |
 | `kind`, `role` | as in the snapshot |
-| `file` | `def.file` |
+| `file` | `def.file`, compared only when both sides have `def` |
 | `lines` | lines of `def.body`: end line − start line + 1, minus 1 when the end column is 0 and the end line is after the start line; compared only when both sides have a body with the same `body_src` |
 | `visibility`, `qualifiers`, `attributes` | from the entity's `syntax.jsonl` row; compared only when both sides have a row and the syntax layer is compared |
 | `outline` | the number of outline nodes per `k`, counting nested nodes, as an object with one member per kind that occurs, in byte order of the kind; compared under the same condition and only when both sides have an `outline` |
@@ -227,8 +234,8 @@ adds nothing.
 A candidate row says that a removed and an added entity may be the same thing, with the evidence
 it was ranked by. It is not a claim that they are. Sorted by `old`, then `rank`.
 
-Eligible are a `removed` and an `added` row that are both definitions, not groups, members or
-virtual containers, with equal and present `kind`. For every removed row the eligible added rows
+An eligible `removed` or `added` row comes from an entity with `def` and without `member_of`.
+The two rows must have equal, present `kind`. For every removed row the eligible added rows
 are scored. Those with a score of at least `weights.threshold` are ranked by score, highest
 first, then by `new` in byte order. The first three are written with `rank` 1 to 3. An added
 row may be a candidate of several removed rows.
@@ -311,6 +318,13 @@ not requested, absent or failed, can therefore differ although the code did not 
   sets it aside or an inner body owns them;
 - a candidate's `size` is 0 when either definition lacks a body, so a missing body can change
   a score or drop it below the threshold, whatever the relation features.
+
+A published syntax row can also change whether a symbol listed in `merged` is folded. If the
+symbol otherwise meets the folding conditions in [adapter-contract.md](adapter-contract.md), a
+snapshot with a published syntax row at one of its sites holds a collision group and its
+members, and a snapshot of the same base input without any such row holds one entity with
+`decls`. A collision group and a merged entity have different pairing variants, so the diff
+reports their unpaired rows as `removed` or `added`.
 
 A reader comparing snapshots made with different layer selections should expect these rows.
 

@@ -76,12 +76,39 @@ pub enum Parsed<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidSymbol;
 
-/// Parses a SCIP symbol.
+/// Parses a SCIP symbol as an index states it.
+///
+/// Beyond the grammar in `scip.proto`, a simple name may hold non-ASCII letters, which the
+/// grammar requires escaped, so that an index written that way still maps.
 ///
 /// # Errors
 ///
-/// Returns [`InvalidSymbol`] when the string does not follow the grammar in `scip.proto`.
+/// Returns [`InvalidSymbol`] when the string does not follow the grammar so extended.
 pub fn parse(raw: &str) -> Result<Parsed<'_>, InvalidSymbol> {
+    parse_with(raw, Names::Tolerant)
+}
+
+/// Parses a SCIP symbol by the grammar in `scip.proto` alone.
+///
+/// It checks the symbols an adapter states outside its index.
+///
+/// # Errors
+///
+/// Returns [`InvalidSymbol`] when the string does not follow the grammar.
+pub fn parse_strict(raw: &str) -> Result<Parsed<'_>, InvalidSymbol> {
+    parse_with(raw, Names::Strict)
+}
+
+/// Which characters a simple name may hold.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Names {
+    /// The grammar's identifier characters; an escaped name holds at least one other.
+    Strict,
+    /// Those and non-ASCII letters and digits; an escaped name may hold only those.
+    Tolerant,
+}
+
+fn parse_with(raw: &str, names: Names) -> Result<Parsed<'_>, InvalidSymbol> {
     if raw.starts_with("local ") {
         return Ok(Parsed::Local);
     }
@@ -90,13 +117,14 @@ pub fn parse(raw: &str) -> Result<Parsed<'_>, InvalidSymbol> {
     let manager = space_terminated(raw, &mut at)?;
     let package = space_terminated(raw, &mut at)?;
     let version = space_terminated(raw, &mut at)?;
-    if scheme.is_empty() {
+    // `scip.proto`: the scheme must not be empty nor start with `local`.
+    if scheme.is_empty() || scheme.starts_with("local") {
         return Err(InvalidSymbol);
     }
     let descriptors_start = at;
     let mut descriptors = Vec::new();
     while at < raw.len() {
-        descriptors.push(descriptor(raw, &mut at)?);
+        descriptors.push(descriptor(raw, &mut at, names)?);
     }
     if descriptors.is_empty() {
         return Err(InvalidSymbol);
@@ -132,18 +160,18 @@ fn space_terminated(raw: &str, at: &mut usize) -> Result<String, InvalidSymbol> 
     Err(InvalidSymbol)
 }
 
-fn descriptor(raw: &str, at: &mut usize) -> Result<Descriptor, InvalidSymbol> {
+fn descriptor(raw: &str, at: &mut usize, names: Names) -> Result<Descriptor, InvalidSymbol> {
     let rest = &raw[*at..];
     let (name, suffix, used) = if let Some(inner) = rest.strip_prefix('[') {
-        let (name, n) = name(inner)?;
+        let (name, n) = name(inner, names)?;
         expect(&inner[n..], ']')?;
         (name, Suffix::TypeParameter, 1 + n + 1)
     } else if let Some(inner) = rest.strip_prefix('(') {
-        let (name, n) = name(inner)?;
+        let (name, n) = name(inner, names)?;
         expect(&inner[n..], ')')?;
         (name, Suffix::Parameter, 1 + n + 1)
     } else {
-        let (name, n) = name(rest)?;
+        let (name, n) = name(rest, names)?;
         let after = &rest[n..];
         let mut tail = after.chars();
         let suffix = match tail.next().ok_or(InvalidSymbol)? {
@@ -187,7 +215,7 @@ const fn is_identifier_char(c: char) -> bool {
 }
 
 /// Reads a simple or backtick-escaped name; returns it unescaped and the bytes consumed.
-fn name(rest: &str) -> Result<(String, usize), InvalidSymbol> {
+fn name(rest: &str, names: Names) -> Result<(String, usize), InvalidSymbol> {
     if let Some(inner) = rest.strip_prefix('`') {
         let mut out = String::new();
         let mut chars = inner.char_indices().peekable();
@@ -197,7 +225,10 @@ fn name(rest: &str) -> Result<(String, usize), InvalidSymbol> {
             } else if chars.peek().is_some_and(|&(_, next)| next == '`') {
                 out.push('`');
                 chars.next();
-            } else if out.is_empty() {
+            } else if out.is_empty()
+                // The grammar escapes only a name that a simple name cannot spell.
+                || (names == Names::Strict && out.chars().all(is_identifier_char))
+            {
                 return Err(InvalidSymbol);
             } else {
                 return Ok((out, 1 + i + 1));
@@ -207,7 +238,10 @@ fn name(rest: &str) -> Result<(String, usize), InvalidSymbol> {
     }
     let n = rest
         .char_indices()
-        .find(|&(_, c)| !(is_identifier_char(c) || (!c.is_ascii() && c.is_alphanumeric())))
+        .find(|&(_, c)| {
+            !(is_identifier_char(c)
+                || (names == Names::Tolerant && !c.is_ascii() && c.is_alphanumeric()))
+        })
         .map_or(rest.len(), |(i, _)| i);
     if n == 0 {
         return Err(InvalidSymbol);
@@ -428,6 +462,33 @@ mod tests {
         let names: Vec<_> = s.descriptors.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["café", "größe"]);
         assert_eq!(parse("s m p 1 a→b#"), Err(InvalidSymbol));
+    }
+
+    #[test]
+    fn the_strict_grammar_takes_non_ascii_letters_only_escaped() {
+        assert_eq!(parse_strict("s m p 1 café#"), Err(InvalidSymbol));
+        assert_eq!(parse_strict("s m p 1 f().(größe)"), Err(InvalidSymbol));
+        let Ok(Parsed::Global(s)) = parse_strict("s m p 1 `café`#") else {
+            panic!("an escaped name parses");
+        };
+        assert_eq!(s.descriptors[0].name, "café");
+        assert!(matches!(
+            parse_strict("s m p 1 a/b#"),
+            Ok(Parsed::Global(_))
+        ));
+    }
+
+    #[test]
+    fn the_strict_grammar_refuses_a_name_escaped_without_need() {
+        assert_eq!(parse_strict("s m p 1 `pkg`/"), Err(InvalidSymbol));
+        assert_eq!(parse_strict("s m p 1 f().(`x`)"), Err(InvalidSymbol));
+        for needed in ["s m p 1 `a b`/", "s m p 1 `a``b`/", "s m p 1 `a.b`#"] {
+            assert!(
+                matches!(parse_strict(needed), Ok(Parsed::Global(_))),
+                "{needed}"
+            );
+        }
+        assert!(matches!(parse("s m p 1 `pkg`/"), Ok(Parsed::Global(_))));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::position::{Range, Site};
 pub const FORMAT: &str = "gosanja-snapshot";
 
 /// Snapshot schema version this crate reads and writes.
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 3);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 4);
 
 /// `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,9 +198,14 @@ pub struct EntityRow {
     /// The group this definition belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_of: Option<String>,
-    /// Where the entity is defined; absent on virtual and group rows.
+    /// Where the entity is defined; absent on virtual and group rows and on an entity
+    /// declared at several sites.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub def: Option<Def>,
+    /// The declaration sites of an entity that an adapter declared at several sites, sorted
+    /// by file and name range; present instead of `def`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decls: Option<Vec<Decl>>,
     /// Provenance.
     pub src: String,
 }
@@ -226,6 +231,15 @@ pub struct Def {
     /// Where `body` came from; present whenever `body` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_src: Option<String>,
+}
+
+/// One declaration site of an entity declared at several sites.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Decl {
+    /// A `files.jsonl` path.
+    pub file: String,
+    /// The name token.
+    pub name: Range,
 }
 
 /// A row of `externals.jsonl`.

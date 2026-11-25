@@ -13,6 +13,9 @@ import (
 	"testing"
 
 	"github.com/scip-code/scip/bindings/go/scip"
+	"google.golang.org/protobuf/proto"
+	"gosanja/adapters/go/internal/contract"
+	"gosanja/adapters/go/internal/scipindex"
 )
 
 // flowSnapshot indexes a copy of go-flow, named go-flow, through the engine, which finds the
@@ -82,7 +85,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("manifest %s: %v", data, err)
 	}
 	scope := manifest.Scopes[0]
-	if scope.Adapter.Name != "go" || scope.Adapter.Contract != "0.3" ||
+	if scope.Adapter.Name != "go" || scope.Adapter.Contract != "0.4" ||
 		!reflect.DeepEqual(scope.Layers, map[string]string{"base": "present", "syntax": "present", "calls": "absent"}) {
 		t.Errorf("scope %+v", scope)
 	}
@@ -123,11 +126,330 @@ const flowKey = "gomod:example.com/goflow:`example.com/goflow`/"
 const meterKey = "gomod:example.com/goflow:`example.com/goflow/meter`/"
 const testKey = "gomod:example.com/goflow:`example.com/goflow_test`/"
 
+func TestMergedPackage(t *testing.T) {
+	const module = "example.com/merge"
+	const key = "gomod:" + module + ":`" + module + "`/"
+	const constraint = "//go:build go1.21"
+	for _, tc := range []struct {
+		name, second string
+		kept         []string
+	}{
+		{"one_kept_one_excluded", "", []string{"a.go"}},
+		{"two_kept_one_excluded", "package m\n\nfunc B() {}\n", []string{"a.go", "b.go"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			root := w.simple("merge", map[string]string{
+				"a.go":        constraint + "\n\npackage m\n\nfunc A() {}\n",
+				"b.go":        tc.second,
+				"excluded.go": "//go:build gosanja_never\n\npackage m\n",
+			})
+			synthIndex(t, root, module, nil)
+			produced, err := scipindex.Read(filepath.Join(root, "index.scip"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := append(slices.Clone(tc.kept), "excluded.go"); !slices.Equal(produced.Paths(), want) {
+				t.Fatalf("produced paths %v, want %v", produced.Paths(), want)
+			}
+			baseOut, code, stderr := w.index(w.caller(nil), root, "--layers", "base")
+			if code != 0 {
+				t.Fatalf("adapter index exit %d: %s", code, stderr)
+			}
+			retained, err := scipindex.Read(filepath.Join(baseOut, "index.scip"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(retained.Paths(), tc.kept) {
+				t.Fatalf("published paths %v, want %v", retained.Paths(), tc.kept)
+			}
+			var wantMerged []string
+			if len(tc.kept) == 2 {
+				wantMerged = []string{"scip-go gomod " + module + " v0.0.0 `" + module + "`/"}
+			}
+			if got := result(t, baseOut).Layers[contract.Base].Merged; !slices.Equal(got, wantMerged) {
+				t.Errorf("base merged = %v, want %v", got, wantMerged)
+			}
+			out := filepath.Join(w.dir, "snapshot")
+			if code, stderr := w.engine("index", "--root", root, "--out", out); code != 0 {
+				t.Fatalf("gosanja index exit %d: %s", code, stderr)
+			}
+			if code, stderr := w.engine("validate", out, "--root", root); code != 0 {
+				t.Fatalf("gosanja validate exit %d: %s", code, stderr)
+			}
+			if len(tc.kept) == 2 {
+				assertMergedPackage(t, out, key, tc.kept)
+				return
+			}
+			var def, tag bool
+			for _, row := range jsonl(t, filepath.Join(out, "entities.jsonl")) {
+				if row["key"] == key {
+					site, _ := row["def"].(map[string]any)
+					def = site["file"] == "a.go" && row["decls"] == nil
+				}
+			}
+			for _, row := range jsonl(t, filepath.Join(out, "syntax.jsonl")) {
+				if row["key"] == key {
+					tag = reflect.DeepEqual(row["attributes"], []any{constraint})
+				}
+			}
+			if !def || !tag {
+				t.Errorf("%s: def in a.go = %t, syntax row with build tag = %t", key, def, tag)
+			}
+		})
+	}
+}
+
+func TestConflictingPackageNamesStayCollision(t *testing.T) {
+	const module = "example.com/conflict"
+	const key = "gomod:" + module + ":`" + module + "`/"
+	w := newWorld(t)
+	root := w.simple("conflict", map[string]string{
+		"a.go": "package p\n",
+		"b.go": "package p\n",
+		"c.go": "package q\n",
+	})
+	// The index gives all three package clauses the same namespace symbol.
+	synthIndex(t, root, module, nil)
+	baseOut, code, stderr := w.index(w.caller(nil), root, "--layers", "base")
+	if code != 0 {
+		t.Fatalf("adapter index exit %d: %s", code, stderr)
+	}
+	if got := result(t, baseOut).Layers[contract.Base].Merged; len(got) != 0 {
+		t.Errorf("base merged = %v, want no symbols for conflicting package names", got)
+	}
+	out := filepath.Join(w.dir, "snapshot")
+	if code, stderr := w.engine("index", "--root", root, "--out", out, "--layers", "base"); code != 0 {
+		t.Fatalf("gosanja index exit %d: %s", code, stderr)
+	}
+	assertPackageCollision(t, out, key, []string{"a.go", "b.go", "c.go"})
+}
+
+func TestUnverifiedPackageDefinitionStaysCollision(t *testing.T) {
+	const module = "example.com/unverified"
+	const key = "gomod:" + module + ":`" + module + "`/"
+	for _, name := range []string{"utf16", "invalid_utf8", "outside_clause"} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			root := w.simple("unverified", map[string]string{
+				"a.go": "package p\n",
+				"b.go": "package p\n",
+				"c.go": "package q\n",
+			})
+			synthIndex(t, root, module, nil)
+			if name == "invalid_utf8" {
+				w.write(filepath.Join(root, "c.go"), "package q\n// \xff\n", 0o644)
+			} else {
+				indexFile := filepath.Join(root, "index.scip")
+				data, err := os.ReadFile(indexFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var index scip.Index
+				if err := proto.Unmarshal(data, &index); err != nil {
+					t.Fatal(err)
+				}
+				for _, doc := range index.Documents {
+					if doc.RelativePath == "c.go" {
+						if name == "utf16" {
+							doc.PositionEncoding = scip.PositionEncoding_UTF16CodeUnitOffsetFromLineStart
+						} else {
+							doc.Occurrences[0].TypedRange = &scip.Occurrence_SingleLineRange{
+								SingleLineRange: &scip.SingleLineRange{Line: 0, StartCharacter: 0, EndCharacter: 7},
+							}
+						}
+					}
+				}
+				if err := os.WriteFile(indexFile, marshal(t, &index), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			baseOut, code, stderr := w.index(w.caller(nil), root, "--layers", "base")
+			if code != 0 {
+				t.Fatalf("adapter index exit %d: %s", code, stderr)
+			}
+			retained, err := scipindex.Read(filepath.Join(baseOut, "index.scip"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"a.go", "b.go", "c.go"}
+			if !slices.Equal(retained.Paths(), want) {
+				t.Fatalf("published paths = %v, want %v", retained.Paths(), want)
+			}
+			if got := result(t, baseOut).Layers[contract.Base].Merged; len(got) != 0 {
+				t.Errorf("base merged = %v, want no symbol with an unverified definition", got)
+			}
+			out := filepath.Join(w.dir, "snapshot")
+			if code, stderr := w.engine("index", "--root", root, "--out", out, "--layers", "base"); code != 0 {
+				t.Fatalf("gosanja index exit %d: %s", code, stderr)
+			}
+			assertPackageCollision(t, out, key, want)
+		})
+	}
+}
+
+func assertPackageCollision(t *testing.T, out, key string, want []string) {
+	t.Helper()
+	var group bool
+	var members []string
+	for _, row := range jsonl(t, filepath.Join(out, "entities.jsonl")) {
+		if row["key"] == key {
+			group = row["group"] == true
+		}
+		if row["member_of"] == key {
+			def, _ := row["def"].(map[string]any)
+			members = append(members, fmt.Sprint(def["file"]))
+		}
+	}
+	if !group || !slices.Equal(members, want) {
+		t.Errorf("%s: group = %t, member files = %v, want %v", key, group, members, want)
+	}
+	if got := countGaps(readSnapshot(t, out), "symbol-collision", ""); got != 1 {
+		t.Errorf("got %d symbol-collision gaps, want 1", got)
+	}
+}
+
+func TestPackageClauseSurvivesLaterParseError(t *testing.T) {
+	const module = "example.com/recovered"
+	const key = "gomod:" + module + ":`" + module + "`/"
+	w := newWorld(t)
+	root := w.simple("recovered", map[string]string{
+		"a.go": "package p\n\nfunc A() {}\n",
+		"b.go": "package p\n",
+	})
+	// The indexer recovered the package clause. There is no SCIP body in b.go.
+	synthIndex(t, root, module, nil)
+	w.write(filepath.Join(root, "b.go"), "package p\n@\n", 0o644)
+	baseOut, code, stderr := w.index(w.caller(nil), root, "--layers", "base")
+	if code != 0 {
+		t.Fatalf("adapter index exit %d: %s", code, stderr)
+	}
+	base := result(t, baseOut).Layers[contract.Base]
+	want := []string{"scip-go gomod " + module + " v0.0.0 `" + module + "`/"}
+	if !slices.Equal(base.Merged, want) {
+		t.Errorf("base merged = %v, want %v", base.Merged, want)
+	}
+	if !slices.Contains(base.Skipped, contract.Skipped{File: "b.go", Code: "parse-failed"}) {
+		t.Errorf("base skipped = %v, want b.go parse-failed", base.Skipped)
+	}
+	out := filepath.Join(w.dir, "snapshot")
+	if code, stderr := w.engine("index", "--root", root, "--out", out); code != 0 {
+		t.Fatalf("gosanja index exit %d: %s", code, stderr)
+	}
+	if code, stderr := w.engine("validate", out, "--root", root); code != 0 {
+		t.Fatalf("gosanja validate exit %d: %s", code, stderr)
+	}
+	assertMergedPackage(t, out, key, []string{"a.go", "b.go"})
+	if got := readSnapshot(t, out).skippedGaps(); !slices.Contains(got, "syntax b.go parse-failed") {
+		t.Errorf("skipped-file gaps %v, want syntax b.go parse-failed", got)
+	}
+}
+
+func TestInitStaysCollision(t *testing.T) {
+	const module = "example.com/inits"
+	const key = "gomod:" + module + ":`" + module + "`/"
+	const initKey = key + "init()."
+	w := newWorld(t)
+	root := w.simple("inits", map[string]string{
+		"a.go": "package m\n\nfunc init() {}\n",
+		"b.go": "package m\n\nfunc init() {}\n",
+	})
+	synthIndex(t, root, module, nil)
+	baseOut, code, stderr := w.index(w.caller(nil), root, "--layers", "base")
+	if code != 0 {
+		t.Fatalf("adapter index exit %d: %s", code, stderr)
+	}
+	want := []string{"scip-go gomod " + module + " v0.0.0 `" + module + "`/"}
+	if got := result(t, baseOut).Layers[contract.Base].Merged; !slices.Equal(got, want) {
+		t.Errorf("base merged = %v, want only the package symbol %v", got, want)
+	}
+	out := filepath.Join(w.dir, "snapshot")
+	if code, stderr := w.engine("index", "--root", root, "--out", out); code != 0 {
+		t.Fatalf("gosanja index exit %d: %s", code, stderr)
+	}
+	assertMergedPackage(t, out, key, []string{"a.go", "b.go"})
+	var group bool
+	var members []string
+	for _, row := range jsonl(t, filepath.Join(out, "entities.jsonl")) {
+		if row["key"] == initKey {
+			group = row["group"] == true
+		}
+		if row["member_of"] == initKey {
+			def, _ := row["def"].(map[string]any)
+			members = append(members, fmt.Sprint(def["file"]))
+		}
+	}
+	if !group || !slices.Equal(members, []string{"a.go", "b.go"}) {
+		t.Errorf("%s: group = %t, member files = %v", initKey, group, members)
+	}
+	var gaps []map[string]any
+	for _, gap := range readSnapshot(t, out).gaps {
+		if gap["gap"] == "symbol-collision" {
+			gaps = append(gaps, gap)
+		}
+	}
+	if len(gaps) != 1 || !reflect.DeepEqual(gaps[0]["keys"], []any{initKey, initKey + "~1", initKey + "~2"}) {
+		t.Errorf("symbol-collision gaps %v, want one for %s and its two members", gaps, initKey)
+	}
+}
+
+func assertMergedPackage(t *testing.T, out, key string, want []string) {
+	t.Helper()
+	var matches int
+	for _, row := range jsonl(t, filepath.Join(out, "entities.jsonl")) {
+		name := row["key"].(string)
+		if strings.HasPrefix(name, key+"~") {
+			t.Errorf("unexpected package collision member %s", name)
+		}
+		if name != key {
+			continue
+		}
+		matches++
+		var files []string
+		decls, _ := row["decls"].([]any)
+		for _, decl := range decls {
+			files = append(files, decl.(map[string]any)["file"].(string))
+		}
+		if !slices.Equal(files, want) || row["def"] != nil || row["group"] != nil {
+			t.Errorf("%s: expected package declarations at %v, got %v", key, want, row)
+		}
+	}
+	if matches != 1 {
+		t.Errorf("found %d rows for package %s", matches, key)
+	}
+	for _, row := range jsonl(t, filepath.Join(out, "syntax.jsonl")) {
+		name := row["key"].(string)
+		if name == key || strings.HasPrefix(name, key+"~") {
+			t.Errorf("unexpected package-clause syntax row %v", row)
+		}
+	}
+	for _, gap := range readSnapshot(t, out).gaps {
+		if keys, _ := gap["keys"].([]any); gap["gap"] == "symbol-collision" && slices.Contains(keys, any(key)) {
+			t.Errorf("unexpected package collision %v", gap)
+		}
+	}
+}
+
 func TestSnapshotFacts(t *testing.T) {
 	w := newWorld(t)
 	_, out := flowSnapshot(t, w)
 	_, control := flowSnapshot(t, w, "--layers", "base")
 	s := readSnapshot(t, out)
+	for _, dir := range []string{out, control} {
+		assertMergedPackage(t, dir, flowKey, []string{"flow.go", "flow_test.go", "tagged.go", "zz_generated.go"})
+		var meter map[string]any
+		for _, row := range jsonl(t, filepath.Join(dir, "entities.jsonl")) {
+			if row["key"] == meterKey {
+				meter = row
+			}
+		}
+		if def, _ := meter["def"].(map[string]any); def["file"] != "meter/meter.go" {
+			t.Errorf("%s: single-file meter package missing def: %v", dir, meter)
+		}
+	}
+	if len(s.gaps) != 12 {
+		t.Errorf("got %d gaps, want 12", len(s.gaps))
+	}
 
 	// Each item, at the name position read off the source (zero-based line, byte column), has
 	// a syntax row keyed to the entity defined there.
@@ -149,7 +471,7 @@ func TestSnapshotFacts(t *testing.T) {
 	for _, item := range []struct {
 		file      string
 		line, col int
-		key       string // empty for a package, whose key carries a collision suffix
+		key       string
 	}{
 		{"flow.go", 8, 5, flowKey + "Count#"},
 		{"flow.go", 10, 6, flowKey + "DefaultCount."},
@@ -181,7 +503,6 @@ func TestSnapshotFacts(t *testing.T) {
 		{"meter/meter.go", 20, 16, meterKey + "Box#Get()."},
 		{"meter/meter.go", 22, 5, meterKey + "Double()."},
 		{"meter/meter.go", 24, 5, meterKey + "Max()."},
-		{"tagged.go", 2, 8, ""},
 		{"tagged.go", 4, 5, flowKey + "Tagged()."},
 		{"external_test.go", 9, 5, testKey + "TestPublicCalls()."},
 	} {
@@ -189,12 +510,10 @@ func TestSnapshotFacts(t *testing.T) {
 		switch {
 		case !ok:
 			t.Errorf("no entity defined at %s %d:%d", item.file, item.line, item.col)
-		case item.key != "" && key != item.key:
+		case key != item.key:
 			t.Errorf("%s %d:%d: entity %s, want %s", item.file, item.line, item.col, key, item.key)
 		case rows[key] == nil:
 			t.Errorf("no syntax row for %s", key)
-		case item.key == "" && !reflect.DeepEqual(rows[key]["attributes"], []any{"//go:build go1.21"}):
-			t.Errorf("package clause of tagged.go: attributes %v", rows[key]["attributes"])
 		}
 	}
 	for _, g := range s.gaps {

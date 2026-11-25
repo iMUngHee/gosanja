@@ -14,7 +14,69 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gosanja/adapters/go/internal/contract"
 	"gosanja/adapters/go/internal/env"
+	"gosanja/adapters/go/internal/scipindex"
 )
+
+func TestMergedPackagesUsePhysicalNamespaceDefinitions(t *testing.T) {
+	root := t.TempDir()
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const alpha = "scip-go gomod example.com/sample v0.0.0 alpha/"
+	const zeta = "scip-go gomod example.com/sample v0.0.0 zeta/"
+	const single = "scip-go gomod example.com/sample v0.0.0 single/"
+	const elsewhere = "scip-go gomod example.com/sample v0.0.0 elsewhere/"
+	const asReference = "scip-go gomod example.com/sample v0.0.0 reference/"
+	const notNamespace = "scip-go gomod example.com/sample v0.0.0 f()."
+	const invalid = "scip-go gomod"
+	reads := map[string]Read{}
+	idx := &scipindex.Index{}
+	def := int32(scip.SymbolRole_Definition)
+	occurrence := func(symbol string, roles, start int32) *scip.Occurrence {
+		return &scip.Occurrence{
+			Symbol: symbol, SymbolRoles: roles,
+			TypedRange: &scip.Occurrence_SingleLineRange{
+				SingleLineRange: &scip.SingleLineRange{Line: 1, StartCharacter: start, EndCharacter: 17},
+			},
+		}
+	}
+	add := func(path, symbol string) *scip.Document {
+		name := filepath.Join(root, path)
+		if err := os.WriteFile(name, []byte("//line logical.go:40\n/*λ*/ package λ\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		reads[path] = readFile(info, file{abs: name, rel: path})
+		doc := &scip.Document{
+			RelativePath: path, PositionEncoding: scip.PositionEncoding_UTF8CodeUnitOffsetFromLineStart,
+			Occurrences: []*scip.Occurrence{occurrence(symbol, def, 15)},
+		}
+		idx.Documents = append(idx.Documents, doc)
+		return doc
+	}
+	for _, item := range []struct{ file, symbol string }{
+		{"z1.go", zeta}, {"z2.go", zeta}, {"a2.go", alpha}, {"a1.go", alpha},
+	} {
+		add(item.file, item.symbol)
+	}
+	repeated := add("single.go", single)
+	idx.Documents = append(idx.Documents, repeated)
+	for _, file := range []string{"o1.go", "o2.go"} {
+		doc := add(file, notNamespace)
+		doc.Occurrences = append(doc.Occurrences,
+			occurrence(elsewhere, def, 14),
+			occurrence(asReference, 0, 15),
+			occurrence(invalid, def, 15),
+		)
+	}
+	symbols, files := mergedPackages(idx, reads)
+	if !slices.Equal(symbols, []string{alpha, zeta}) {
+		t.Errorf("merged symbols %v, want only alpha and zeta in order", symbols)
+	}
+	if len(files) != 4 || !files["a1.go"] || !files["a2.go"] || !files["z1.go"] || !files["z2.go"] {
+		t.Errorf("merged package files %v, want a1.go, a2.go, z1.go and z2.go", files)
+	}
+}
 
 func TestIgnoredDir(t *testing.T) {
 	for _, c := range []struct {

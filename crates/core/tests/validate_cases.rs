@@ -7,7 +7,9 @@ mod support;
 use gosanja_core::validate::{self, Diagnostic};
 use gosanja_core::write::{self, FsSource, SnapshotFiles};
 use gosanja_schema::compat::Version;
-use support::{DEF, MemSource, REF, build, doc, fixture, implementing, index, occ, read_dir};
+use support::{
+    DEF, MemSource, REF, build, build_merged, doc, fixture, implementing, index, occ, read_dir,
+};
 
 fn golden() -> SnapshotFiles {
     read_dir(&fixture("rust-basic").join("expected"))
@@ -790,4 +792,150 @@ fn a_member_edge_closes_a_parent_cycle() {
         )
     });
     assert!(check(&files).contains(&("entities.jsonl", "parent-cycle")));
+}
+
+// Entities declared at several sites (`decls`).
+
+const DECLS_TEXT: &str = "xxxxxxxxxxxxxxxxxxxx\n\nyyyy\n";
+
+/// A package declared in a.go and b.go, folded into one entity with `decls`, and its sources.
+fn decls_snapshot() -> (SnapshotFiles, MemSource) {
+    let sources = MemSource::with(&[("a.go", DECLS_TEXT), ("b.go", DECLS_TEXT)]);
+    let files = write::serialise(&build_merged(
+        &index(
+            "t",
+            vec![
+                doc("a.go", vec![occ("s m p 1 pkg/", DEF, &[0, 8, 11], &[])]),
+                doc("b.go", vec![occ("s m p 1 pkg/", DEF, &[0, 8, 11], &[])]),
+            ],
+        ),
+        &sources,
+        &["s m p 1 pkg/"],
+    ));
+    (files, sources)
+}
+
+const DECLS: &str =
+    r#""decls":[{"file":"a.go","name":[0,8,0,11]},{"file":"b.go","name":[0,8,0,11]}]"#;
+
+fn decls_case(edit: impl Fn(&str) -> String) -> Vec<(&'static str, &'static str)> {
+    let (files, sources) = decls_snapshot();
+    let files = with(files, "entities.jsonl", edit);
+    codes(&validate::validate(&files, Some(&sources)).expect("own version"))
+}
+
+#[test]
+fn decls_the_engine_writes_are_valid() {
+    let (files, sources) = decls_snapshot();
+    let entities = String::from_utf8(files.entities.clone().unwrap()).unwrap();
+    assert!(entities.contains(DECLS), "{entities}");
+    assert_eq!(check(&files), []);
+    assert_eq!(
+        codes(&validate::validate(&files, Some(&sources)).unwrap()),
+        []
+    );
+}
+
+#[test]
+fn decls_with_fewer_than_two_sites_are_reported() {
+    assert_eq!(
+        decls_case(|t| t.replace(DECLS, r#""decls":[{"file":"a.go","name":[0,8,0,11]}]"#)),
+        [("entities.jsonl", "decls-too-few")]
+    );
+}
+
+#[test]
+fn decls_unsorted_or_repeated_are_reported() {
+    assert_eq!(
+        decls_case(|t| t.replace(
+            DECLS,
+            r#""decls":[{"file":"b.go","name":[0,8,0,11]},{"file":"a.go","name":[0,8,0,11]}]"#
+        )),
+        [("entities.jsonl", "decls-unsorted")]
+    );
+    assert_eq!(
+        decls_case(|t| t.replace(
+            DECLS,
+            r#""decls":[{"file":"a.go","name":[0,8,0,11]},{"file":"a.go","name":[0,8,0,11]}]"#
+        )),
+        [("entities.jsonl", "decls-repeated")]
+    );
+}
+
+#[test]
+fn decls_beside_def_group_member_of_or_virtual_fail_the_schema() {
+    for extra in [
+        r#","def":{"file":"a.go","name":[0,8,0,11]}"#,
+        r#","group":true"#,
+        r#","member_of":"m:p:other/""#,
+        r#","virtual":true"#,
+    ] {
+        let found = decls_case(|t| t.replace(DECLS, &format!("{DECLS}{extra}")));
+        assert!(
+            found.contains(&("entities.jsonl", "schema")),
+            "{extra}: {found:?}"
+        );
+    }
+}
+
+/// A declaration site has no extent: `body` and `body_src` on a `decls` item fail the schema.
+#[test]
+fn decls_with_a_body_on_a_site_fail_the_schema() {
+    for extra in [
+        r#","body":[0,0,0,20]"#,
+        r#","body_src":"scip:t""#,
+        r#","body":[0,0,0,20],"body_src":"scip:t""#,
+    ] {
+        let found = decls_case(|t| {
+            t.replace(
+                r#"{"file":"a.go","name":[0,8,0,11]}"#,
+                &format!(r#"{{"file":"a.go","name":[0,8,0,11]{extra}}}"#),
+            )
+        });
+        assert!(
+            found.contains(&("entities.jsonl", "schema")),
+            "{extra}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn decls_under_a_suffixed_key_are_reported() {
+    assert_eq!(
+        decls_case(|t| t.replace(r#""key":"m:p:pkg/""#, r#""key":"m:p:pkg/~1""#)),
+        [("entities.jsonl", "decls-suffixed-key")]
+    );
+}
+
+#[test]
+fn decls_must_name_a_listed_file_and_a_range_of_it() {
+    assert_eq!(
+        decls_case(|t| t.replace(
+            r#"{"file":"b.go","name":[0,8,0,11]}"#,
+            r#"{"file":"c.go","name":[0,8,0,11]}"#
+        )),
+        [("entities.jsonl", "unknown-file")]
+    );
+    // Line 2 has four characters: within the line count, outside the line.
+    assert_eq!(
+        decls_case(|t| t.replace(
+            r#"{"file":"b.go","name":[0,8,0,11]}"#,
+            r#"{"file":"b.go","name":[2,8,2,11]}"#
+        )),
+        [("entities.jsonl", "position-outside-file")]
+    );
+}
+
+#[test]
+fn decls_a_syntax_row_keyed_to_them_is_reported() {
+    let (files, _) = decls_snapshot();
+    let files = appended(
+        files,
+        "syntax.jsonl",
+        &[r#"{"key":"m:p:pkg/","src":"adapter:x/syntax"}"#],
+    );
+    let files = with(files, "manifest.json", |t| {
+        t.replace(r#""syntax":0"#, r#""syntax":1"#)
+    });
+    assert_eq!(check(&files), [("syntax.jsonl", "syntax-on-decls")]);
 }
