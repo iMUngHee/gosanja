@@ -108,6 +108,38 @@ case-alias cases, which need a case-insensitive volume, and the tool-tag case on
 architecture that has no architecture-level build tag.
 There is no hosted CI yet, so this script is what a change has to pass.
 
+## The engine's map of its own code
+
+```sh
+scripts/self-check.sh            # against the merge base of HEAD and main
+scripts/self-check.sh <base>     # against any commit
+```
+
+A change to code is checked with the engine itself, beside the gate. The script builds
+`gosanja` and the Rust adapter from the working tree, indexes the base commit and the working
+tree with the base and syntax layers, and reports four things:
+
+- **Function.** Both snapshots validate, no layer failed, and the row counts, the gap counts
+  by kind and a `gosanja diff` of the two are printed. A gap kind that grows without a reason
+  is a defect of the change or a finding about the engine.
+- **Layering.** The references between workspace packages, checked against the dependencies
+  [AGENTS.md](../AGENTS.md) allows: the command line uses the core and the schema, the core uses
+  the schema, and the Rust adapter uses the schema and, in its tests only, the core. Any other
+  edge fails the check.
+- **Coupling.** The pairs of source modules (a crate's top-level file or directory under
+  `src/`) whose references to each other grew, largest growth first. A new pair, or a large
+  growth between modules that had little to do with each other, is something the change has to
+  justify, or move into the module that owns the concept.
+- **Dead code.** Definitions that nothing in the snapshot refers to and that this change added
+  or left unreferenced, leaving out what is reachable from outside (`pub` items, exported Go
+  names, `main`, trait implementations) and test code. The list is of candidates: a use the
+  indexer does not record, inside a `macro_rules!` body, in a format string or in an attribute
+  string, leaves a used item listed. Each line is removed with the code or explained.
+
+It exits 1 when a snapshot does not validate, a layer failed, or an edge breaks the layering.
+The Go module under `adapters/go` is mapped the same way when the change touched it and `go`
+and `scip-go` are on `PATH`. The check needs `jq`, and writes only to a temporary directory.
+
 ## Commits
 
 Conventional Commits: `feat(core): …`, `docs(spec): …`, `test(fixtures): …`. The subject is an
