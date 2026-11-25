@@ -38,9 +38,12 @@ echo "go version check: accepts go1.27.3 and go1.27.3-X:nodwarf5, refuses go1.27
 # file, and a go command with telemetry on can start a process that inherits all of it. So
 # the go commands see a home of the gate's own under SCRATCH with telemetry off; the caller's
 # env file is read once, by `go env` alone, for the module cache, GOPATH and the build cache,
-# which are kept;
-# and every other Go setting of the caller and of the env file is dropped (GOENV=off).
+# which are kept; and every other Go setting of the caller and of the env file is dropped
+# (GOENV=off), Go telemetry's own overrides included: TEST_TELEMETRY_DIR names another
+# telemetry directory, and GO_TELEMETRY_CHILD makes a go command act as telemetry's child.
 go_offline_env() {
+    unset -f go
+    unset TEST_TELEMETRY_DIR GO_TELEMETRY_CHILD GO_TELEMETRY_CHILD_UPLOAD
     caller_home=${HOME:-}
     case $(uname) in
     Darwin) caller_config=$caller_home/Library/Application\ Support ;;
@@ -81,44 +84,57 @@ go_offline_env() {
     export GOPATH="$gopath" GOMODCACHE="$cache" GOCACHE="$build_cache" GOENV=off
 }
 
-if ! command -v go >/dev/null 2>&1; then
+if ! real_go=$(command -v go); then
     echo "check.sh: adapters/go needs $go_needed, and there is no go on PATH" >&2
     exit 1
 fi
+# Until go_offline_env has run, a go command is an error: it would see the caller's settings.
+go() {
+    echo "check.sh: go $* ran before the gate isolated Go's settings" >&2
+    exit 1
+}
 go_scratch=$(mktemp -d)
 trap 'rm -rf "$go_scratch"' EXIT
 
 # Self-test, before the gate's own go commands: a caller with private-module settings in its
-# environment and its env file, and telemetry on in its home. Every go command the setup
-# starts must run in the gate's home with no private-module setting exported, the caller's
-# home must stay as it was, and the settings in force afterwards must be empty.
+# environment and its env file, telemetry on in its home and in a TEST_TELEMETRY_DIR. Every go
+# command the setup starts must run in the gate's home with none of those settings exported,
+# the caller's home must stay as it was, and afterwards the settings in force must be empty and
+# telemetry off.
 (
     test_home=$go_scratch/caller-home
-    mkdir -p "$test_home/.config/go/telemetry" "$go_scratch/bin"
+    mkdir -p "$test_home/.config/go/telemetry" "$test_home/telemetry-dir" "$go_scratch/bin"
     echo on >"$test_home/.config/go/telemetry/mode"
+    echo on >"$test_home/telemetry-dir/mode"
     printf 'GONOPROXY=example.invalid\nGOPRIVATE=example.invalid\n' >"$test_home/.config/go/env"
-    real_go=$(command -v go)
     cat >"$go_scratch/bin/go" <<EOF
 #!/bin/sh
-echo "\$HOME|\${GONOPROXY-}|\${GOPRIVATE-}" >>"$go_scratch/go.log"
+echo "\$HOME|\${GONOPROXY-}|\${GOPRIVATE-}|\${TEST_TELEMETRY_DIR-}|\${GO_TELEMETRY_CHILD-}" >>"$go_scratch/go.log"
 exec "$real_go" "\$@"
 EOF
     chmod +x "$go_scratch/bin/go"
     before=$(cd "$test_home" && find . | sort)
     PATH=$go_scratch/bin:$PATH HOME=$test_home GOPRIVATE=example.invalid GONOPROXY=example.invalid
-    export PATH HOME GOPRIVATE GONOPROXY
+    TEST_TELEMETRY_DIR=$test_home/telemetry-dir
+    export PATH HOME GOPRIVATE GONOPROXY TEST_TELEMETRY_DIR
     unset XDG_CONFIG_HOME GOENV
     go_offline_env "$go_scratch/test"
     settings=$(go env GONOPROXY GOPRIVATE | tr -d '\n')
-    if [ -n "$settings" ] || grep -v "^$go_scratch/test/home||\$" "$go_scratch/go.log" >&2 ||
+    mode=$(go telemetry)
+    if [ -n "$settings" ] || [ "$mode" != off ] ||
+        grep -v "^$go_scratch/test/home||||\$" "$go_scratch/go.log" >&2 ||
         [ "$(cd "$test_home" && find . | sort)" != "$before" ]; then
         echo "check.sh: the gate's go commands are not isolated from the caller's Go settings" >&2
         exit 1
     fi
 )
-echo "go offline check: no private-module setting and no caller telemetry reach the gate's go commands"
+echo "go offline check: no private-module or telemetry setting of the caller reaches the gate's go commands"
 
 go_offline_env "$go_scratch"
+if [ "$(go telemetry)" != off ]; then
+    echo "check.sh: Go telemetry is not off for the gate's go commands" >&2
+    exit 1
+fi
 word=$(go version | awk '{ print $3 }')
 if ! go_version_ok "$word"; then
     echo "check.sh: adapters/go needs $go_needed, and go version reports ${word:-nothing}" >&2

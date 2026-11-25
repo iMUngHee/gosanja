@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -638,5 +639,63 @@ func TestEnvironmentGOPATHDefaultCache(t *testing.T) {
 				t.Errorf("exit %d, base %+v, want %s: %s", code, e, c.code, stderr)
 			}
 		})
+	}
+}
+
+// The tests' own go commands read a Darwin-style caller's settings where the go command on
+// Darwin would, from Library/Application Support, write nothing into that caller's home, and
+// run with telemetry off whatever override the test process carries.
+func TestIsolateDarwinStyleCaller(t *testing.T) {
+	callerHome, scratch := t.TempDir(), t.TempDir()
+	darwinConfig := filepath.Join(callerHome, "Library", "Application Support", "go")
+	wantCache := filepath.Join(t.TempDir(), "darwin-cache")
+	for name, text := range map[string]string{"env": "GOMODCACHE=" + wantCache + "\n", "telemetry/mode": "on\n"} {
+		path := filepath.Join(darwinConfig, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	overrideDir := filepath.Join(callerHome, "telemetry-dir")
+	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(overrideDir, "mode"), []byte("on\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := listing(t, callerHome)
+	caller := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + callerHome, "TEST_TELEMETRY_DIR=" + overrideDir,
+		"GOTOOLCHAIN=local", "GOFLAGS="}
+	got, err := isolateFrom(scratch, caller, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := directSettings{home: filepath.Join(scratch, "direct-home"), cache: wantCache,
+		gopath: filepath.Join(callerHome, "go"), buildCache: filepath.Join(callerHome, "Library", "Caches", "go-build")}
+	if got != want {
+		t.Errorf("settings\n got %+v\nwant %+v", got, want)
+	}
+	for _, config := range []string{".config", filepath.Join("Library", "Application Support")} {
+		mode, err := os.ReadFile(filepath.Join(got.home, config, "go", "telemetry", "mode"))
+		if err != nil || string(mode) != "off\n" {
+			t.Errorf("telemetry mode under %s: %q, %v", config, mode, err)
+		}
+	}
+	if after := listing(t, callerHome); !reflect.DeepEqual(before, after) {
+		t.Errorf("the caller's home changed")
+	}
+
+	env := isolated(append(os.Environ(), "TEST_TELEMETRY_DIR="+overrideDir, "GO_TELEMETRY_CHILD=1"))
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); slices.Contains(telemetryOverrides, k) {
+			t.Errorf("isolated keeps %s", kv)
+		}
+	}
+	cmd := exec.Command(realGo(t), "telemetry")
+	cmd.Env = env
+	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "off" {
+		t.Errorf("go telemetry under isolated: %q, %v", out, err)
 	}
 }

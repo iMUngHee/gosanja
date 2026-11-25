@@ -69,21 +69,44 @@ func TestBuildContextRelease(t *testing.T) {
 	}
 }
 
+// archTag is, for an architecture, a variable that selects its feature level, a level for the
+// adapter's process that sets a build tag, and a lower level for the go command that does not.
+var archTag = map[string]struct{ variable, parent, child, tag string }{
+	"amd64":    {"GOAMD64", "v3", "v1", "amd64.v3"},
+	"arm64":    {"GOARM64", "v8.1", "v8.0", "arm64.v8.1"},
+	"arm":      {"GOARM", "7", "5", "arm.7"},
+	"386":      {"GO386", "sse2", "softfloat", "386.sse2"},
+	"ppc64":    {"GOPPC64", "power9", "power8", "ppc64.power9"},
+	"ppc64le":  {"GOPPC64", "power9", "power8", "ppc64le.power9"},
+	"riscv64":  {"GORISCV64", "rva22u64", "rva20u64", "riscv64.rva22u64"},
+	"mips":     {"GOMIPS", "hardfloat", "softfloat", "mips.hardfloat"},
+	"mipsle":   {"GOMIPS", "hardfloat", "softfloat", "mipsle.hardfloat"},
+	"mips64":   {"GOMIPS64", "hardfloat", "softfloat", "mips64.hardfloat"},
+	"mips64le": {"GOMIPS64", "hardfloat", "softfloat", "mips64le.hardfloat"},
+}
+
+// The fallback judges files by the build tags of the go command that lists the packages, not
+// by those of the adapter's process: the process runs with a higher architecture level than
+// the go command it starts, and a directory whose only file needs that level is excluded.
 func TestFallbackUsesSelectedGoToolTags(t *testing.T) {
-	if runtime.GOARCH != "amd64" || runtime.GOOS == "windows" {
-		t.Skip("requires an amd64 Unix Go toolchain")
+	if runtime.GOOS == "windows" {
+		t.Fatal("the adapter fails on Windows before the fallback runs; this test needs a Unix host")
+	}
+	arch, ok := archTag[runtime.GOARCH]
+	if !ok {
+		t.Fatalf("no architecture level variable is known for GOARCH=%s; add one to archTag", runtime.GOARCH)
 	}
 	const subprocess = "GOSANJA_BUILD_TAG_TEST_CHILD"
 	if os.Getenv(subprocess) != "1" {
 		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestFallbackUsesSelectedGoToolTags$", "-test.v")
-		cmd.Env = append(os.Environ(), subprocess+"=1", "GOAMD64=v3")
+		cmd.Env = append(os.Environ(), subprocess+"=1", arch.variable+"="+arch.parent)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%v:\n%s", err, output)
 		}
 		return
 	}
-	if !slices.Contains(build.Default.ToolTags, "amd64.v3") {
-		t.Fatalf("adapter process tags: %v", build.Default.ToolTags)
+	if !slices.Contains(build.Default.ToolTags, arch.tag) {
+		t.Fatalf("adapter process tags: %v, want %s among them", build.Default.ToolTags, arch.tag)
 	}
 	root, bin := t.TempDir(), t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "v3only"), 0o700); err != nil {
@@ -92,7 +115,7 @@ func TestFallbackUsesSelectedGoToolTags(t *testing.T) {
 	for filename, content := range map[string]string{
 		"go.mod":      "module example.com/tagtest\n\ngo 1.26\n",
 		"ordinary.go": "package tagtest\nfunc Ordinary() {}\n",
-		"v3only/only.go": "//go:build amd64.v3\n\npackage v3only\n" +
+		"v3only/only.go": "//go:build " + arch.tag + "\n\npackage v3only\n" +
 			"func OnlyOnV3() {}\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, filename), []byte(content), 0o600); err != nil {
@@ -107,7 +130,7 @@ func TestFallbackUsesSelectedGoToolTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, script := range map[string]string{
-		"go": "#!/bin/sh\nexport GOAMD64=v1\nexec \"$(dirname \"$0\")/real-go\" \"$@\"\n",
+		"go": "#!/bin/sh\nexport " + arch.variable + "=" + arch.child + "\nexec \"$(dirname \"$0\")/real-go\" \"$@\"\n",
 		"scip-go": `#!/bin/sh
 set -eu
 case "$1" in

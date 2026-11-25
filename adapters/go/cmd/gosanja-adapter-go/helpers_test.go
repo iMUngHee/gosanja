@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -47,48 +48,108 @@ func realGo(t *testing.T) string {
 // The go commands a test runs itself, outside the adapter, see a home of their own with Go
 // telemetry off (directHome), so that none writes into the caller's home, and none leaves a
 // detached telemetry process writing in a directory a test is about to remove. They keep the
-// caller's module cache and GOPATH (cache, gopath), read once from the caller's own settings.
+// caller's module cache, GOPATH and build cache (cache, gopath, buildCache), read once from
+// the caller's own settings.
 var directHome, cache, gopath, buildCache string
 
-// isolate prepares directHome under scratch and reads the caller's module cache and GOPATH.
-// The query reads the caller's env file but writes its telemetry under directHome: on Linux
-// Go takes its configuration directory from XDG_CONFIG_HOME.
+// telemetryOverrides are the variables with which Go telemetry leaves its configuration
+// directory: TEST_TELEMETRY_DIR names another one, and GO_TELEMETRY_CHILD makes a go command
+// act as telemetry's child. A go command a test starts never inherits them.
+var telemetryOverrides = []string{"TEST_TELEMETRY_DIR", "GO_TELEMETRY_CHILD", "GO_TELEMETRY_CHILD_UPLOAD"}
+
+// isolate prepares directHome under scratch and reads the caller's settings.
 func isolate(scratch string) error {
-	directHome = filepath.Join(scratch, "direct-home")
-	mode := filepath.Join(directHome, ".config", "go", "telemetry", "mode")
-	if err := os.MkdirAll(filepath.Dir(mode), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(mode, []byte("off\n"), 0o644); err != nil {
-		return err
-	}
-	config, err := os.UserConfigDir()
+	settings, err := isolateFrom(scratch, os.Environ(), runtime.GOOS)
 	if err != nil {
 		return err
 	}
-	envFile := os.Getenv("GOENV")
+	directHome = settings.home
+	cache, gopath, buildCache = settings.cache, settings.gopath, settings.buildCache
+	return nil
+}
+
+type directSettings struct{ home, cache, gopath, buildCache string }
+
+// isolateFrom makes a home under scratch with telemetry off in every configuration directory
+// os.UserConfigDir gives on Linux and on Darwin, and reads the module cache, GOPATH and build
+// cache of a caller with the environment caller on goos. The caller's env file is found as the
+// go command finds it on goos, and the one go command that reads it runs in the new home, so
+// it writes nothing into the caller's; defaults derived from that home are the caller's.
+func isolateFrom(scratch string, caller []string, goos string) (directSettings, error) {
+	home := filepath.Join(scratch, "direct-home")
+	for _, config := range []string{filepath.Join(home, ".config"), filepath.Join(home, "Library", "Application Support")} {
+		mode := filepath.Join(config, "go", "telemetry", "mode")
+		if err := os.MkdirAll(filepath.Dir(mode), 0o755); err != nil {
+			return directSettings{}, err
+		}
+		if err := os.WriteFile(mode, []byte("off\n"), 0o644); err != nil {
+			return directSettings{}, err
+		}
+	}
+	vars := map[string]string{}
+	for _, kv := range caller {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			vars[k] = v
+		}
+	}
+	callerHome := vars["HOME"]
+	config, cacheRoot := filepath.Join(callerHome, ".config"), filepath.Join(callerHome, ".cache")
+	if goos == "darwin" {
+		config = filepath.Join(callerHome, "Library", "Application Support")
+		cacheRoot = filepath.Join(callerHome, "Library", "Caches")
+	} else {
+		if x := vars["XDG_CONFIG_HOME"]; x != "" {
+			config = x
+		}
+		if x := vars["XDG_CACHE_HOME"]; x != "" {
+			cacheRoot = x
+		}
+	}
+	envFile := vars["GOENV"]
 	if envFile == "" {
 		envFile = filepath.Join(config, "go", "env")
 	}
 	cmd := exec.Command("go", "env", "GOMODCACHE", "GOPATH", "GOCACHE")
-	cmd.Env = append(os.Environ(), "GOENV="+envFile, "XDG_CONFIG_HOME="+filepath.Join(directHome, ".config"))
+	cmd.Env = append(withoutTelemetryOverrides(caller), "GOENV="+envFile, "HOME="+home,
+		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"))
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("go env GOMODCACHE GOPATH GOCACHE: %w", err)
+		return directSettings{}, fmt.Errorf("go env GOMODCACHE GOPATH GOCACHE: %w", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) != 3 {
-		return fmt.Errorf("go env GOMODCACHE GOPATH GOCACHE printed %q", out)
+		return directSettings{}, fmt.Errorf("go env GOMODCACHE GOPATH GOCACHE printed %q", out)
 	}
-	cache, gopath, buildCache = lines[0], lines[1], lines[2]
-	return nil
+	s := directSettings{home: home, cache: lines[0], gopath: lines[1], buildCache: lines[2]}
+	if s.gopath == filepath.Join(home, "go") {
+		s.gopath = filepath.Join(callerHome, "go")
+	}
+	if s.cache == filepath.Join(home, "go", "pkg", "mod") || s.cache == "" {
+		s.cache = filepath.Join(filepath.SplitList(s.gopath)[0], "pkg", "mod")
+	}
+	if strings.HasPrefix(s.buildCache, home+string(filepath.Separator)) {
+		s.buildCache = filepath.Join(cacheRoot, "go-build")
+	}
+	return s, nil
 }
 
-// isolated is env with the isolated home and the caller's module cache and GOPATH, which
-// replace any earlier value (exec keeps the last of a duplicated name), and the caller's
-// build cache unless env names one.
+// withoutTelemetryOverrides is env without telemetryOverrides.
+func withoutTelemetryOverrides(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(telemetryOverrides, k) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// isolated is env without telemetryOverrides, with the isolated home and the caller's module
+// cache and GOPATH, which replace any earlier value (exec keeps the last of a duplicated
+// name), and the caller's build cache unless env names one.
 func isolated(env []string) []string {
-	return append(append([]string{"GOCACHE=" + buildCache}, env...), "HOME="+directHome,
+	return append(append([]string{"GOCACHE=" + buildCache}, withoutTelemetryOverrides(env)...), "HOME="+directHome,
 		"XDG_CONFIG_HOME="+filepath.Join(directHome, ".config"), "GOMODCACHE="+cache, "GOPATH="+gopath)
 }
 

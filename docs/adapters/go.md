@@ -154,8 +154,10 @@ directory that is missing, not empty, or inside the root): it exits 2 and writes
 
 ## What the base layer says
 
-The adapter does not rewrite scip-go's index, so its relations reach the snapshot as scip-go
-states them. Three of them read differently from what a Go programmer may expect:
+The adapter rewrites scip-go's index only to drop a document for a file outside the package
+listing's Go files, such as one the build context excludes; the records it keeps are written
+back byte for byte, in their order. So the relations reach the snapshot as scip-go states
+them. Three of them read differently from what a Go programmer may expect:
 
 - **`implements` has two forms.** A row from a named type to an interface, and one from a
   method to the interface's method. `T implements I` is written also when only `*T` has the
