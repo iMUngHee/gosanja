@@ -160,6 +160,14 @@ call when the index has a reference exactly there. A call whose callee is not a 
 
 ## What it cannot see
 
+- **References to packages compiled with different features.** When Cargo builds the same
+  package in more than one feature context, rust-analyzer 0.3.3049 keeps the `cfg` flags from
+  the last build-script result it receives for that package ID. The order can vary between
+  runs on unchanged sources. A reference that disappears from the base layer can leave a
+  syntax-layer call as an `open-call` gap. The snapshot keeps the references and gaps
+  observed on that run, and its manifest records the indexer version. If a snapshot diff
+  shows a reference or call change you cannot account for in the source, repeat the index.
+  See the [measurement](../research/rust-analyzer-reference-variance.md).
 - **Macro invocations.** The adapter does not expand macros and does not guess what their
   tokens mean. An invocation inside a function body, or written as an item in a trait, a
   module or a file, is an `opaque` node and an `opaque-region` gap. One in a place that has

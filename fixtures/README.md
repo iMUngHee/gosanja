@@ -88,11 +88,15 @@ at opt-level 0 holds each of the four calls, and each checked-in snapshot holds 
 
 ### Indexers that do not repeat themselves
 
-rust-analyzer and scip-typescript give the same bytes on every run. scip-go 0.2.10 does not:
-the order of `Document.symbols` changes between runs, so regenerated `go-basic/index.scip`
-and `go-flow/index.scip` can differ from the checked-in files without any change in their
-facts. The indexes are kept as the indexers wrote them. Compare decoded facts or the snapshot
-built from a fresh index, which is deterministic, rather than comparing raw Go indexes.
+Repeated runs of rust-analyzer and scip-typescript gave identical bytes on the small
+`rust-basic` and `ts-basic` fixtures, respectively. With rust-analyzer 0.3.3049, references
+can vary between runs when Cargo builds the same package in more than one feature context.
+See the [Rust adapter guide](../docs/adapters/rust.md#what-it-cannot-see).
+
+In scip-go 0.2.10, the order of `Document.symbols` changes between runs, so regenerated
+`go-basic/index.scip` and `go-flow/index.scip` can differ from the checked-in files without
+any change in their facts. The indexes are kept as the indexers wrote them. For the Go
+fixtures, compare decoded facts or the snapshot built from a fresh index.
 
 To regenerate `go-flow`, put Go 1.27.3 and scip-go 0.2.10 on PATH and have
 `golang.org/x/mod` v0.43.0 in the Go module cache. The fixture runs offline with the native
