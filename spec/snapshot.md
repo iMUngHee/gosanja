@@ -1,7 +1,7 @@
-# Snapshot, schema 0.4
+# Snapshot, schema 0.5
 
 A snapshot is what `gosanja index` writes: the facts established about one source tree at one
-moment. It is a directory of seven files. The same input always produces the same bytes.
+moment. It is a directory of eight files. The same input always produces the same bytes.
 
 | File | Holds | Schema |
 | --- | --- | --- |
@@ -11,6 +11,7 @@ moment. It is a directory of seven files. The same input always produces the sam
 | `externals.jsonl` | referenced symbols that are defined outside the indexed sources | `external.schema.json` |
 | `relations.jsonl` | references, calls and implementation relations between rows | `relation.schema.json` |
 | `syntax.jsonl` | syntactic facts about entities | `syntax.schema.json` |
+| `targets.jsonl` | build targets and the entities that are their roots | `target.schema.json` |
 | `gaps.jsonl` | what could not be established | `gap.schema.json` |
 
 Every file is always present. The conventions for paths, ranges and versions are in
@@ -21,7 +22,9 @@ Every file is always present. The conventions for paths, ranges and versions are
 - **Determinism.** Rows are sorted as stated per file; ties are broken by the bytes of the
   serialised row. Fields are written in the order listed here. Numbers are integers.
 - **Closed references.** Every `to`, `parent`, `member_of` and `key` used in another file names
-  a row of `entities.jsonl` or, for `to` only, of `externals.jsonl`.
+  a row of `entities.jsonl` or, for `to` only, of `externals.jsonl`. Every target key in a
+  `files.jsonl` row's `targets` or a gap's `target` names a row of `targets.jsonl`, and a
+  target's `entity` names a row of `entities.jsonl`.
 - **A still tree.** A snapshot describes a tree that did not change while it was read. Each
   file is resolved, checked to lie inside the root and opened by its resolved name. A tree that
   is modified during a run, for example a link swapped between the check and the open, is
@@ -30,9 +33,9 @@ Every file is always present. The conventions for paths, ranges and versions are
   that something is missing it says so in `gaps.jsonl`. The engine cannot notice an item that no
   input mentions.
 - **Provenance.** Every row of `entities.jsonl`, `externals.jsonl`, `relations.jsonl`,
-  `syntax.jsonl` and `gaps.jsonl` has `src`, one of:
+  `syntax.jsonl`, `targets.jsonl` and `gaps.jsonl` has `src`, one of:
   - `scip:<tool name>`, taken from an index produced by that tool;
-  - `adapter:<adapter name>/<layer>`, taken from an adapter's `syntax` or `calls` layer; a
+  - `adapter:<adapter name>/<layer>`, taken from an adapter's `syntax`, `calls` or `build` layer; a
     `skipped-file` gap, which records what an adapter reported about one of its layers, may
     also name `base`;
   - `core:<pass>`, derived by the engine. The passes are `containment`, `identity` and
@@ -139,7 +142,7 @@ manager, package and version as what it contains and is qualified by the same ru
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-snapshot"` | marks the directory as a snapshot; see Publication |
-| `schema` | version | snapshot schema version, `0.4` |
+| `schema` | version | snapshot schema version, `0.5` |
 | `tool` | `{name, version}` | the engine that wrote the snapshot |
 | `project` | `{name}` | a display name; it carries no identity |
 | `scopes` | array | one entry per indexed scope, in path order |
@@ -152,17 +155,17 @@ A scope entry:
 | `path` | path or `"."` | scope root relative to the project root |
 | `adapter` | `{name, version, contract}`, optional | the adapter that produced the inputs; absent when an index was given directly |
 | `indexers` | array of `{name, version}` | tools named in the metadata of the SCIP input, sorted |
-| `layers` | `{base, syntax, calls}` | each `present`, `absent`, `failed` or, for `syntax` and `calls`, `not-requested`; see below |
+| `layers` | `{base, syntax, calls, build}` | each `present`, `absent`, `failed` or, for `syntax`, `calls` and `build`, `not-requested`; see below |
 | `builds` | array | build contexts the adapter reported in a run that asked it for the calls layer, sorted by `id` |
 
 The layers of a scope made by an adapter follow from what was requested and what the
 adapter's manifest offers. A request is a set of layer names that always holds `base`; a run
-that names no layers requests all three. `gosanja index --layers <names>` writes it as a
-comma-separated list of `base`, `syntax` and `calls`, each at most once, holding `base`, with
+that names no layers requests all four. `gosanja index --layers <names>` writes it as a
+comma-separated list of `base`, `syntax`, `calls` and `build`, each at most once, holding `base`, with
 no space and no empty element; any other list is a usage error (exit 2) and no adapter runs.
 `--layers` together with `--scip` is a usage error (exit 2) as well, and no adapter runs. The
 engine passes the adapter the request intersected with the layers its manifest lists (see
-[adapter-contract.md](adapter-contract.md#index)). For `syntax` and `calls`:
+[adapter-contract.md](adapter-contract.md#index)). For `syntax`, `calls` and `build`:
 
 | Requested | Offered by the adapter's manifest | Passed to the adapter | State | Gap |
 | --- | --- | --- | --- | --- |
@@ -172,8 +175,8 @@ engine passes the adapter the request intersected with the layers its manifest l
 
 `not-requested` records a choice, not a limit: it says nothing about whether the adapter offers
 the layer, and a reader must not take it for `absent`. `base` is always requested and is never
-`not-requested`. A scope made from an index given directly has no adapter and records both
-optional layers `absent`.
+`not-requested`. A scope made from an index given directly has no adapter and records every
+optional layer `absent`.
 
 A build context is `{id, toolchain?, target?, profile?, features?}` and nothing else. `id` is
 unique within the scope and is what call evidence refers to. The values are names, not paths:
@@ -193,6 +196,62 @@ never read it.
 | `bytes` | integer | length of the file |
 | `lines` | integer | number of lines |
 | `sha256` | 64 hex digits | digest of the file's bytes |
+| `targets` | array of target keys, optional | the targets the build layer proved include the file, sorted, distinct, never empty |
+| `test` | `cfg`, `target` or `file`, optional | the file is test code; see Test code |
+| `constraint` | string, optional | the file's build constraint as written; the engine never evaluates it |
+
+`targets` claims inclusion and no exclusion: a `skipped-file` gap of layer `build` with code
+`targets-incomplete` says that another target may include the file too. `targets` absent means
+the build layer is not present, or the adapter established no target for the file, which a
+`skipped-file` gap of layer `build` with code `target-unknown` then records. A reader may infer
+only that no inclusion was proven, never that the file belongs to no target. Build facts and
+these skips exist only for documents the base layer admitted; a row that call evidence adds
+has none.
+
+## targets.jsonl
+
+One row per build target of a scope whose build layer is `present`; empty otherwise. Sorted by
+`key`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `scope` | path or `"."` | the `path` of the scope entry whose build layer wrote the row |
+| `key` | target key | unique in the snapshot; a reader must not parse it |
+| `kind` | string | lower-case word from an open set, for example `lib`, `bin`, `test`, `bench`, `example`, `build`, `proc-macro`, `package`, `command` |
+| `name` | string | the adapter's name for the target |
+| `root` | `{symbol, anchor?}`, optional | the target's root symbol, with its anchor converted to UTF-8 byte columns; the anchor is absent when the adapter gave none or it could not be converted |
+| `entity` | key, optional | the entity the root resolved to |
+| `required_features` | array of strings, optional | as the adapter reported them |
+| `test` | `true`, optional | the target is built only for tests |
+| `src` | provenance | `adapter:<name>/build` |
+
+A target whose root did not resolve has no `entity` and an `unresolved-root` gap; one without
+`root` has neither. Two targets may resolve to one entity.
+
+## Test code
+
+A file `test` (`cfg`, `target`, `file`) means that every compilation the adapter observed
+reading the file, as code or as text, was a test compilation; for Go, a `_test.go` file. The
+value says on what evidence: `target` when every such compilation belongs to a test or bench
+target, `cfg` when a test configuration of another target compiled it, `file` when the file's
+name makes it test code.
+
+An entity `test` holds `attribute`, `cfg`, `target` or `file`, and has one of two grounds; the
+field does not say which:
+
+- from the definition itself, through a test row of the syntax layer: for `cfg`, its own gate
+  excludes it from every non-test compilation and a test compilation read its file; for
+  `attribute`, the adapter proved that it is the language's built-in test or benchmark at its
+  expansion site, read by a test-harness compilation, in a file that no non-test compilation the
+  adapter observed read;
+- from its file: the entity takes its file row's `test`, and every compilation that read the
+  file was a test compilation, while the definition itself may carry no gate at all.
+
+A reader cannot infer a gate from an entity's `cfg` alone, and neither ground claims more, for
+example that the code ran. The engine takes the entity's own evidence when there is some and the
+`test` of its `def.file` row otherwise. An entity declared at several sites takes the common
+`test` of its declaration files when they all have the same one, and never its own evidence. A
+collision group and a virtual container have none; a group's members have their own.
 
 ## entities.jsonl
 
@@ -211,6 +270,7 @@ Sorted by `key`.
 | `member_of` | key, optional | the group this definition belongs to |
 | `def` | object, optional | where it is defined; absent on virtual and group rows and on an entity declared at several sites |
 | `decls` | array of `{file, name}`, optional | the sites of an entity declared at several sites, written where `def` stands; see Entities declared at several sites |
+| `test` | `attribute`, `cfg`, `target` or `file`, optional | the entity is test code; see Test code |
 | `src` | provenance | |
 
 `def`:
@@ -391,7 +451,9 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `range` | range, optional | |
 | `count` | integer, optional | how many items the gap stands for |
 | `keys` | array of keys, optional | rows the gap concerns, sorted |
-| `layer` | `base`, `syntax` or `calls`, optional | |
+| `layer` | `base`, `syntax`, `calls` or `build`, optional | |
+| `scope` | path or `"."`, optional | the scope entry a build-layer outcome gap belongs to |
+| `target` | target key, optional | the target a gap concerns |
 | `anchor` | anchor, optional | as the adapter gave it |
 | `code` | string, optional | an adapter's diagnostic code |
 | `detail` | string, optional | a fixed phrase from the table below, never free text |
@@ -406,20 +468,22 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `position-out-of-range` | positions fall outside their line or inside a multi-byte character, or a call site names a file that cannot be read inside the root; the occurrences, or the side-car rows that hold them, are dropped | `file`, `count`, and `layer` for a side-car |
 | `unattributed-references` | references in a file lie in no body | `file`, `count` |
 | `overlapping-bodies` | two bodies overlap without nesting; neither owns references; one row per pair | `file`, `keys`: the two entities |
-| `missing-layer` | the adapter does not offer an optional layer that was requested | `layer` |
-| `failed-layer` | an optional layer failed, was reported without a status, or was malformed | `layer`, `code`, `detail` |
+| `missing-layer` | the adapter does not offer an optional layer that was requested | `layer`, and `scope` when the layer is `build` |
+| `failed-layer` | an optional layer failed, was reported without a status, or was malformed | `layer`, `code`, `detail`, and `scope` when the layer is `build` |
 | `unanchored` | an anchor matched no definition or several | `layer`, `anchor` |
 | `open-call` | a reported call's callee token matches no reference, or the call has no callee token | `file`, `range`: the callee token in the first case, the whole call node in the second |
 | `opaque-region` | the syntax layer marked a region as unreadable | `file`, `range`, `keys`: the entity |
 | `skipped-file` | an adapter layer reported a file it was meant to cover and could not process, in whole or in part | `file`, `layer`, `code`; one row per distinct file and code of a layer |
 | `unknown-build-context` | call evidence names a build context the adapter did not report | `layer`, `count` |
 | `unknown-value` | rows were skipped under the compatibility rules | `layer`, `count` |
+| `unresolved-root` | a target's root did not resolve to an entity | `layer`, `target`, and `anchor` in snapshot coordinates when the root kept one |
+| `unknown-file` | the build layer gave facts or a skip for a file that is not an admitted document; they were dropped | `layer`, `file`; one row per file |
 
 The `src` of a gap names what the gap is about:
 
 | `src` | Gaps |
 | --- | --- |
-| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `skipped-file`, `unknown-build-context`, `unknown-value`, and `position-out-of-range` for a side-car row |
+| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `skipped-file`, `unknown-build-context`, `unknown-value`, `unresolved-root`, `unknown-file`, and `position-out-of-range` for a side-car row |
 | `scip:<tool>` | `undecodable-document`, `document-outside-root`, `source-unavailable`, and `position-out-of-range` for an occurrence |
 | `core:identity` | `symbol-collision` |
 | `core:reference-in-body` | `unattributed-references`, `overlapping-bodies` |
@@ -435,7 +499,33 @@ A `skipped-file` gap has `file`, `layer`, `code` and `src`, and none of `range`,
 `keys`, `anchor` and `detail`. The file need not be listed in `files.jsonl`: the engine records
 what the adapter reported and does not open the file. The layer named in `src` is the field
 `layer`, and it may be `base`: this is the only row whose provenance names the base layer of
-an adapter. Every other `adapter:` provenance names `syntax` or `calls`.
+an adapter. Every other `adapter:` provenance names `syntax`, `calls` or `build`.
+
+## Build facts in a valid snapshot
+
+A snapshot holds only states the engine can write. A validator checks, per scope:
+
+- **Association.** A `targets.jsonl` row belongs to its `scope`; a `missing-layer` or
+  `failed-layer` gap of layer `build` to its `scope`; an `unresolved-root` gap to its target's
+  scope; a `files.jsonl` row and a `skipped-file` or `unknown-file` gap of layer `build` to the
+  deepest scope whose `path` contains its file.
+- **Layer state.** Where `build` is not `present`, the scope has no target row, and no file row
+  carries `targets`, `test` or `constraint`. Its gaps of layer `build` are: none when
+  `not-requested`; exactly one `missing-layer` when `absent` in a scope with an `adapter`, and
+  none when `absent` in a scope without one; exactly one `failed-layer` when `failed`. A
+  `present` build layer has neither of these two gaps.
+- **Membership.** A file row with `targets` has no `target-unknown` skip; a file row without
+  `targets` that has a `test` or `constraint` has one; a `targets-incomplete` skip needs a row
+  with `targets`.
+- **Entity marks.** An entity `target` or `file` needs the same `test` on its `def.file` row; an
+  entity declared at several sites needs its `test` on every declaration file's row; a group
+  and a virtual container have none. An entity's own `cfg` or `attribute`, which comes from a
+  test row the snapshot does not hold, is accepted.
+- **Root links.** A target's `entity` has the root's symbol and, when the root has an
+  `anchor`, a kept declaration exactly at it. A target with `entity` has no `unresolved-root`
+  gap, and one with `root` and without `entity` has exactly one, whose `anchor` is the root's.
+  A root whose stored anchor resolves to a kept declaration of its symbol must have the
+  link.
 
 ## Publication
 

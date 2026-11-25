@@ -4,9 +4,9 @@ Three interfaces of gosanja are specified here and are normative:
 
 | Document | Interface | Version |
 | --- | --- | --- |
-| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.4 |
-| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.4 |
-| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.3 |
+| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.5 |
+| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.5 |
+| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.4 |
 
 The JSON Schemas under [schema/](schema/) define the shape of every file. Where a document and
 a schema disagree, that is a defect in both: report it, and until it is fixed the schema decides
@@ -51,6 +51,21 @@ for each such change.
 
 The current versions were classified this way:
 
+- **Adapter contract 0.5.** A fourth optional layer, `build`, with its own file `build.jsonl`,
+  its `result.json` entry and its `--layers` name, and test rows in `syntax.jsonl`
+  (`"row": "test"`), which the engine never publishes as syntax. Both are additions, but an
+  engine of 0.5 passes `build` by default and reads test rows, so under major 0 it refuses a 0.4
+  manifest and a 0.4 `result.json`.
+- **Snapshot schema 0.5.** An eighth file, `targets.jsonl`; `files.jsonl` rows gain `targets`,
+  `test` and `constraint`; entities gain `test`; a scope's `layers` gains `build`; `counts` gains
+  `targets`; gaps gain the kinds `unresolved-root` and `unknown-file` and the fields `target`
+  and `scope`, and `skipped-file` may name `build`. A reader of 0.4 would not expect the eighth
+  file or the new layer, so under major 0 this is breaking.
+- **Diff schema 0.4.** `not_compared` gains `build` and `test`, and each side's `layers` gains
+  `build`. It reads snapshot 0.5 inputs only, so a 0.4 reader refuses a 0.3 diff.
+
+Earlier versions:
+
 - **Adapter contract 0.4.** The `base` entry of `result.json` gains an optional `merged`, the
   symbols whose definitions at several sites declare one entity (minor). An engine of 0.4
   checks the list whatever the base status and refuses a malformed one; under major 0 it
@@ -64,9 +79,6 @@ The current versions were classified this way:
   sites has no `file`, as a group's row has none; 0.2 required `file` on every such row but a
   group's or a virtual container's. A reader of 0.2 would refuse the row, so the minor rises,
   breaking under major 0: a 0.3 reader refuses a 0.2 diff. It reads snapshot 0.4 inputs only.
-
-Earlier versions:
-
 - **Adapter contract 0.3.** `index` takes `--layers`, and `result.json` holds entries only for
   the layers the run was asked for. These are additions an adapter of 0.2 does not honour, so
   the minor rises, and the change breaks compatibility: an engine of 0.3 refuses a 0.2 adapter.

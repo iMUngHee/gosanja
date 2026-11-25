@@ -32,9 +32,10 @@
             "properties": {
               "base": {"enum": ["present", "absent", "failed"]},
               "syntax": {"enum": ["present", "absent", "failed", "not-requested"]},
-              "calls": {"enum": ["present", "absent", "failed", "not-requested"]}
+              "calls": {"enum": ["present", "absent", "failed", "not-requested"]},
+              "build": {"enum": ["present", "absent", "failed", "not-requested"]}
             },
-            "required": ["base", "syntax", "calls"]
+            "required": ["base", "syntax", "calls", "build"]
           },
           "builds": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/build"}}
         },
@@ -50,6 +51,7 @@
         "relations": {"type": "integer", "minimum": 0},
         "syntax": {"type": "integer", "minimum": 0},
         "gaps": {"type": "integer", "minimum": 0},
+        "targets": {"type": "integer", "minimum": 0},
         "dropped_local_references": {"type": "integer", "minimum": 0}
       },
       "required": [
@@ -59,6 +61,7 @@
         "relations",
         "syntax",
         "gaps",
+        "targets",
         "dropped_local_references"
       ]
     }

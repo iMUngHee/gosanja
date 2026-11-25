@@ -7,7 +7,10 @@
     "language": {"type": "string", "pattern": "^[^A-Z]+$"},
     "bytes": {"type": "integer", "minimum": 0},
     "lines": {"type": "integer", "minimum": 0},
-    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "targets": {"$ref": "build.schema.json#/$defs/targets"},
+    "test": {"$ref": "build.schema.json#/$defs/file-test"},
+    "constraint": {"type": "string"}
   },
   "required": ["path", "bytes", "lines", "sha256"],
   "$defs": {

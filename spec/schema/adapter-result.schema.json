@@ -12,7 +12,8 @@
           "properties": {"merged": {"type": "array", "items": {"type": "string"}}}
         },
         "syntax": {"$ref": "adapter-result.schema.json#/$defs/entry"},
-        "calls": {"$ref": "adapter-result.schema.json#/$defs/entry"}
+        "calls": {"$ref": "adapter-result.schema.json#/$defs/entry"},
+        "build": {"$ref": "adapter-result.schema.json#/$defs/entry"}
       }
     },
     "builds": {"type": "array", "items": {"$ref": "adapter-result.schema.json#/$defs/build"}},

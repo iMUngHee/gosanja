@@ -54,7 +54,7 @@ impl Schemas {
                 .expect("schema registers");
             count += 1;
         }
-        assert_eq!(count, 16, "the specification names sixteen schemas");
+        assert_eq!(count, 18, "the specification names eighteen schemas");
         Self {
             registry: registry
                 .prepare()
@@ -336,6 +336,150 @@ fn syntax_rows_pass_their_schema() {
         src: "adapter:fake/syntax".into(),
     };
     schemas.assert_valid("syntax", &to_value(&syntax));
+}
+
+#[test]
+fn build_rows_pass_their_schema() {
+    let schemas = Schemas::load();
+    let target = json!({"row": "target", "key": "cargo:demo:lib:demo", "kind": "lib", "name": "demo",
+        "root": {"symbol": "rust-analyzer cargo demo 0.1.0 crate/", "anchor": {"file": "src/lib.rs", "line": 0, "col": 0}},
+        "required_features": ["x"], "test": true});
+    schemas.assert_valid("build", &target);
+    schemas.assert_valid("build", &json!({"row": "target", "key": "gomod:m:m/p:package", "kind": "package", "name": "p", "root": {"symbol": "scip-go gomod m v1 `m/p`/"}}));
+    schemas.assert_valid("build", &json!({"row": "file", "file": "src/lib.rs", "targets": ["cargo:demo:lib:demo"], "test": "target", "constraint": "//go:build linux"}));
+    for only in [json!({"targets": ["k"]}), json!({"test": "cfg"}), json!({"constraint": ""})] {
+        let mut row = json!({"row": "file", "file": "a.go"});
+        row.as_object_mut().unwrap().extend(only.as_object().unwrap().clone());
+        schemas.assert_valid("build", &row);
+    }
+    for bad in [
+        json!({"row": "file", "file": "a.go"}),
+        json!({"row": "file", "file": "a.go", "targets": []}),
+        json!({"row": "file", "file": "a.go", "targets": ["k", "k"]}),
+        json!({"row": "file", "file": "a.go", "test": "attribute"}),
+        json!({"row": "file", "file": "/abs/a.go", "test": "file"}),
+        json!({"row": "target", "kind": "lib", "name": "demo"}),
+        json!({"row": "target", "key": "has space", "kind": "lib", "name": "demo"}),
+        json!({"row": "target", "key": "bad%zz", "kind": "lib", "name": "demo"}),
+        json!({"row": "target", "key": "k", "kind": "Lib", "name": "demo"}),
+        json!({"row": "target", "key": "k", "kind": "lib", "name": "demo", "test": false}),
+        json!({"row": "target", "key": "k", "kind": "lib", "name": "demo", "root": {"anchor": {"file": "a", "line": 0, "col": 0}}}),
+        json!({"row": "other", "key": "k"}),
+        json!({"key": "k", "kind": "lib", "name": "demo"}),
+    ] {
+        schemas.assert_invalid("build", &bad);
+    }
+    let long = "k".repeat(1025);
+    schemas.assert_invalid("build", &json!({"row": "target", "key": long, "kind": "lib", "name": "demo"}));
+    schemas.assert_valid("build", &json!({"row": "target", "key": "k".repeat(1024), "kind": "lib", "name": "demo"}));
+}
+
+#[test]
+fn test_rows_pass_their_schema() {
+    let schemas = Schemas::load();
+    for test in ["attribute", "cfg"] {
+        schemas.assert_valid("syntax-fact", &json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": test}));
+    }
+    schemas.assert_valid("syntax-fact", &json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "name": "t"}, "test": "cfg"}));
+    for bad in [
+        json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}}),
+        json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "target"}),
+        json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "cfg", "attributes": ["test"]}),
+        json!({"row": "syntax", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "cfg"}),
+        json!({"row": "test", "test": "cfg"}),
+        json!({"anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "cfg"}),
+    ] {
+        schemas.assert_invalid("syntax-fact", &bad);
+    }
+    schemas.assert_valid("syntax-fact", &json!({"anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "attributes": ["test"]}));
+}
+
+#[test]
+fn target_rows_pass_their_schema() {
+    let schemas = Schemas::load();
+    let full = json!({"scope": ".", "key": "cargo:demo:lib:demo", "kind": "lib", "name": "demo",
+        "root": {"symbol": "rust-analyzer cargo demo 0.1.0 crate/", "anchor": {"file": "src/lib.rs", "line": 0, "col": 0}},
+        "entity": "cargo:demo:crate/~1", "required_features": ["x"], "test": true, "src": "adapter:rust/build"});
+    schemas.assert_valid("target", &full);
+    schemas.assert_valid("target", &json!({"scope": "pkg", "key": "gomod:m:m/p:test", "kind": "test", "name": "p", "src": "adapter:go/build"}));
+    for (field, value) in [
+        ("scope", json!("/abs")),
+        ("key", json!("a b")),
+        ("entity", json!("not a key")),
+        ("src", json!("adapter:rust/syntax")),
+        ("test", json!(false)),
+    ] {
+        let mut row = full.clone();
+        row[field] = value;
+        schemas.assert_invalid("target", &row);
+    }
+    for missing in ["scope", "key", "kind", "name", "src"] {
+        let mut row = full.clone();
+        row.as_object_mut().unwrap().remove(missing);
+        schemas.assert_invalid("target", &row);
+    }
+}
+
+#[test]
+fn file_build_fields_pass_their_schema() {
+    let schemas = Schemas::load();
+    let plain = json!({"path": "src/lib.rs", "language": "rust", "bytes": 3, "lines": 1, "sha256": "0".repeat(64)});
+    schemas.assert_valid("file", &plain);
+    for (field, value) in [
+        ("targets", json!(["cargo:demo:lib:demo", "cargo:demo:test:it"])),
+        ("test", json!("cfg")),
+        ("test", json!("target")),
+        ("test", json!("file")),
+        ("constraint", json!("//go:build linux && amd64")),
+    ] {
+        let mut row = plain.clone();
+        row[field] = value;
+        schemas.assert_valid("file", &row);
+    }
+    for (field, value) in [
+        ("targets", json!([])),
+        ("targets", json!(["k", "k"])),
+        ("targets", json!(["a b"])),
+        ("test", json!("attribute")),
+        ("test", json!(true)),
+        ("constraint", json!(1)),
+    ] {
+        let mut row = plain.clone();
+        row[field] = value;
+        schemas.assert_invalid("file", &row);
+    }
+    schemas.assert_valid("entity", &json!({"key": "cargo:demo:t().", "symbol": "s", "role": "callable", "name": "t",
+        "def": {"file": "src/lib.rs", "name": [0, 3, 0, 4]}, "test": "attribute", "src": "scip:rust-analyzer"}));
+    schemas.assert_invalid("entity", &json!({"key": "cargo:demo:t().", "symbol": "s", "role": "callable", "name": "t",
+        "def": {"file": "src/lib.rs", "name": [0, 3, 0, 4]}, "test": "yes", "src": "scip:rust-analyzer"}));
+}
+
+#[test]
+fn unresolved_root_gap_passes_its_schema() {
+    let schemas = Schemas::load();
+    let gap = json!({"gap": "unresolved-root", "layer": "build", "target": "cargo:demo:bin:demo",
+        "anchor": {"file": "src/main.rs", "line": 0, "col": 0}, "src": "adapter:rust/build"});
+    schemas.assert_valid("gap", &gap);
+    schemas.assert_valid("gap", &json!({"gap": "unresolved-root", "layer": "build", "target": "k", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "unknown-file", "layer": "build", "file": "gen/x.rs", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "skipped-file", "layer": "build", "file": "src/a.rs", "code": "target-unknown", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "missing-layer", "layer": "build", "scope": ".", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "failed-layer", "layer": "build", "scope": "pkg", "detail": "row-invalid", "src": "adapter:rust/build"}));
+    for bad in [
+        json!({"gap": "unresolved-root", "layer": "build", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "target": "k", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "layer": "syntax", "target": "k", "src": "adapter:rust/syntax"}),
+        json!({"gap": "unresolved-root", "layer": "build", "target": "a b", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "layer": "build", "target": "k", "file": "src/a.rs", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "layer": "build", "target": "k", "src": "scip:rust-analyzer"}),
+        json!({"gap": "unknown-file", "layer": "build", "src": "adapter:rust/build"}),
+        json!({"gap": "unknown-file", "layer": "build", "file": "a", "target": "k", "src": "adapter:rust/build"}),
+        json!({"gap": "missing-layer", "layer": "build", "src": "adapter:rust/build"}),
+        json!({"gap": "failed-layer", "layer": "build", "detail": "row-invalid", "src": "adapter:rust/build"}),
+        json!({"gap": "skipped-file", "layer": "build", "file": "src/a.rs", "code": "target-unknown", "src": "adapter:rust/syntax"}),
+    ] {
+        schemas.assert_invalid("gap", &bad);
+    }
 }
 
 /// One valid row of every gap kind.

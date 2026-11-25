@@ -1,4 +1,4 @@
-# Diff, schema 0.3
+# Diff, schema 0.4
 
 A row of a diff says that one snapshot holds a statement and the other does not. It never says
 that the code changed. A snapshot that observed less, because a file was skipped, an anchor did
@@ -7,7 +7,7 @@ say so; the diff shows the same absence a reader of the two snapshots would see.
 gives each side's gap counts per kind and its layer states, so that a reader can weigh a row.
 
 A diff is what `gosanja diff <old> <new>` writes: the differences between two snapshots of one
-project, schema 0.4 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
+project, schema 0.5 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
 two inputs always produce the same bytes.
 
 | File | Holds | Schema |
@@ -99,7 +99,7 @@ An unpaired row never equals a row of the other side that has the same key text.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-diff"` | marks the directory as a diff; see Publication |
-| `schema` | version | diff schema version, `0.3` |
+| `schema` | version | diff schema version, `0.4` |
 | `tool` | `{name, version}` | the engine that wrote the diff |
 | `weights` | object | the weights and the threshold of candidates, below |
 | `old` | side | the old snapshot |
@@ -107,7 +107,7 @@ An unpaired row never equals a row of the other side that has the same key text.
 | `counts` | object | number of rows per file, below |
 | `packages_added` | array of packages | packages that only the new side's relations reach, sorted |
 | `packages_removed` | array of packages | packages that only the old side's relations reach, sorted |
-| `not_compared` | array | `calls`, `syntax`: the comparisons left out (see What is not compared), sorted |
+| `not_compared` | array | `build`, `calls`, `syntax`, `test`: the comparisons left out (see What is not compared), sorted |
 
 `weights` has `name`, `file`, `parents`, `size`, `outgoing`, `incoming` and `threshold`, each an
 integer: the weight of the candidate feature of that name, and the threshold of the score.
@@ -116,10 +116,10 @@ A side:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `schema` | version | the snapshot's `schema`, `0.4` |
+| `schema` | version | the snapshot's `schema`, `0.5` |
 | `project` | `{name}` | the snapshot's `project` |
 | `adapter` | `{name, version, contract}`, optional | the scope's `adapter`, absent when the snapshot's scope has none |
-| `layers` | `{base, syntax, calls}` | the scope's `layers` |
+| `layers` | `{base, syntax, calls, build}` | the scope's `layers` |
 | `builds` | array | the scope's `builds` |
 | `counts` | object | the snapshot's `counts` |
 | `gaps` | object | the number of rows of the snapshot's `gaps.jsonl` per `gap`, one member per kind that has rows, in byte order of the kind |
@@ -327,6 +327,18 @@ members, and a snapshot of the same base input without any such row holds one en
 reports their unpaired rows as `removed` or `added`.
 
 A reader comparing snapshots made with different layer selections should expect these rows.
+
+Build facts are never compared: `targets.jsonl`, a file row's `targets`, `test` and
+`constraint`, and an entity's `test` give no row, whatever changed. Two words say so:
+
+- `build`, when either side's build layer is `present`;
+- `test`, when either side has any entity or file `test`, whatever layer gave it, so that a
+  mark from the syntax layer alone is disclosed too.
+
+Pairing and every other comparison are unchanged, so a changed target, file fact or test mark
+produces no row while a changed syntax property still does. Test evidence never reaches
+`syntax.jsonl` and never decides whether a symbol is folded, so valid test evidence changes
+neither a compared syntax property nor an entity's identity.
 
 ## Publication
 
