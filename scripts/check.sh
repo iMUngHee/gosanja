@@ -12,6 +12,17 @@ cargo deny --locked check
 # The Go adapter. Nothing here downloads: a module missing from the cache fails the gate.
 go_needed=go1.27.3
 
+# Until go_offline_env has run, a go command is an error: it would see the caller's settings.
+# The guard comes first in the Go part, so no go command can be placed before it.
+if ! real_go=$(command -v go); then
+    echo "check.sh: adapters/go needs $go_needed, and there is no go on PATH" >&2
+    exit 1
+fi
+go() {
+    echo "check.sh: go $* ran before the gate isolated Go's settings" >&2
+    exit 1
+}
+
 # go_version_ok WORD: whether the version word `go version` prints is go1.27.3, alone or with
 # an `-X:<experiments>` suffix.
 go_version_ok() {
@@ -84,15 +95,6 @@ go_offline_env() {
     export GOPATH="$gopath" GOMODCACHE="$cache" GOCACHE="$build_cache" GOENV=off
 }
 
-if ! real_go=$(command -v go); then
-    echo "check.sh: adapters/go needs $go_needed, and there is no go on PATH" >&2
-    exit 1
-fi
-# Until go_offline_env has run, a go command is an error: it would see the caller's settings.
-go() {
-    echo "check.sh: go $* ran before the gate isolated Go's settings" >&2
-    exit 1
-}
 go_scratch=$(mktemp -d)
 trap 'rm -rf "$go_scratch"' EXIT
 

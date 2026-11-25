@@ -104,7 +104,8 @@ It runs the format check, clippy with `-D warnings`, the tests, the doctests and
 Then, for `adapters/go` and with `GOFLAGS=-mod=readonly GOPROXY=off GOTOOLCHAIN=local
 GOWORK=off`, it checks that `go version` is Go 1.27.3, that `gofmt -l` prints nothing, and
 runs `go vet`, `go test -count=1 -v` and `go mod verify`. The only tests it may skip are the
-case-alias cases, which need a case-insensitive volume.
+case-alias cases, which need a case-insensitive volume, and the tool-tag case on an
+architecture that has no architecture-level build tag.
 There is no hosted CI yet, so this script is what a change has to pass.
 
 ## Commits
