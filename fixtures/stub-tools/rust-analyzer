@@ -3,7 +3,8 @@ set -eu
 
 if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
     echo 'rust-analyzer 0.3.3049-standalone'
-elif [ "$#" -eq 4 ] && [ "$1" = scip ] && [ "$3" = --output ]; then
+elif { [ "$#" -eq 4 ] || { [ "$#" -eq 6 ] && [ "$5" = --config-path ]; }; } &&
+     [ "$1" = scip ] && [ "$3" = --output ]; then
     cp "$2/index.scip" "$4"
 else
     echo 'usage: rust-analyzer --version | scip <dir> --output <file>' >&2

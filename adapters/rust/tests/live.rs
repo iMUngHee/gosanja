@@ -117,9 +117,12 @@ fn adapter(root: &Path, env: &[(&str, &OsStr)]) -> (Value, tempfile::TempDir) {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    let result =
+    let result: Value =
         serde_json::from_slice(&fs::read(out.path().join("result.json")).expect("result.json"))
             .expect("JSON");
+    if result["layers"]["base"]["status"] != "ok" {
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+    }
     (result, out)
 }
 
@@ -1076,4 +1079,130 @@ fn omitted_syntax_does_not_open_its_indexed_source() {
             "{events:?}"
         );
     }
+}
+
+const SPLIT_FEATURES: &[(&str, &str)] = &[
+    (
+        "Cargo.toml",
+        r#"[workspace]
+resolver = "3"
+[package]
+name = "consumer"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+shared = { path = "shared", features = ["normal"] }
+[build-dependencies]
+shared = { path = "shared", features = ["build"] }"#,
+    ),
+    (
+        "src/lib.rs",
+        "pub fn run() { shared::normal_only(); shared::common(); }\n",
+    ),
+    (
+        "build.rs",
+        "fn main() { shared::build_only(); shared::common(); }\n",
+    ),
+    (
+        "shared/Cargo.toml",
+        r#"[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+[features]
+normal = []
+build = []"#,
+    ),
+    (
+        "shared/build.rs",
+        r#"fn main() {
+    let mut generated = String::new();
+    if cfg!(feature = "normal") {
+        println!("cargo::rustc-cfg=normal_context");
+        generated.push_str("fn generated_normal() {}");
+    }
+    if cfg!(feature = "build") {
+        println!("cargo::rustc-cfg=build_context");
+        generated.push_str("fn generated_build() {}");
+    }
+    let directory = std::env::var_os("OUT_DIR").unwrap();
+    std::fs::write(std::path::Path::new(&directory).join("generated.rs"), generated).unwrap();
+}"#,
+    ),
+    (
+        "shared/src/lib.rs",
+        r#"include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+#[cfg(normal_context)]
+pub fn normal_only() { generated_normal(); }
+#[cfg(build_context)]
+pub fn build_only() { generated_build(); }
+pub fn common() {}
+"#,
+    ),
+];
+
+#[test]
+#[ignore = "needs the real rust-analyzer; run by scripts/check-live.sh"]
+fn one_index_preserves_normal_and_build_dependency_contexts() {
+    use protobuf::Message as _;
+    use scip::types::{Index, SymbolRole};
+
+    let root = scratch();
+    write(root.path(), SPLIT_FEATURES);
+    lock(root.path());
+    read_only(root.path(), true);
+    let before = listing(root.path());
+    let (result, out) = adapter(root.path(), &[]);
+    assert_eq!(base(&result)["status"], "ok", "{result}");
+    let bytes = fs::read(out.path().join("index.scip")).expect("one published index");
+    let index = Index::parse_from_bytes(&bytes).expect("SCIP");
+    let document = |path: &str| {
+        let mut matches = index
+            .documents
+            .iter()
+            .filter(|doc| doc.relative_path == path);
+        let doc = matches.next().unwrap_or_else(|| panic!("missing {path}"));
+        assert!(matches.next().is_none(), "duplicated document {path}");
+        doc
+    };
+    let reference = |path: &str, name: &str| {
+        let suffix = format!(" {name}().");
+        let matches: std::collections::BTreeSet<_> = document(path)
+            .occurrences
+            .iter()
+            .filter(|occ| {
+                occ.symbol_roles & SymbolRole::Definition as i32 == 0
+                    && occ.symbol.ends_with(&suffix)
+            })
+            .map(|occ| occ.symbol.as_str())
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "{path} has references {matches:?} to {name}"
+        );
+        matches.into_iter().next().expect("one reference")
+    };
+    let normal = reference("src/lib.rs", "normal_only");
+    let build = reference("build.rs", "build_only");
+    let normal_common = reference("src/lib.rs", "common");
+    let build_common = reference("build.rs", "common");
+    assert_ne!(normal_common, build_common);
+    assert_ne!(
+        reference("shared/src/lib.rs", "generated_normal"),
+        reference("shared/src/lib.rs", "generated_build")
+    );
+    for symbol in [normal, build, normal_common, build_common] {
+        assert!(
+            document("shared/src/lib.rs").occurrences.iter().any(|occ| {
+                occ.symbol == symbol && occ.symbol_roles & SymbolRole::Definition as i32 != 0
+            }),
+            "missing definition of {symbol}"
+        );
+    }
+    assert_eq!(
+        difference(&before, &listing(root.path())),
+        [] as [PathBuf; 0]
+    );
+    read_only(root.path(), false);
 }

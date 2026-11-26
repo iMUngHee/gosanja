@@ -1,3 +1,9 @@
+mod capture;
+mod graph;
+mod remap;
+
+pub(crate) use capture::wrapper as compiler_wrapper;
+
 use crate::project::Project;
 use crate::result::Problem;
 use gosanja_schema::snapshot::Tool;
@@ -164,19 +170,64 @@ fn prepare(
     }
     let meta = metadata(project, "--locked", "locked-metadata-failed")?;
     before_index(project, &meta);
-    let args = [
+    let work = staged
+        .parent()
+        .expect("the staged SCIP file has a work directory");
+    let mut graph = None;
+    let config_value = match capture::collect(project, work, &meta)
+        .map_err(|error| Problem::new("indexer-failed", error.to_string()))?
+    {
+        capture::Build::Native => None,
+        capture::Build::Replay(path) => {
+            let adapter = std::env::current_exe()
+                .map_err(|error| Problem::new("indexer-failed", error.to_string()))?;
+            Some(
+                serde_json::json!({"cargo":{"buildScripts":{"overrideCommand":[
+                    adapter, "cargo-build-messages", path
+                ]}}}),
+            )
+        }
+        capture::Build::Split(capture) => {
+            graph = Some(
+                graph::write(project, work, &meta, &capture)
+                    .map_err(|error| Problem::new("indexer-failed", error.to_string()))?,
+            );
+            Some(serde_json::json!({"cfg":{"setTest":false}}))
+        }
+    };
+    let index_root = graph
+        .as_ref()
+        .map_or(OsStr::new("."), |graph| graph.root.as_os_str());
+    let mut args = vec![
         OsStr::new("scip"),
-        OsStr::new("."),
+        index_root,
         OsStr::new("--output"),
         staged.as_os_str(),
     ];
+    let config = work.join("rust-analyzer-config.json");
+    if let Some(value) = config_value {
+        let write_config = || -> io::Result<()> {
+            serde_json::to_writer(fs::File::create(&config)?, &value)?;
+            Ok(())
+        };
+        write_config().map_err(|error| Problem::new("indexer-failed", error.to_string()))?;
+        args.extend([OsStr::new("--config-path"), config.as_os_str()]);
+    }
     command(project, "rust-analyzer", &args, "indexer-failed")?;
     if !staged.is_file() {
         return Err(Problem::new("indexer-failed", "index file missing"));
     }
     let bytes = fs::read(staged).map_err(|e| Problem::new("index-unreadable", e.to_string()))?;
-    let index = Index::parse_from_bytes(&bytes)
+    let mut index = Index::parse_from_bytes(&bytes)
         .map_err(|e| Problem::new("index-unreadable", e.to_string()))?;
+    if let Some(graph) = graph {
+        remap::restore(&mut index, project.root, &graph)
+            .and_then(|()| {
+                let bytes = index.write_to_bytes().map_err(io::Error::other)?;
+                fs::write(staged, bytes)
+            })
+            .map_err(|error| Problem::new("indexer-failed", error.to_string()))?;
+    }
     check_documents(&index, &meta, project.root)?;
     Ok(index)
 }

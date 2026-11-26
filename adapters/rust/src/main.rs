@@ -153,8 +153,16 @@ fn index(root: &Path, out: &Path, request: LayerRequest) -> Result<ExitCode, io:
     Ok(ExitCode::SUCCESS)
 }
 fn run() -> io::Result<ExitCode> {
+    if let Some(result) = base::compiler_wrapper() {
+        return result;
+    }
     let args: Vec<_> = env::args_os().skip(1).collect();
     match args.as_slice() {
+        // rust-analyzer uses this as its build-script override command.
+        [cmd, path] if cmd == "cargo-build-messages" => {
+            io::copy(&mut fs::File::open(path)?, &mut io::stdout().lock())?;
+            Ok(ExitCode::SUCCESS)
+        }
         [cmd] if cmd == "describe" => {
             serde_json::to_writer(io::stdout().lock(), &result::manifest())?;
             Ok(ExitCode::SUCCESS)

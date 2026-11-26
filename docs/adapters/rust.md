@@ -53,8 +53,8 @@ them:
   build runs them again for the targets it compiles. A build script that writes into its own
   source directory will do so.
 - **Your cargo configuration stays in force**, the project's and the one in your cargo home,
-  apart from the two build directories. A
-  compiler flag set there, for example an `--emit` path in `build.rustflags`, is applied as
+  apart from the two build directories and the compiler wrappers used to capture unit
+  arguments. A compiler flag set there, for example an `--emit` path in `build.rustflags`, is applied as
   written.
 
 ## What it needs
@@ -184,16 +184,24 @@ references and member declarations to corroborate those ranges. Indexing with
 `--layers base,syntax` is enough to derive import roles and impl header links even when
 the Cargo probe for test evidence is unavailable.
 
+## Cargo build configurations
+
+The base layer records the units that Cargo actually checks. If Cargo emits multiple build
+script outputs for the same package or reports different features for the same Cargo target,
+the adapter generates a `rust-project.json` for rust-analyzer. Each compiler invocation
+gets its own configuration, and each dependency points to the unit that produced the
+artifact passed to `rustc --extern`. This avoids the package-level overwrite measured in the
+[original reproduction](../research/rust-analyzer-reference-variance.md).
+
+The adapter indexes those units together in one SCIP invocation. Temporary views let
+rust-analyzer distinguish units that share a source file. The adapter restores workspace
+paths before publishing the index and retains distinct symbols for different feature
+configurations. If Cargo reports split configurations and the adapter cannot reconstruct
+the compiler units, the base layer reports `indexer-failed`. Indexing split configurations
+requires the analysed toolchain's `rust-src` component.
+
 ## What it cannot see
 
-- **References to packages compiled with different features.** When Cargo builds the same
-  package in more than one feature context, rust-analyzer 0.3.3049 keeps the `cfg` flags from
-  the last build-script result it receives for that package ID. The order can vary between
-  runs on unchanged sources. A reference that disappears from the base layer can leave a
-  syntax-layer call as an `open-call` gap. The snapshot keeps the references and gaps
-  observed on that run, and its manifest records the indexer version. If a snapshot diff
-  shows a reference or call change you cannot account for in the source, repeat the index.
-  See the [measurement](../research/rust-analyzer-reference-variance.md).
 - **Macro invocations.** The adapter does not expand macros and does not guess what their
   tokens mean. An invocation inside a function body, or written as an item in a trait, a
   module or a file, is an `opaque` node and an `opaque-region` gap. One in a place that has
