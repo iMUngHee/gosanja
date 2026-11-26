@@ -84,7 +84,10 @@ evidence they were ranked by. See [diff.md](diff.md) and
 | `gosanja-schema` | `crates/schema` | Types of the three interfaces and the version compatibility rules. Shared with adapters written in Rust. |
 | `gosanja-core` | `crates/core` | Decoding, keys, the graph, side-car joins, writing, validation, running adapters, comparing two snapshots. Knows no language. |
 | `gosanja` | `crates/cli` | The command line. Reads files, finds installed adapters (`discover`), calls the core, sets exit codes. |
-| `gosanja-adapter-rust` | `crates/adapter-rust` | The Rust adapter, a separate program: runs `rust-analyzer scip` for the base layer and reads source with `syn` for the syntax layer. Of this workspace's crates it depends on `gosanja-schema` only; its tests also use the core. |
+| `gosanja-adapter-rust` | `adapters/rust` | The Rust adapter runs `rust-analyzer scip` for the base layer and reads source with `syn` for the syntax layer. It depends on `gosanja-schema`, and its tests also use the core. |
+
+Build the command line with `cargo build -p gosanja` and the Rust adapter with
+`cargo build -p gosanja-adapter-rust`. Both builds use the root workspace's `Cargo.lock`.
 
 The Go adapter, `gosanja-adapter-go`, is a Go module of its own in `adapters/go`, not a crate
 of the workspace: it runs `scip-go` for the base layer and reads source with `go/packages` and

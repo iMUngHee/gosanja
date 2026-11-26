@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/schema", "crates/core", "crates/cli", "crates/adapter-rust"]
+members = ["crates/schema", "crates/core", "crates/cli", "adapters/rust"]
 exclude = ["fixtures/rust-basic", "fixtures/rust-calls", "fixtures/rust-calls-variants", "fixtures/rust-flow", "fixtures/rust-recall"]
 resolver = "3"
 

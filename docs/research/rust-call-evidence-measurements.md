@@ -292,9 +292,10 @@ the two contexts compare equal.
 
 These are measurements of the production reader: the calls layer of `gosanja-adapter-rust`
 built at commit `5c5b057` (the working tree's only other changes to its sources were unit
-tests under `#[cfg(test)]`, which the binary does not contain), run by the ignored test `a_public_crate_keeps_its_counts` in
-`crates/adapter-rust/tests/live.rs`, which `scripts/check-live.sh` runs. They are not the
-scratch reader's of the sections above.
+tests under `#[cfg(test)]`, which the binary does not contain), run by the ignored test `a_public_crate_keeps_its_counts`.
+That test was in `crates/adapter-rust/tests/live.rs` at the measured commit.
+`scripts/check-live.sh` runs it from [adapters/rust/tests/live.rs](../../adapters/rust/tests/live.rs).
+The preceding sections measure a scratch reader.
 
 Input: the published archive `ryu-1.0.23.crate`, taken from the local Cargo cache, with
 SHA-256 `9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f`. The test checks

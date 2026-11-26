@@ -10,7 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-gosanja-schema = { version = "0.2.0", path = "../schema" }
+gosanja-schema = { version = "0.2.0", path = "../../crates/schema" }
 md-5 = "0.11.0"
 proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
 protobuf = "=3.7.2"
@@ -22,5 +22,5 @@ sha2 = "0.11.1"
 syn = { version = "2.0.119", default-features = false, features = ["full", "visit", "parsing", "printing"] }
 
 [dev-dependencies]
-gosanja-core = { version = "0.2.0", path = "../core" }
+gosanja-core = { version = "0.2.0", path = "../../crates/core" }
 tempfile = "3"
