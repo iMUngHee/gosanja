@@ -1,0 +1,46 @@
+[package]
+name = "rust-targets"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[features]
+x = []
+
+[dependencies]
+pm = { path = "pm" }
+
+[[test]]
+name = "noharness"
+harness = false
+
+[[bin]]
+name = "feat"
+path = "src/bin/feat.rs"
+required-features = ["x"]
+
+[[bench]]
+name = "b"
+harness = false
+
+[workspace]
+members = [".", "pm", "indep"]
+default-members = ["."]
+resolver = "2"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+test = false
+
+[[example]]
+name = "e"
+test = true
+
+[[test]]
+name = "lib"
+path = "tests/same_name.rs"
+
+[[bench]]
+name = "lib"
+path = "benches/same_name.rs"
+harness = false

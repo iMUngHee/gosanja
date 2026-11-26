@@ -85,8 +85,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("manifest %s: %v", data, err)
 	}
 	scope := manifest.Scopes[0]
-	if scope.Adapter.Name != "go" || scope.Adapter.Contract != "0.4" ||
-		!reflect.DeepEqual(scope.Layers, map[string]string{"base": "present", "syntax": "present", "calls": "absent"}) {
+	if scope.Adapter.Name != "go" || scope.Adapter.Contract != "0.5" ||
+		!reflect.DeepEqual(scope.Layers, map[string]string{"base": "present", "syntax": "present", "calls": "absent", "build": "present"}) {
 		t.Errorf("scope %+v", scope)
 	}
 	if n := countGaps(readSnapshot(t, out), "missing-layer", "calls"); n != 1 {
@@ -188,13 +188,13 @@ func TestMergedPackage(t *testing.T) {
 					def = site["file"] == "a.go" && row["decls"] == nil
 				}
 			}
-			for _, row := range jsonl(t, filepath.Join(out, "syntax.jsonl")) {
-				if row["key"] == key {
-					tag = reflect.DeepEqual(row["attributes"], []any{constraint})
+			for _, row := range jsonl(t, filepath.Join(out, "files.jsonl")) {
+				if row["path"] == "a.go" {
+					tag = row["constraint"] == constraint
 				}
 			}
 			if !def || !tag {
-				t.Errorf("%s: def in a.go = %t, syntax row with build tag = %t", key, def, tag)
+				t.Errorf("%s: def in a.go = %t, file row with build constraint = %t", key, def, tag)
 			}
 		})
 	}
@@ -642,7 +642,7 @@ func TestDeterminism(t *testing.T) {
 		}
 		outs = append(outs, out)
 	}
-	for _, name := range []string{"result.json", "syntax.jsonl"} {
+	for _, name := range []string{"result.json", "syntax.jsonl", "build.jsonl"} {
 		a, _ := os.ReadFile(filepath.Join(outs[0], name))
 		b, _ := os.ReadFile(filepath.Join(outs[1], name))
 		if len(a) == 0 || !bytes.Equal(a, b) {
@@ -659,7 +659,7 @@ func TestDeterminism(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	for _, name := range []string{"result.json", "syntax.jsonl"} {
+	for _, name := range []string{"result.json", "syntax.jsonl", "build.jsonl"} {
 		a, _ := os.ReadFile(filepath.Join(outs[0], name))
 		b, _ := os.ReadFile(filepath.Join(out, name))
 		if !bytes.Equal(a, b) {

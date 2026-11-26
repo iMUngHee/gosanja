@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/scip-code/scip/bindings/go/scip"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -82,6 +83,19 @@ func (x *Index) Paths() []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+// NamespaceDefinition names the final namespace descriptor of a global definition.
+func NamespaceDefinition(occ *scip.Occurrence) (string, bool) {
+	if !strings.HasSuffix(occ.Symbol, "/") || !scip.SymbolRole_Definition.Matches(occ) {
+		return "", false
+	}
+	symbol, err := scip.ParseSymbol(occ.Symbol)
+	if err != nil || len(symbol.Descriptors) == 0 {
+		return "", false
+	}
+	last := symbol.Descriptors[len(symbol.Descriptors)-1]
+	return last.Name, last.Suffix == scip.Descriptor_Namespace
 }
 
 // Range is an occurrence range as [startLine, startCol, endLine, endCol].

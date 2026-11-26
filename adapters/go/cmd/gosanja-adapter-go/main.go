@@ -1,8 +1,9 @@
 // Command gosanja-adapter-go is the Go adapter of gosanja: it answers `describe` and `index`
-// as spec/adapter-contract.md (version 0.4) defines them.
+// as spec/adapter-contract.md (version 0.5) defines them.
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	adaptergo "gosanja/adapters/go"
 	"gosanja/adapters/go/internal/base"
+	buildlayer "gosanja/adapters/go/internal/build"
 	"gosanja/adapters/go/internal/contract"
 	"gosanja/adapters/go/internal/env"
 	"gosanja/adapters/go/internal/paths"
@@ -39,7 +41,7 @@ func Manifest() contract.Manifest {
 		Version:          adaptergo.Version(),
 		Languages:        []string{"go"},
 		PositionEncoding: "utf-8",
-		Layers:           []string{contract.Base, contract.Syntax},
+		Layers:           []string{contract.Base, contract.Syntax, contract.Build},
 		Requires:         []contract.Requirement{{Tool: "go"}, {Tool: "scip-go"}},
 		Markers:          []string{"go.mod"},
 	}
@@ -99,7 +101,7 @@ func parse(args []string) (options, error) {
 		values[name] = args[i+1]
 	}
 	o.root, o.out = values["--root"], values["--out"]
-	o.request = contract.Request{Syntax: true}
+	o.request = contract.Request{Syntax: true, Build: true}
 	if o.root == "" || o.out == "" {
 		return o, invalid{"--root and --out are required"}
 	}
@@ -138,6 +140,22 @@ func index(args []string, caller env.Caller, goos string, stderr io.Writer) erro
 		}
 		result.Layers[contract.Syntax] = entry
 	}
+	if o.request.Build {
+		entry := contract.Failed("base-failed")
+		if !outcome.Failed() {
+			var rows bytes.Buffer
+			entry, err = buildlayer.Layer(&rows, root, outcome)
+			if err != nil {
+				return err
+			}
+			if entry.Status == "ok" {
+				if err := os.WriteFile(filepath.Join(out, "build.jsonl"), rows.Bytes(), 0o644); err != nil {
+					return err
+				}
+			}
+		}
+		result.Layers[contract.Build] = entry
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
@@ -157,7 +175,7 @@ func syntaxLayer(root, out string, outcome base.Outcome, stderr io.Writer) (cont
 	files := make(map[string]syntax.File, len(outcome.Reads))
 	for rel, read := range outcome.Reads {
 		files[rel] = syntax.File{
-			Code: read.Code, HasLineDirective: read.LineDirective, MergedPackage: outcome.MergedPackageFiles[rel],
+			Code: read.Code, HasLineDirective: read.LineDirective,
 		}
 	}
 	entry, facts := layer(context.Background(), syntax.Input{

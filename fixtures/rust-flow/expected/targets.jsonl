@@ -1,0 +1,2 @@
+{"scope":".","key":"cargo:flow-app:bin:flow-app","kind":"bin","name":"flow-app","root":{"symbol":"rust-analyzer cargo flow-app 0.1.0 crate/","anchor":{"file":"app/src/main.rs","line":0,"col":0}},"entity":"cargo:flow-app:crate/","src":"adapter:rust/build"}
+{"scope":".","key":"cargo:flow-kit:lib:flow_kit","kind":"lib","name":"flow_kit","root":{"symbol":"rust-analyzer cargo flow-kit 0.1.0 crate/","anchor":{"file":"kit/src/lib.rs","line":0,"col":0}},"entity":"cargo:flow-kit:crate/","src":"adapter:rust/build"}

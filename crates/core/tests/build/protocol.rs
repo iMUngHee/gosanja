@@ -1,6 +1,4 @@
-// The build layer and test rows over the fake adapter (criteria 8 and 11 of the build plan).
-// Included by `adapter_protocol.rs`. Its assertions read the published files as JSON, so that
-// the same cases also run against an engine without the build layer.
+// Build and test sidecar handling through a fake adapter.
 
 include!("run.rs");
 

@@ -17,7 +17,7 @@ gosanja diff <old> <new> --out <dir>
 ```
 
 `<old>` and `<new>` are snapshot directories, as `gosanja index` writes them. Both must be of
-the engine's snapshot schema (0.3), each with exactly one scope, and each must pass
+the engine's snapshot schema (0.5), each with exactly one scope, and each must pass
 `gosanja validate`; the diff checks this itself, without the sources, before it writes
 anything.
 
@@ -108,10 +108,11 @@ it. What a comparison left out covers:
 - `syntax`: syntax properties (visibility, qualifiers, attributes, outline) and the calls the
   syntax layer declared;
 - `calls`: the calls from that layer.
+- `build`: targets and file build facts, when either side has the build layer present.
+- `test`: entity and file test marks, when either side has any.
 
-A comparison that is listed there produced no rows, so the absence of such rows says nothing.
-The same relations are also left out of the candidates' `outgoing` and `incoming` features and
-of the package lists.
+Excluded comparisons produce no rows. Excluded calls are also left out of the candidates'
+`outgoing` and `incoming` features and of the package lists.
 
 ### Snapshots made with and without the syntax layer
 

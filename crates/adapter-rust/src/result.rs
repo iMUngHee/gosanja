@@ -1,6 +1,6 @@
 use gosanja_adapter_rust::calls::Outcome;
 use gosanja_schema::contract::{
-    AdapterManifest, AdapterResult, CONTRACT_VERSION, Diagnostic, LayerName, LayerResult,
+    AdapterManifest, AdapterResult, CONTRACT_VERSION, Diagnostic, LayerRequest, LayerResult,
     LayerStatus, RESULT_FILE, Requirement,
 };
 use gosanja_schema::position::PositionEncoding;
@@ -14,7 +14,7 @@ pub fn manifest() -> AdapterManifest {
         version: env!("CARGO_PKG_VERSION").into(),
         languages: vec!["rust".into()],
         position_encoding: PositionEncoding::Utf32,
-        layers: vec![LayerName::Base, LayerName::Syntax, LayerName::Calls],
+        layers: LayerRequest::ALL.iter().collect(),
         requires: Some(
             ["rust-analyzer", "cargo"]
                 .map(|name| Requirement {
@@ -54,6 +54,7 @@ pub struct Layers {
     pub base: Result<(), Problem>,
     pub syntax: Option<LayerResult>,
     pub calls: Option<Outcome>,
+    pub build: Option<LayerResult>,
 }
 
 pub fn publish(out: &Path, layers: Layers, mut tools: Vec<Tool>) -> io::Result<()> {
@@ -61,6 +62,7 @@ pub fn publish(out: &Path, layers: Layers, mut tools: Vec<Tool>) -> io::Result<(
         base,
         syntax,
         calls,
+        build,
     } = layers;
     let base = match base {
         Ok(()) => LayerResult {
@@ -80,6 +82,9 @@ pub fn publish(out: &Path, layers: Layers, mut tools: Vec<Tool>) -> io::Result<(
     let mut entries = BTreeMap::from([("base".into(), base)]);
     if let Some(syntax) = syntax {
         entries.insert("syntax".into(), syntax);
+    }
+    if let Some(build) = build {
+        entries.insert("build".into(), build);
     }
     let builds = calls.and_then(|calls| {
         if let Some(version) = calls.rustc {

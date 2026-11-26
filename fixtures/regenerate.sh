@@ -3,7 +3,7 @@
 # adapter's output.
 #
 # Usage: fixtures/regenerate.sh [--out <dir>] [--indexes-only] [fixture...]
-#   fixtures: rust-basic rust-flow rust-recall rust-calls rust-calls-variants go-basic
+#   fixtures: rust-basic rust-flow rust-recall rust-calls rust-calls-variants rust-targets go-basic
 #             go-flow ts-basic diff-basic; with none given every fixture is rebuilt.
 #
 # Indexers record the absolute directory they ran in, so each fixture is copied to the fixed
@@ -25,15 +25,16 @@
 # when you commit new indexes.
 # go-flow indexes with the host build context, cgo disabled, and a warm Go module cache.
 #
-# The snapshots are those of rust-flow, rust-calls and both sides of diff-basic, written
+# The snapshots are those of rust-flow, rust-calls, rust-targets and both sides of diff-basic, written
 # by this workspace's engine with its Rust adapter, which runs the indexer itself, and that
 # of go-flow, written by the engine with the Go adapter, which runs scip-go itself. The
 # engine and the adapters are built into a temporary directory; GOSANJA_BIN names a
 # directory holding gosanja, gosanja-adapter-rust and gosanja-adapter-go to use instead. A
 # staged Rust snapshot replaces nothing unless every scope of its manifest has the calls
 # layer present and its relations hold the call relation from the Rust adapter's calls layer
-# that fixtures/README.md names as the fixture's control; the go-flow snapshot replaces
-# nothing unless its base and syntax layers are present. A fixture's files are put in place
+# that fixtures/README.md names as the fixture's control. The go-flow snapshot requires
+# base and syntax present. Each snapshot also requires build present in every scope and
+# the control file membership documented in fixtures/README.md. A fixture's files are put in place
 # only once all of them are staged and checked, so a failed run leaves it as it was.
 set -eu
 
@@ -163,9 +164,33 @@ tools() {
     fi
 }
 
-# control <snapshot path relative to fixtures/>: the control relation's two keys.
+# control <table name> <snapshot path relative to fixtures/>: the row's two keys.
 control() {
-    sed -n "s#^| \`$1\` | \`\([^\`]*\)\` | \`\([^\`]*\)\` |.*#\1 \2#p" "$here/README.md"
+    sed -n "/^### Control $1\$/,/^### /{
+        s#^| \`$2\` | \`\([^\`]*\)\` | \`\([^\`]*\)\` |.*#\1 \2#p
+    }" "$here/README.md"
+}
+
+# require_layer <staged snapshot> <snapshot path relative to fixtures/> <layer>
+require_layer() {
+    scopes=$(grep -o '"layers":{[^}]*}' "$1/manifest.json" | wc -l)
+    present=$(grep -o '"layers":{[^}]*"'"$3"'":"present"[^}]*}' "$1/manifest.json" | wc -l)
+    if [ "$scopes" -eq 0 ] || [ "$scopes" -ne "$present" ]; then
+        die "$2: the $3 layer is present in $present of $scopes scopes; nothing replaced"
+    fi
+}
+
+# require_build <staged snapshot> <snapshot path relative to fixtures/>
+require_build() {
+    require_layer "$1" "$2" build
+    members=$(control membership "$2")
+    [ -n "$members" ] || die "$2: fixtures/README.md names no control membership; nothing replaced"
+    file=${members% *}
+    key=${members#* }
+    if ! grep -F '"path":"'"$file"'"' "$1/files.jsonl" |
+        grep -o '"targets":\[[^]]*\]' | grep -qF '"'"${key}"'"'; then
+        die "$2: no build membership $file -> $key; nothing replaced"
+    fi
 }
 
 # snapshot <copy directory> <staged snapshot> <snapshot path relative to fixtures/>
@@ -173,13 +198,9 @@ snapshot() {
     tools
     rust_env XDG_CACHE_HOME="$work/cache" "$bin/gosanja" index --adapter "$bin/gosanja-adapter-rust" \
         --root "$1" --out "$2" >&2
-    manifest=$2/manifest.json
-    scopes=$(grep -o '"layers":{[^}]*}' "$manifest" | wc -l)
-    present=$(grep -o '"layers":{[^}]*"calls":"present"[^}]*}' "$manifest" | wc -l)
-    if [ "$scopes" -eq 0 ] || [ "$scopes" -ne "$present" ]; then
-        die "$3: the calls layer is present in $present of $scopes scopes; nothing replaced"
-    fi
-    keys=$(control "$3")
+    require_layer "$2" "$3" calls
+    require_build "$2" "$3"
+    keys=$(control relations "$3")
     [ -n "$keys" ] || die "$3: fixtures/README.md names no control relation; nothing replaced"
     from=${keys% *}
     to=${keys#* }
@@ -212,6 +233,7 @@ go_snapshot() {
     *'"base":"present"'*'"syntax":"present"'*) ;;
     *) die "go-flow: the snapshot's layers are $layers, not base and syntax present; nothing replaced" ;;
     esac
+    require_build "$2" go-flow/expected
 }
 
 # One Rust fixture: index, and with a snapshot path its snapshot.
@@ -264,11 +286,11 @@ other_index() {
     echo "$fixture: $("$1" --version)"
 }
 
-[ "$#" -gt 0 ] || set -- rust-basic rust-flow rust-recall rust-calls rust-calls-variants go-basic go-flow ts-basic diff-basic
+[ "$#" -gt 0 ] || set -- rust-basic rust-flow rust-recall rust-calls rust-calls-variants rust-targets go-basic go-flow ts-basic diff-basic
 for fixture in "$@"; do
     case $fixture in
     rust-basic | rust-recall) rust_fixture "$fixture" ;;
-    rust-flow | rust-calls) rust_fixture "$fixture" snapshot ;;
+    rust-flow | rust-calls | rust-targets) rust_fixture "$fixture" snapshot ;;
     rust-calls-variants) rust_variants ;;
     diff-basic) diff_basic ;;
     go-basic) other_index go-basic "$scip_go" index --module-version v1.0.0 ;;

@@ -48,11 +48,6 @@ func (s *selection) items(file string, syntax *ast.File, fset *token.FileSet, in
 		rows = append(rows, row)
 	}
 
-	if !s.in.Files[file].MergedPackage {
-		if tag := buildTag(syntax); tag != "" {
-			add(syntax.Name, []string{tag}, nil)
-		}
-	}
 	for _, declaration := range syntax.Decls {
 		switch decl := declaration.(type) {
 		case *ast.FuncDecl:
@@ -96,20 +91,6 @@ func zeroBased(pos token.Position) (line, col uint32, ok bool) {
 		return 0, 0, false
 	}
 	return uint32(pos.Line - 1), uint32(pos.Column - 1), true
-}
-
-func buildTag(file *ast.File) string {
-	for _, group := range file.Comments {
-		if group.Pos() >= file.Package {
-			break
-		}
-		for _, comment := range group.List {
-			if strings.HasPrefix(comment.Text, "//go:build ") || strings.HasPrefix(comment.Text, "//go:build\t") {
-				return comment.Text
-			}
-		}
-	}
-	return ""
 }
 
 func directives(group *ast.CommentGroup) []string {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -35,7 +36,8 @@ func TestLayers(t *testing.T) {
 		{[]string{"--layers", "base"}, []string{"base"}},
 		{[]string{"--layers", "base,syntax"}, []string{"base", "syntax"}},
 		{[]string{"--layers", "syntax,base"}, []string{"base", "syntax"}},
-		{nil, []string{"base", "syntax"}},
+		{[]string{"--layers", "base,build"}, []string{"base", "build"}},
+		{nil, []string{"base", "build", "syntax"}},
 	}
 	for _, c := range cases {
 		name := "no --layers"
@@ -76,6 +78,21 @@ func TestLayers(t *testing.T) {
 			} else if *calls != 0 || err == nil {
 				t.Errorf("the layer ran %d times, syntax.jsonl written: %v", *calls, err == nil)
 			}
+			buildData, err := os.ReadFile(filepath.Join(out, "build.jsonl"))
+			if buildWanted := slices.Contains(c.layers, "build"); buildWanted {
+				if err != nil || r.Layers["build"].Status != "ok" {
+					t.Fatalf("build.jsonl: %v, build %+v", err, r.Layers["build"])
+				}
+				if len(buildData) == 0 || buildData[len(buildData)-1] != '\n' {
+					t.Fatal("build.jsonl is empty or has no trailing newline")
+				}
+				for row := range bytes.SplitSeq(bytes.TrimSuffix(buildData, []byte{'\n'}), []byte{'\n'}) {
+					validate(t, "build.schema.json", row)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Errorf("build.jsonl should be absent: %v", err)
+			}
+
 			if n := indexRuns(t, w); n != 1 {
 				t.Errorf("scip-go ran %d times", n)
 			}

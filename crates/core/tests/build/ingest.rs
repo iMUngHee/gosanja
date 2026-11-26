@@ -1,5 +1,4 @@
-// The entity `test` the engine derives from test rows and file rows (criterion 11 of the build
-// plan). Included by `ingest_cases.rs`.
+// Test marks from item and file evidence.
 
 include!("run.rs");
 

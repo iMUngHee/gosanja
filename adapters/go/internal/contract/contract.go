@@ -1,4 +1,4 @@
-// Package contract holds the adapter contract's types (spec/adapter-contract.md, version 0.4)
+// Package contract holds the adapter contract's types (spec/adapter-contract.md, version 0.5)
 // as this adapter writes them. Field order follows the specification, and the tests check every
 // written file against spec/schema.
 package contract
@@ -9,13 +9,14 @@ import (
 )
 
 // Version is the adapter contract version the adapter speaks.
-const Version = "0.4"
+const Version = "0.5"
 
 // Layer names of the contract.
 const (
 	Base   = "base"
 	Syntax = "syntax"
 	Calls  = "calls"
+	Build  = "build"
 )
 
 // Manifest is what `describe` prints.
@@ -81,6 +82,7 @@ func Failed(code string) Entry {
 type Request struct {
 	Syntax bool
 	Calls  bool
+	Build  bool
 }
 
 // ParseRequest reads a `--layers` list: layer names separated by commas, each at most once,
@@ -105,6 +107,8 @@ func ParseRequest(list string, offered []string) (Request, error) {
 			request.Syntax = true
 		case Calls:
 			request.Calls = true
+		case Build:
+			request.Build = true
 		}
 	}
 	if !seen[Base] {

@@ -1,0 +1,5 @@
+{"gap":"opaque-region","file":"src/lib.rs","range":[16,4,16,20],"keys":["cargo:rust-targets:holder()."],"src":"adapter:rust/syntax"}
+{"gap":"opaque-region","file":"tests/it.rs","range":[4,4,4,57],"keys":["cargo:rust-targets:it()."],"src":"adapter:rust/syntax"}
+{"gap":"skipped-file","file":"src/main.rs","layer":"calls","code":"uncorroborated","src":"adapter:rust/calls"}
+{"gap":"symbol-collision","keys":["cargo:rust-targets:crate/","cargo:rust-targets:crate/~1","cargo:rust-targets:crate/~2","cargo:rust-targets:crate/~3","cargo:rust-targets:crate/~4","cargo:rust-targets:crate/~5","cargo:rust-targets:crate/~6","cargo:rust-targets:crate/~7","cargo:rust-targets:crate/~8","cargo:rust-targets:crate/~9","cargo:rust-targets:crate/~10","cargo:rust-targets:crate/~11"],"src":"core:identity"}
+{"gap":"symbol-collision","keys":["cargo:rust-targets:main().","cargo:rust-targets:main().~1","cargo:rust-targets:main().~2","cargo:rust-targets:main().~3","cargo:rust-targets:main().~4","cargo:rust-targets:main().~5","cargo:rust-targets:main().~6","cargo:rust-targets:main().~7","cargo:rust-targets:main().~8"],"src":"core:identity"}

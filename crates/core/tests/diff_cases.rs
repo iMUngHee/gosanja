@@ -37,10 +37,13 @@ fn manifest_counts_match_the_emitted_rows_with_and_without_excluded_layers() {
 
     let calls_only = materialize(&calls_only);
     for (old, excluded) in [
-        (root.join("old/expected"), vec![Excluded::Calls]),
+        (
+            root.join("old/expected"),
+            vec![Excluded::Build, Excluded::Calls],
+        ),
         (
             calls_only.path().to_owned(),
-            vec![Excluded::Calls, Excluded::Syntax],
+            vec![Excluded::Build, Excluded::Calls, Excluded::Syntax],
         ),
     ] {
         let result = compare(&old, &new).unwrap();
@@ -187,6 +190,11 @@ fn public_base64_list_reproduces_the_measured_ranks() {
             serde_json::from_slice(files.manifest.as_ref().unwrap()).unwrap();
         assert_eq!(manifest["schema"], "0.2");
         manifest["schema"] = gosanja_schema::snapshot::SCHEMA_VERSION.to_string().into();
+        manifest["counts"]["targets"] = 0.into();
+        for scope in manifest["scopes"].as_array_mut().unwrap() {
+            scope["layers"]["build"] = "absent".into();
+        }
+        files.targets = Some(Vec::new());
         files.manifest = Some(serde_json::to_vec(&manifest).unwrap());
         materialize(&files)
     };
@@ -967,3 +975,5 @@ fn layer_states_alone_remove_matching_properties_relations_and_features() {
         );
     }
 }
+
+include!("build/diff.rs");

@@ -28,8 +28,8 @@ func TestDescribe(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]any{
-		"contract": "0.4", "name": "go", "version": strings.TrimSuffix(string(version), "\n"),
-		"languages": []any{"go"}, "position_encoding": "utf-8", "layers": []any{"base", "syntax"},
+		"contract": "0.5", "name": "go", "version": strings.TrimSuffix(string(version), "\n"),
+		"languages": []any{"go"}, "position_encoding": "utf-8", "layers": []any{"base", "syntax", "build"},
 		"requires": []any{map[string]any{"tool": "go"}, map[string]any{"tool": "scip-go"}},
 		"markers":  []any{"go.mod"},
 	}

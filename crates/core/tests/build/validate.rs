@@ -1,5 +1,4 @@
-// The validator's checks of build facts (criterion 11 of the build plan). Included by
-// `validate_cases.rs`. Each case starts from a snapshot the engine wrote and changes one fact.
+// Validation of build facts and their supporting evidence.
 
 include!("run.rs");
 

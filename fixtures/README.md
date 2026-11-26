@@ -13,6 +13,7 @@ stored here. What each indexer writes for these fixtures is recorded in
 | `rust-recall` | every identifier token in `src/lib.rs` that names a definition of the crate, other than that definition's own name, is a row of `expected-refs.tsv`: file, line, start byte column, then the file, line and column of the name token it names | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
 | `rust-calls` | a workspace of a library, three binaries (one never built) and a procedural macro, holding the constructs the calls layer has to publish or withhold; `NOTE.md` records, per call, the reference the index holds on its line, the definition the call may reach and the rows that follow | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
 | `rust-calls-variants` | three copies of the package `calls-variant`: `v0.1.0`, `v0.2.0` (only the version differs) and `no-default` (version 0.1.0, `default` enables no feature); each copy has its own `Cargo.lock` and `index.scip`, and its library's `direct` calls `leaf` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
+| `rust-targets` | a Cargo workspace with ordinary and test targets, conditional items, and shared source files. Its library's `control_caller` calls `control_callee` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1 |
 | `go-basic` | `greet` is defined at `main.go` [2,5,10]; the reference to it at [7,5,10] lies in `main`'s body [6,0,8,1] | `scip-go` 0.2.10 built with Go 1.27.3 |
 | `go-flow` | a module with ordinary, internal-test and external-test documents, generic and promoted calls, value and pointer interface implementations, build constraints and physical positions after `//line`, with its snapshot in `expected/`. `NOTE.md` gives the source and index controls | `scip-go` 0.2.10 built with Go 1.27.3; snapshot by this workspace's engine and Go adapter |
 | `ts-basic` | `greet` is defined at `src/index.ts` [0,16,21]; the reference to it at [5,9,14] lies in `run`'s body [4,0,6,1] (UTF-16 columns) | `@sourcegraph/scip-typescript` 0.6.2 on Node 26.13.1 with TypeScript 6.0.3 |
@@ -77,14 +78,29 @@ example, nor `diff-public`.
 The script reads this table. Each row names a snapshot, then the entity keys of its control
 call's caller and callee. Each control is a direct call between two functions of one target,
 each on lines of its own, chosen from the source and the fixture's index. The IR of rustc 1.99.1
-at opt-level 0 holds each of the four calls, and each checked-in snapshot holds its relation.
+at opt-level 0 holds each of the calls, and each regenerated snapshot must hold its control relation.
 
 | Snapshot | Caller | Callee | Where |
 | --- | --- | --- | --- |
 | `rust-flow/expected` | `cargo:flow-kit:ping().` | `cargo:flow-kit:pong().` | `kit/src/lib.rs` 53-55 |
 | `rust-calls/expected` | `cargo:calls-lib:direct().` | `cargo:calls-lib:leaf().` | `calls-lib/src/lib.rs` 16-18 |
+| `rust-targets/expected` | `cargo:rust-targets:control_caller().` | `cargo:rust-targets:control_callee().` | `src/lib.rs` 33-35 |
 | `diff-basic/old/expected` | `cargo:diff-basic:caller().` | `cargo:diff-basic:hidden().` | `old/src/lib.rs` 31-33 |
 | `diff-basic/new/expected` | `cargo:diff-basic:caller().` | `cargo:diff-basic:hidden().` | `new/src/lib.rs` 31-33 |
+
+### Control membership
+
+Each listed snapshot has to report build present in every scope and list the control
+file in the given target. Regeneration checks these facts before installing a snapshot.
+
+| Snapshot | File | Target |
+| --- | --- | --- |
+| `rust-flow/expected` | `kit/src/lib.rs` | `cargo:flow-kit:lib:flow_kit` |
+| `rust-calls/expected` | `calls-lib/src/lib.rs` | `cargo:calls-lib:lib:calls_lib` |
+| `rust-targets/expected` | `src/lib.rs` | `cargo:rust-targets:lib:rust_targets` |
+| `diff-basic/old/expected` | `src/lib.rs` | `cargo:diff-basic:lib:diff_basic` |
+| `diff-basic/new/expected` | `src/lib.rs` | `cargo:diff-basic:lib:diff_basic` |
+| `go-flow/expected` | `flow.go` | `gomod:example.com/goflow:example.com/goflow:package` |
 
 ### Indexers that do not repeat themselves
 

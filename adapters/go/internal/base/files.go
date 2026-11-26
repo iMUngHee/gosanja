@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"go/build"
+	"go/build/constraint"
 	"go/parser"
 	"go/scanner"
 	"go/token"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/scip-code/scip/bindings/go/scip"
 	"gosanja/adapters/go/internal/paths"
 	"gosanja/adapters/go/internal/scipindex"
 )
@@ -32,8 +34,10 @@ type Read struct {
 	// LineDirective reports a `//line ` or `/*line ` in the raw bytes, found before parsing.
 	LineDirective bool
 	// PackageName and PackageRange record a valid clause independently of Code.
-	PackageName  string
-	PackageRange scipindex.Range
+	PackageName         string
+	PackageRange        scipindex.Range
+	Constraint          string
+	MultipleConstraints bool
 }
 
 // readFile reads and parses one module file through the root boundary.
@@ -60,6 +64,7 @@ func readFile(root os.FileInfo, f file) Read {
 		return read
 	}
 	fset := token.NewFileSet()
+	read.Constraint, read.MultipleConstraints = buildConstraint(fset.AddFile(f.abs, -1, len(src)), src)
 	tree, err := parser.ParseFile(fset, f.abs, src, parser.SkipObjectResolution)
 	var name string
 	var pos token.Pos
@@ -87,6 +92,56 @@ func readFile(root os.FileInfo, f file) Read {
 	read.PackageName = name
 	read.PackageRange = scipindex.Range{line, col, line, col + int32(len(name))}
 	return read
+}
+
+// AtPackageClause checks the physical definition site shared by package merging and target roots.
+func (r Read) AtPackageClause(doc *scip.Document, occ *scip.Occurrence) bool {
+	if r.PackageName == "" || doc.PositionEncoding != scip.PositionEncoding_UTF8CodeUnitOffsetFromLineStart {
+		return false
+	}
+	site, ok := scipindex.OccurrenceRange(occ)
+	return ok && site == r.PackageRange
+}
+
+func buildConstraint(file *token.File, src []byte) (string, bool) {
+	// The parser can drop the header when scanning the token after the package clause fails.
+	// Stop at the package token so later errors cannot affect the comment positions.
+	var lex scanner.Scanner
+	lex.Init(file, src, nil, scanner.ScanComments)
+	var directive string
+	multiple := false
+	for {
+		pos, tok, comment := lex.Scan()
+		if tok == token.PACKAGE {
+			if multiple {
+				return "", true
+			}
+			return directive, false
+		}
+		if tok != token.COMMENT {
+			return "", false
+		}
+		if !constraint.IsGoBuild(comment) {
+			continue
+		}
+		offset := file.Offset(pos)
+		start := bytes.LastIndexByte(src[:offset], '\n') + 1
+		prefix := src[start:offset]
+		if start == 0 {
+			prefix = bytes.TrimPrefix(prefix, []byte{0xef, 0xbb, 0xbf})
+		}
+		if len(bytes.Trim(prefix, " \t\r")) != 0 {
+			continue
+		}
+		if directive != "" {
+			multiple = true
+		}
+		line := src[offset:]
+		if end := bytes.IndexByte(line, '\n'); end >= 0 {
+			line = bytes.TrimSuffix(line[:end], []byte{'\r'})
+		}
+		directive = string(prefix) + string(line)
+	}
 }
 
 // buildContext uses the tool and release tags of the same Go command and environment as

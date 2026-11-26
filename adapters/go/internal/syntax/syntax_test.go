@@ -49,21 +49,20 @@ func TestItems(t *testing.T) {
 			col  uint32
 			attr string
 		}{
-			{"flow.go", 8, 5, ""},                    // Count alias
-			{"flow.go", 10, 6, ""},                   // DefaultCount
-			{"flow.go", 12, 4, ""},                   // A
-			{"flow.go", 12, 7, ""},                   // B
-			{"flow.go", 14, 7, ""},                   // Marker
-			{"flow.go", 17, 5, ""},                   // Shape
-			{"flow.go", 18, 1, ""},                   // Shape.Score
-			{"flow.go", 38, 5, "//go:noinline"},      // seed
-			{"flow.go", 40, 5, ""},                   // Max
-			{"flow_test.go", 4, 5, ""},               // TestFlow
-			{"external_test.go", 9, 5, ""},           // TestPublicCalls
-			{"meter/meter.go", 14, 5, ""},            // Box
-			{"meter/meter.go", 20, 16, ""},           // Box.Get
-			{"tagged.go", 2, 8, "//go:build go1.21"}, // package flow
-			{"zz_generated.go", 5, 5, ""},            // Generated
+			{"flow.go", 8, 5, ""},               // Count alias
+			{"flow.go", 10, 6, ""},              // DefaultCount
+			{"flow.go", 12, 4, ""},              // A
+			{"flow.go", 12, 7, ""},              // B
+			{"flow.go", 14, 7, ""},              // Marker
+			{"flow.go", 17, 5, ""},              // Shape
+			{"flow.go", 18, 1, ""},              // Shape.Score
+			{"flow.go", 38, 5, "//go:noinline"}, // seed
+			{"flow.go", 40, 5, ""},              // Max
+			{"flow_test.go", 4, 5, ""},          // TestFlow
+			{"external_test.go", 9, 5, ""},      // TestPublicCalls
+			{"meter/meter.go", 14, 5, ""},       // Box
+			{"meter/meter.go", 20, 16, ""},      // Box.Get
+			{"zz_generated.go", 5, 5, ""},       // Generated
 		} {
 			a := contract.Anchor{File: test.file, Line: test.line, Col: test.col}
 			attrs, ok := picked[a]
@@ -76,6 +75,7 @@ func TestItems(t *testing.T) {
 			}
 		}
 		for _, anchor := range []contract.Anchor{
+			{File: "tagged.go", Line: 2, Col: 8},       // package flow
 			{File: "flow.go", Line: 14, Col: 4},        // _
 			{File: "meter/meter.go", Line: 3, Col: 1},  // Circle.Amount
 			{File: "meter/meter.go", Line: 15, Col: 1}, // Box.item

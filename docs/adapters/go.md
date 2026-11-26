@@ -1,9 +1,10 @@
 # The Go adapter
 
-`gosanja-adapter-go` gives the engine two layers for a Go module:
+`gosanja-adapter-go` gives the engine three layers for a Go module:
 
 - the base layer, an index made by `scip-go`;
-- the syntax layer, read from the source with `go/packages` and `go/types`.
+- the syntax layer, read from the source with `go/packages` and `go/types`;
+- the build layer, targets and file facts from the Go listing and source headers.
 
 It has no calls layer. A snapshot made without `--layers`, or with `calls` among them,
 records the calls layer `absent` with one `missing-layer` gap; one made with
@@ -48,7 +49,7 @@ project, and each is tested:
 - It never selects or downloads a toolchain (`GOTOOLCHAIN=local`), never reads a `go.work`
   (`GOWORK=off`), and builds without cgo (`CGO_ENABLED=0`).
 
-Both layers are tested on a copy of a module whose every file and directory is read-only.
+The layers are tested on a copy of a module whose every file and directory is read-only.
 
 These stay in force, outside the measures, and you should know them:
 
@@ -104,13 +105,13 @@ target/debug/gosanja index --root fixtures/go-flow --out "$out/go-flow"
 target/debug/gosanja validate "$out/go-flow" --root fixtures/go-flow
 ```
 
-With `--layers base` the adapter loads no packages for the syntax layer and writes no
-`syntax.jsonl`; scip-go runs once either way. The base layer's status does not depend on the
-syntax layer: a syntax layer that fails leaves the base layer and its snapshot in place.
+With `--layers base` the adapter skips both optional layers. With `--layers base,build` it
+reports build targets and file facts without loading packages for syntax. The indexer runs
+once in either case.
 
 ## The build context
 
-Both layers see the module in one build context: the host's `GOOS` and `GOARCH`, cgo
+The layers see the module in one build context: the host's `GOOS` and `GOARCH`, cgo
 disabled, and the tests included, internal and external. A Go file of the module that this
 context leaves out is reported under the base layer as a `skipped-file` gap with the code
 `build-constraint`: a file whose `//go:build` line excludes it, a cgo file, and the files of
@@ -184,17 +185,24 @@ References that lie in no definition's extent, such as imports, are counted in
 `unattributed-references` gaps. Local variables are `local` symbols, which the engine drops,
 so a call of a local function value has no reference to join and is an `open-call` gap.
 
+## What the build layer reports
+
+The adapter reads the ordinary Go package and its exact internal and external test variants.
+It lists targets as `package`, `command` for a main package or `test`, with the ordinary
+import path as the name. A retained file can have several targets. In a package with tests,
+its ordinary files belong to the ordinary and test targets, and its test files carry
+`test: "file"`. The engine also marks definitions whose declaration files agree on that
+test evidence. A file without proven membership receives a `target-unknown` skip.
+
+The adapter records a retained file's standalone `//go:build` directive from the header in
+`files.jsonl` as `constraint`. Its text keeps indentation and trailing spaces, excluding the
+line ending and a leading UTF-8 BOM. More than one directive receives a
+`constraint-unreadable` skip. The Go tool determines which files are included.
+
 ## What the syntax layer reports
 
 One row for each function, method and interface method, each type (named or alias, generic
-included), each name of a package-level `const` and `var`, and the package clause of a file
-that carries a `//go:build` line when its package has that one file; the line is that row's
-attribute. A package declared in several files has no package-clause row, since a syntax row at
-one of its sites would keep it a collision group (`spec/adapter-contract.md`, `merged`), so the
-`//go:build` lines of its files are not recorded. The adapter decides this from its own count
-of the files it read; should the engine still drop one of two sites, for a reason the adapter
-does not check, such as a range it rejects, the package keeps `def` and has no row for its
-tag. Its attributes are the `//go:`
+included) and each name of a package-level `const` and `var`. Its attributes are the `//go:`
 directive lines of the declaration's doc comment, as written. A row has no `visibility`, since
 Go writes none (exportedness is the case of the first letter), no `qualifiers`, and no `body`:
 the base layer gives the extents. Nothing named `_` has a row, since scip-go never defines it,

@@ -4,17 +4,21 @@ pub(crate) mod call_facts;
 mod items;
 mod outline;
 pub(crate) mod position;
+mod test_gate;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-use gosanja_schema::contract::{Anchor, LayerResult, LayerStatus, SkippedFile, SyntaxFact};
+use gosanja_schema::contract::{
+    Anchor, ItemTest, LayerResult, LayerStatus, SkippedFile, SyntaxFact, TestRow,
+};
 use gosanja_schema::position::Range;
 use gosanja_schema::snapshot::OutlineNode;
 use scip::types::occurrence::{Typed_enclosing_range, Typed_range};
 use scip::types::{Occurrence, SymbolRole};
+use sha2::{Digest, Sha256};
 
 use position::Lines;
 
@@ -27,6 +31,10 @@ pub struct Layer {
     pub skipped: Vec<SkippedFile>,
     /// Lines for standard error.
     pub notes: Vec<String>,
+    /// Test gates at SCIP definitions, pending compilation evidence.
+    pub tests: Vec<TestRow>,
+    /// Content hashes of the source read for the syntax layer.
+    pub hashes: BTreeMap<String, [u8; 32]>,
 }
 
 /// Why a file gives no rows.
@@ -61,18 +69,24 @@ pub fn rows(file: &str, text: &str) -> Result<Vec<SyntaxFact>, Skip> {
 }
 
 fn items(text: &str) -> Result<Vec<items::Item>, Skip> {
+    parsed(text).map(|(items, _)| items)
+}
+
+type Parsed = (Vec<items::Item>, Vec<(u32, u32)>);
+
+fn parsed(text: &str) -> Result<Parsed, Skip> {
     if text.starts_with('\u{feff}') {
         return Err(Skip::ByteOrderMark);
     }
     let result = syn::parse_file(text)
         .ok()
-        .map(|f| items::of_file(&f))
+        .map(|f| (items::of_file(&f), test_gate::positions(&f)))
         .ok_or(Skip::ParseFailed);
     // Every position has been taken out of the spans; the per-thread table can go.
     proc_macro2::extra::invalidate_current_thread_spans();
-    let mut items = result?;
+    let (mut items, gates) = result?;
     items.sort_by_key(|i| (i.line, i.col));
-    Ok(items)
+    Ok((items, gates))
 }
 
 fn fact(file: &str, item: items::Item) -> SyntaxFact {
@@ -111,14 +125,19 @@ pub fn layer(root: &Path, index: &scip::types::Index) -> Layer {
             skipped.insert((file.to_owned(), Skip::Unreadable.code()));
             continue;
         };
-        let items = match items(&text) {
-            Ok(items) => items,
+        layer
+            .hashes
+            .insert(file.into(), Sha256::digest(text.as_bytes()).into());
+        let (items, gates) = match parsed(&text) {
+            Ok(parsed) => parsed,
             Err(skip) => {
                 skipped.insert((file.to_owned(), skip.code()));
                 continue;
             }
         };
-        let extents = Extents::of(index, file, &Lines::new(&text));
+        let lines = Lines::new(&text);
+        let extents = Extents::of(index, file, &lines);
+        layer.tests.extend(test_rows(file, index, &lines, gates));
         for mut item in items {
             if let Some(outline) = &item.outline
                 && let Some(code) = check(outline, extents.at(item.line, item.col))
@@ -151,8 +170,80 @@ pub fn layer(root: &Path, index: &scip::types::Index) -> Layer {
 /// # Errors
 /// When `root` cannot be resolved or the file cannot be written.
 pub fn extract(root: &Path, out: &Path, index: &scip::types::Index) -> io::Result<LayerResult> {
-    let layer = layer(&root.canonicalize()?, index);
-    write(&layer.rows, &out.join("syntax.jsonl"))?;
+    let mut layer = layer(&root.canonicalize()?, index);
+    layer.tests.clear();
+    publish(layer, out)
+}
+
+/// Source positions whose complete gate excludes production and admits tests.
+#[must_use]
+pub fn cfg_test_positions(text: &str) -> Vec<(u32, u32)> {
+    let positions = syn::parse_file(text)
+        .map(|file| test_gate::positions(&file))
+        .unwrap_or_default();
+    proc_macro2::extra::invalidate_current_thread_spans();
+    positions
+}
+
+fn test_rows(
+    file: &str,
+    index: &scip::types::Index,
+    lines: &Lines<'_>,
+    gates: Vec<(u32, u32)>,
+) -> Vec<TestRow> {
+    let mut definitions = BTreeMap::new();
+    if gates.is_empty() {
+        return Vec::new();
+    }
+    for document in index
+        .documents
+        .iter()
+        .filter(|doc| doc.relative_path == file)
+    {
+        let Ok(encoding) = document.position_encoding.enum_value() else {
+            continue;
+        };
+        for occurrence in &document.occurrences {
+            if occurrence.symbol_roles & SymbolRole::Definition as i32 != 0
+                && is_entity(&occurrence.symbol)
+                && let Some((range, _)) =
+                    convert(occurrence, |range| lines.scip_range(range, encoding))
+            {
+                *definitions.entry((range.0[0], range.0[1])).or_insert(0) += 1;
+            }
+        }
+    }
+    gates
+        .into_iter()
+        .filter(|site| definitions.get(site) == Some(&1))
+        .map(|(line, col)| TestRow {
+            row: "test".into(),
+            anchor: Anchor {
+                file: file.into(),
+                line,
+                col: Some(col),
+                name: None,
+            },
+            test: ItemTest::Cfg,
+        })
+        .collect()
+}
+
+/// Write the syntax rows, followed by the optional item test evidence.
+///
+/// # Errors
+/// When the file cannot be written.
+pub fn publish(layer: Layer, out: &Path) -> io::Result<LayerResult> {
+    let path = out.join("syntax.jsonl");
+    write(&layer.rows, &path)?;
+    if !layer.tests.is_empty() {
+        let mut file = io::BufWriter::new(fs::OpenOptions::new().append(true).open(path)?);
+        for test in &layer.tests {
+            serde_json::to_writer(&mut file, test)?;
+            file.write_all(b"\n")?;
+        }
+        file.flush()?;
+    }
     for note in &layer.notes {
         eprintln!("{note}");
     }

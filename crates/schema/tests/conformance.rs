@@ -1014,13 +1014,13 @@ const DIFF_FORMAT: &str = "gosanja-diff";
 const DIFF_SCHEMA: &str = "0.4";
 
 #[test]
-fn diff_schema_version_accepts_0_3_and_refuses_0_2() {
+fn diff_schema_version_accepts_0_4_and_refuses_0_3() {
     use gosanja_schema::diff::SCHEMA_VERSION as DIFF_VERSION;
     let path = repository().join("spec/examples/diff-basic/manifest.json");
     let current: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    assert_eq!(current["schema"], "0.3");
-    assert_eq!(current["old"]["schema"], "0.4");
-    assert_eq!(current["new"]["schema"], "0.4");
+    assert_eq!(current["schema"], "0.4");
+    assert_eq!(current["old"]["schema"], "0.5");
+    assert_eq!(current["new"]["schema"], "0.5");
     let writer = |manifest: &Value| {
         manifest["schema"]
             .as_str()
@@ -1033,7 +1033,7 @@ fn diff_schema_version_accepts_0_3_and_refuses_0_2() {
         Ok(compat::Acceptance::Full)
     );
     let mut previous = current;
-    previous["schema"] = json!("0.2");
+    previous["schema"] = json!("0.3");
     let writer = writer(&previous);
     assert_eq!(
         compat::accept(DIFF_VERSION, writer),
@@ -1071,6 +1071,7 @@ impl Output {
                 ("relations.jsonl", "relation"),
                 ("syntax.jsonl", "syntax"),
                 ("gaps.jsonl", "gap"),
+                ("targets.jsonl", "target"),
             ],
             Self::Diff => &[
                 ("manifest.json", "diff-manifest"),
@@ -1146,14 +1147,24 @@ fn outputs_in_the_repository_pass_the_schemas() {
         );
     }
     for (directory, kind) in directories {
+        let frozen = directory.starts_with(root.join("fixtures/diff-public"));
+        if frozen || kind == Output::Diff {
+            assert!(
+                !directory.join("targets.jsonl").exists(),
+                "{}",
+                directory.display()
+            );
+        }
         for (name, schema) in kind.files() {
+            if frozen && *name == "targets.jsonl" {
+                continue;
+            }
             let path = directory.join(name);
             let text = fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("{} must exist: {e}", path.display()));
             if *name == "manifest.json" {
                 let manifest: Value = serde_json::from_str(&text).expect("manifest is JSON");
-                schemas.assert_valid(schema, &manifest);
-                if directory.starts_with(root.join("fixtures/diff-public")) {
+                if frozen {
                     // Frozen inputs keep the schema they were measured at, which the
                     // reader of the current minor refuses.
                     assert_eq!(manifest["schema"], json!("0.2"), "{}", path.display());
@@ -1164,6 +1175,7 @@ fn outputs_in_the_repository_pass_the_schemas() {
                         path.display()
                     );
                 } else {
+                    schemas.assert_valid(schema, &manifest);
                     assert_eq!(
                         manifest["schema"],
                         json!(kind.schema()),
@@ -1190,6 +1202,107 @@ fn outputs_in_the_repository_pass_the_schemas() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn frozen_fixtures_keep_their_layout_and_version() {
+    use std::fmt::Write as _;
+
+    use sha2::{Digest, Sha256};
+
+    let root = repository().join("fixtures/diff-public");
+    for (side, hashes) in [
+        (
+            "v0.20.0",
+            [
+                (
+                    "entities.jsonl",
+                    "d6c4f5fccc9c87e4f1dd564995f5ee8354826baf7bf3d78a253c6f18c1782806",
+                ),
+                (
+                    "externals.jsonl",
+                    "ab939dba9ab4039b59c22ff75c9bde253e058970d1cd12cf6dd4c125c9ba3c05",
+                ),
+                (
+                    "files.jsonl",
+                    "c18ed72e8b96435a76ab8dccc635b17289592d116c041f7dacc0e5cd630d80c8",
+                ),
+                (
+                    "gaps.jsonl",
+                    "dc8839208e98e005eb8c97bcd2a7652d58d90b1c0b8d29d849ec17884ec8ad37",
+                ),
+                (
+                    "manifest.json",
+                    "240574d115cbd02cf19850abe519d31556eb2abacffdf8be1ddd68d9f460538b",
+                ),
+                (
+                    "relations.jsonl",
+                    "05fcb7b4e68ae16905009df402b0e735e13db3db09af5a258796bd44704175c6",
+                ),
+                (
+                    "syntax.jsonl",
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                ),
+            ],
+        ),
+        (
+            "v0.21.0",
+            [
+                (
+                    "entities.jsonl",
+                    "8ce8722e0334a24b7271729cd38a0484018d40cc072d138fc4625fdf868fad34",
+                ),
+                (
+                    "externals.jsonl",
+                    "03f2795f3d3664fb39a4f3caf2e03f860998291f7ef91659c96483b4c66abc0d",
+                ),
+                (
+                    "files.jsonl",
+                    "6c3a281e3ff778db0925a92632cab103b85c00ebe508bfb6282a9f9b1b6c46bc",
+                ),
+                (
+                    "gaps.jsonl",
+                    "dc8839208e98e005eb8c97bcd2a7652d58d90b1c0b8d29d849ec17884ec8ad37",
+                ),
+                (
+                    "manifest.json",
+                    "0f945c95fa826e46d769225f237e02c6cd4d3f6227085a6095272627fb83e5d1",
+                ),
+                (
+                    "relations.jsonl",
+                    "952465b91e63fcab972ba1f9857ae5dc568429f823144da259adaa246776f561",
+                ),
+                (
+                    "syntax.jsonl",
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                ),
+            ],
+        ),
+    ] {
+        let directory = root.join(side);
+        let actual: BTreeMap<_, _> = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let name = entry.file_name().into_string().unwrap();
+                let bytes = fs::read(entry.path()).unwrap();
+                let mut sha256 = String::with_capacity(64);
+                for byte in Sha256::digest(bytes) {
+                    write!(sha256, "{byte:02x}").unwrap();
+                }
+                (name, sha256)
+            })
+            .collect();
+        let expected: BTreeMap<_, _> = hashes
+            .into_iter()
+            .map(|(file, sha256)| (file.to_owned(), sha256.to_owned()))
+            .collect();
+        assert_eq!(actual, expected, "frozen fixture {side}");
+
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(directory.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["schema"], "0.2");
     }
 }
 

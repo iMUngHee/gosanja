@@ -191,6 +191,11 @@ func (s snapshot) skippedGaps() []string {
 // whose enclosing range is cut to their first line.
 func synthIndex(t *testing.T, root, module string, leave []string, narrow ...string) {
 	t.Helper()
+	synthIndexWithExternalTests(t, root, module, leave, nil, narrow...)
+}
+
+func synthIndexWithExternalTests(t *testing.T, root, module string, leave, external []string, narrow ...string) {
+	t.Helper()
 	var files []string
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".go") {
@@ -218,6 +223,9 @@ func synthIndex(t *testing.T, root, module string, leave []string, narrow ...str
 		pkg := module
 		if dir != "." {
 			pkg = module + "/" + dir
+		}
+		if slices.Contains(external, rel) {
+			pkg += "_test"
 		}
 		prefix := "scip-go gomod " + module + " v0.0.0 `" + pkg + "`/"
 		doc := &scip.Document{RelativePath: rel, Language: "go", PositionEncoding: scip.PositionEncoding_UTF8CodeUnitOffsetFromLineStart}
