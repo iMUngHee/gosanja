@@ -123,11 +123,21 @@ impl<'a> Project<'a> {
     }
 
     pub fn run(&self, tool: &str, args: &[impl AsRef<OsStr>]) -> io::Result<Output> {
+        self.run_with(tool, args, &[])
+    }
+
+    pub fn run_with(
+        &self,
+        tool: &str,
+        args: &[impl AsRef<OsStr>],
+        vars: &[(&str, &OsStr)],
+    ) -> io::Result<Output> {
         Command::new(tool)
             .args(args)
             .current_dir(self.root)
             .env_clear()
             .envs(&self.vars)
+            .envs(vars.iter().copied())
             .output()
     }
 }

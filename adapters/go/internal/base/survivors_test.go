@@ -56,7 +56,7 @@ func TestGoVersionWordWithNoPlatformSuffix(t *testing.T) {
 func TestModuleFilesOrderedByRelativePath(t *testing.T) {
 	root := t.TempDir()
 	inventory := Inventory{Packages: []Package{{
-		ImportPath: "example.com/p", Dir: root, Module: &struct{ Main bool }{Main: true},
+		ImportPath: "example.com/p", Dir: root, Module: &Module{Main: true},
 		GoFiles: []string{"z.go", "a.go"},
 	}}}
 	got := inventory.moduleFiles(root, sources)

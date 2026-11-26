@@ -18,6 +18,9 @@ use scip::types::{Document, Index, Occurrence, PositionEncoding, SymbolRole};
 use serde_json::{Value, json};
 use support::{Case, engine, listing};
 
+#[path = "end_to_end/build_targets.rs"]
+mod build_targets;
+
 const APP: &str = "app/src/main.rs";
 const KIT: &str = "kit/src/lib.rs";
 
@@ -332,10 +335,10 @@ fn the_engine_finds_and_runs_the_adapter_and_gives_the_golden_snapshot() {
             .expect("JSON");
     let scope = &manifest["scopes"][0];
     assert_eq!(scope["adapter"]["name"], "rust");
-    assert_eq!(scope["adapter"]["contract"], "0.4");
+    assert_eq!(scope["adapter"]["contract"], "0.5");
     assert_eq!(
         scope["layers"],
-        json!({"base": "present", "syntax": "present", "calls": "present"})
+        json!({"base": "present", "syntax": "present", "calls": "present", "build": "present"})
     );
     let list = case
         .command(engine())
@@ -379,7 +382,8 @@ fn selecting_only_base_keeps_all_snapshot_files() {
             "gaps.jsonl",
             "manifest.json",
             "relations.jsonl",
-            "syntax.jsonl"
+            "syntax.jsonl",
+            "targets.jsonl"
         ]
     );
     assert_eq!(
@@ -391,7 +395,7 @@ fn selecting_only_base_keeps_all_snapshot_files() {
             .expect("JSON");
     assert_eq!(
         manifest["scopes"][0]["layers"],
-        json!({"base":"present","syntax":"not-requested","calls":"not-requested"})
+        json!({"base":"present","syntax":"not-requested","calls":"not-requested","build":"not-requested"})
     );
 }
 
@@ -409,7 +413,7 @@ fn selecting_base_and_syntax_keeps_declared_calls_without_the_calls_layer() {
     let scope = &manifest["scopes"][0];
     assert_eq!(
         scope["layers"],
-        json!({"base":"present","syntax":"present","calls":"not-requested"})
+        json!({"base":"present","syntax":"present","calls":"not-requested","build":"not-requested"})
     );
     assert_eq!(scope["builds"], json!([]));
 

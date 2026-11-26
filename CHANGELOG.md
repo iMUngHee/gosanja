@@ -11,6 +11,23 @@ change may break compatibility, and an entry here says so when it does.
 - `gosanja index` and `gosanja diff` resolve `--out` paths ending in `.` or `..` to an existing
   directory before checking for overlap and deciding whether the output can be replaced.
 
+### Adapter contract 0.5
+
+Requires 0.5 in both the adapter manifest and its result. The optional build layer can
+report targets and file facts in `build.jsonl`. A syntax sidecar can include separate rows
+that report test evidence for an item.
+
+### Snapshot schema 0.5
+
+Requires readers of 0.5 and adds `targets.jsonl`, `counts.targets` and `layers.build`.
+Files can report target membership, applicable test evidence and Go build constraints.
+Entities can carry a test mark derived from item or file evidence.
+
+### Diff schema 0.4
+
+Reads snapshot schema 0.5. The manifest lists `build` when either input has the build layer present
+and `test` when either input holds any test mark. These facts are excluded from comparisons.
+
 ### Adapter contract 0.4
 
 Breaks 0.3. An engine of 0.4 refuses an adapter that declares 0.3. An adapter has to declare

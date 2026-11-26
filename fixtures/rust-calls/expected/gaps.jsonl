@@ -35,6 +35,7 @@
 {"gap":"skipped-file","file":"calls-lib/src/lib.rs","layer":"calls","code":"callee-unresolved","src":"adapter:rust/calls"}
 {"gap":"skipped-file","file":"calls-lib/src/lib.rs","layer":"calls","code":"indirect-call","src":"adapter:rust/calls"}
 {"gap":"skipped-file","file":"calls-lib/src/lib.rs","layer":"calls","code":"uncorroborated","src":"adapter:rust/calls"}
+{"gap":"skipped-file","file":"fake-core/src/lib.rs","layer":"build","code":"target-unknown","src":"adapter:rust/build"}
 {"gap":"symbol-collision","keys":["cargo:calls-app:crate/","cargo:calls-app:crate/~1","cargo:calls-app:crate/~2","cargo:calls-app:crate/~3"],"src":"core:identity"}
 {"gap":"symbol-collision","keys":["cargo:calls-app:helper().","cargo:calls-app:helper().~1","cargo:calls-app:helper().~2"],"src":"core:identity"}
 {"gap":"symbol-collision","keys":["cargo:calls-app:main().","cargo:calls-app:main().~1","cargo:calls-app:main().~2","cargo:calls-app:main().~3"],"src":"core:identity"}

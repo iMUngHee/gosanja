@@ -1,3 +1,3 @@
-{"path":"app/src/extra.rs","language":"rust","bytes":69,"lines":1,"sha256":"2ad645549f7405790b1ff0c5f62aeca1d360e424e083af823a1b7f64c76bde49"}
-{"path":"app/src/main.rs","language":"rust","bytes":995,"lines":42,"sha256":"8b7edbbefabb523fcdec2fc14d03ac6fbfbc75495524e59c6c1d1d03fce8153b"}
-{"path":"kit/src/lib.rs","language":"rust","bytes":1124,"lines":59,"sha256":"a406cb5baea8de077d221cb587429a67b5e6c5d93f89ea4293859105ef3ff298"}
+{"path":"app/src/extra.rs","language":"rust","bytes":69,"lines":1,"sha256":"2ad645549f7405790b1ff0c5f62aeca1d360e424e083af823a1b7f64c76bde49","targets":["cargo:flow-app:bin:flow-app"]}
+{"path":"app/src/main.rs","language":"rust","bytes":995,"lines":42,"sha256":"8b7edbbefabb523fcdec2fc14d03ac6fbfbc75495524e59c6c1d1d03fce8153b","targets":["cargo:flow-app:bin:flow-app"]}
+{"path":"kit/src/lib.rs","language":"rust","bytes":1124,"lines":59,"sha256":"a406cb5baea8de077d221cb587429a67b5e6c5d93f89ea4293859105ef3ff298","targets":["cargo:flow-kit:lib:flow_kit"]}

@@ -263,11 +263,15 @@ func TestPreconditions(t *testing.T) {
 					t.Errorf("%d go commands ran before the platform check: %v", len(record), record[0].args)
 				}
 			}
-			if e := result(t, outs[0]).Layers["syntax"]; e.Status != "failed" || len(e.Diagnostics) != 1 || e.Diagnostics[0].Code != "base-failed" {
-				t.Errorf("syntax %+v, want failed with base-failed", e)
-			}
-			if _, err := os.Stat(filepath.Join(outs[0], "syntax.jsonl")); err == nil {
-				t.Error("syntax.jsonl written for a failed base layer")
+			layers := result(t, outs[0]).Layers
+			for _, layer := range []string{"syntax", "build"} {
+				e := layers[layer]
+				if e.Status != "failed" || len(e.Diagnostics) != 1 || e.Diagnostics[0].Code != "base-failed" {
+					t.Errorf("%s %+v, want failed with base-failed", layer, e)
+				}
+				if _, err := os.Stat(filepath.Join(outs[0], layer+".jsonl")); !os.IsNotExist(err) {
+					t.Errorf("%s.jsonl should be absent for a failed base layer: %v", layer, err)
+				}
 			}
 			if after := listing(t, root); !reflect.DeepEqual(before, after) {
 				t.Errorf("the root changed:\n%v\n%v", before, after)

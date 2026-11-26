@@ -3,7 +3,11 @@ mod base;
 mod project;
 mod result;
 
-use gosanja_adapter_rust::calls::{self, Outcome, build::Failure, debug::RootFiles};
+use gosanja_adapter_rust::{
+    build,
+    calls::{self, Outcome, build::Failure, debug::RootFiles},
+    syntax,
+};
 use gosanja_schema::contract::{LayerName, LayerRequest};
 use result::Layers;
 use std::{
@@ -72,23 +76,57 @@ fn index(root: &Path, out: &Path, request: LayerRequest) -> Result<ExitCode, io:
     let mut tools = Vec::new();
     let want_calls = request.contains(LayerName::Calls);
     let want_syntax = request.contains(LayerName::Syntax);
-    let mut built = None;
+    let want_build = request.contains(LayerName::Build);
+    let mut metadata = None;
+    let mut compiled_calls = None;
     let mut crates = BTreeSet::new();
     let indexed = base::build(&root, &out, &mut tools, &mut |project, meta| {
+        if want_build || want_syntax {
+            metadata = Some(meta.clone());
+        }
         if want_calls {
             crates = calls::member_crates(meta);
-            built = Some(calls::compile(&out, meta, &mut |args| {
+            compiled_calls = Some(calls::compile(&out, meta, &mut |args| {
                 project.run("cargo", args)
             }));
         }
     })?;
-    let built = built.transpose()?;
+    let compiled_calls = compiled_calls.transpose()?;
     let layers = match indexed {
         Ok(index) => {
-            let syntax = want_syntax
-                .then(|| gosanja_adapter_rust::syntax::extract(&root, &out, &index))
+            let mut syntax = want_syntax.then(|| syntax::layer(&root, &index));
+            let build_result = if let Some(meta) = metadata {
+                let project =
+                    project::Project::new(&root, &out).map_err(|p| io::Error::other(p.detail))?;
+                let evidence = build::collect(
+                    &root,
+                    &out,
+                    &meta,
+                    &index,
+                    syntax.as_ref().map(|layer| &layer.hashes),
+                    &mut |tool, args, vars| project.run_with(tool, args, vars),
+                );
+                if let Some(syntax) = &mut syntax {
+                    syntax
+                        .tests
+                        .retain(|row| evidence.eligible.contains(&row.anchor.file));
+                    syntax.skipped.extend(evidence.withheld.iter().map(|file| {
+                        gosanja_schema::contract::SkippedFile {
+                            file: file.clone(),
+                            code: "test-unknown".into(),
+                        }
+                    }));
+                    syntax.skipped.sort();
+                    syntax.skipped.dedup();
+                }
+                want_build.then(|| evidence.publish(&out)).transpose()?
+            } else {
+                None
+            };
+            let syntax = syntax
+                .map(|layer| syntax::publish(layer, &out))
                 .transpose()?;
-            let calls = built
+            let calls = compiled_calls
                 .map(|built| {
                     let mut files = RootFiles::new(&root);
                     calls::finish(&out, built, |modules| {
@@ -101,12 +139,14 @@ fn index(root: &Path, out: &Path, request: LayerRequest) -> Result<ExitCode, io:
                 base: Ok(()),
                 syntax,
                 calls,
+                build: build_result,
             }
         }
         Err(problem) => Layers {
             base: Err(problem),
             syntax: want_syntax.then(|| result::failed("base-failed")),
             calls: want_calls.then(|| Outcome::failed(&Failure::new("base-failed", ""), None)),
+            build: want_build.then(|| result::failed("base-failed")),
         },
     };
     result::publish(&out, layers, tools)?;

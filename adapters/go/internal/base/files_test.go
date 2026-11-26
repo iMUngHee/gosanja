@@ -69,12 +69,41 @@ func TestMergedPackagesUsePhysicalNamespaceDefinitions(t *testing.T) {
 			occurrence(invalid, def, 15),
 		)
 	}
-	symbols, files := mergedPackages(idx, reads)
+	symbols := mergedPackages(idx, reads)
 	if !slices.Equal(symbols, []string{alpha, zeta}) {
 		t.Errorf("merged symbols %v, want only alpha and zeta in order", symbols)
 	}
-	if len(files) != 4 || !files["a1.go"] || !files["a2.go"] || !files["z1.go"] || !files["z2.go"] {
-		t.Errorf("merged package files %v, want a1.go, a2.go, z1.go and z2.go", files)
+}
+
+func TestReadBuildConstraint(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, want, code string
+		multiple                 bool
+	}{
+		{"physical", "\ufeff\t//go:build\tgo1.21 \t\r\n\r\npackage p\r\n", "\t//go:build\tgo1.21 \t", "", false},
+		{"parse-error", "//go:build go1.21\n\npackage p\n@\n", "//go:build go1.21", ParseFailed, false},
+		{"line-directive", "//line elsewhere.go:500\n  //go:build go1.21 \n\npackage p\n", "  //go:build go1.21 ", "", false},
+		{"two-directives", "//go:build go1.21\n //go:build go1.22\n\npackage p\n", "", "", true},
+		{"block-and-legacy", "/* //go:build go1.21 */\n// +build legacy\n\npackage p\n", "", "", false},
+		{"follows-block", "/* header */ //go:build go1.21\n\npackage p\n", "", "", false},
+		{"after-package", "package p\n\n//go:build go1.21\n", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			info, err := os.Stat(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			filename := filepath.Join(root, "source.go")
+			if err := os.WriteFile(filename, []byte(tc.source), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			read := readFile(info, file{abs: filename, rel: "source.go"})
+			if read.Constraint != tc.want || read.MultipleConstraints != tc.multiple || read.Code != tc.code {
+				t.Errorf("constraint = %q, multiple = %t, code = %q; want %q, %t, %q",
+					read.Constraint, read.MultipleConstraints, read.Code, tc.want, tc.multiple, tc.code)
+			}
+		})
 	}
 }
 

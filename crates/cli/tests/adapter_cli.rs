@@ -76,7 +76,7 @@ fn standalone_describe_and_conflicting_index_sources() {
     check(&result, 0);
     let value: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(value["name"], "fake");
-    assert_eq!(value["contract"], "0.4");
+    assert_eq!(value["contract"], "0.5");
     let mut cmd = binary();
     cmd.args(["adapter", "describe"]).arg(program);
     Command::env(&mut cmd, "GOSANJA_FAKE_MODE", "incompatible");
@@ -512,3 +512,5 @@ fn merged_old_result_after_accepted_describe() {
     );
     assert!(!published);
 }
+
+include!("build/cli.rs");

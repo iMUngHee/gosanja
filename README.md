@@ -21,10 +21,9 @@ Early. The engine reads a [SCIP](https://github.com/scip-code/scip) index, or ru
 installed adapter, and writes a snapshot; it compares two snapshots and writes what differs
 between them. A Rust adapter gives the base graph, syntactic facts and compiler-backed call
 evidence: calls that a build of the project emitted and that a reference in the source on the
-same line corroborates. A Go adapter gives the base graph and syntactic facts of a Go module.
-An adapter for TypeScript is planned and not yet here. The
-snapshot and the adapter contract are at version 0.3 and the diff at 0.2, and all three may
-change.
+same line corroborates. Both the Rust and Go adapters report build targets, file membership
+and test evidence. A TypeScript adapter is planned. The snapshot and adapter contract are
+at version 0.5, and the diff is at 0.4.
 
 ## Try it
 
@@ -34,7 +33,7 @@ cargo run -p gosanja -- index --scip fixtures/rust-basic/index.scip \
 cargo run -p gosanja -- validate /tmp/gosanja-demo --root fixtures/rust-basic
 ```
 
-The output directory holds seven files, described in [spec/snapshot.md](spec/snapshot.md). To
+The output directory holds eight files, described in [spec/snapshot.md](spec/snapshot.md). To
 index your own project, produce a SCIP index for it first, for example with
 `rust-analyzer scip .`, and pass it the same way. The output path must be outside the project.
 

@@ -1,4 +1,4 @@
-{"path":"src/bin/tool.rs","language":"rust","bytes":48,"lines":3,"sha256":"8b1c2f721f52bfb1086eff639cd09982771ec5221bc2d49b4e59f2045819dfad"}
-{"path":"src/lib.rs","language":"rust","bytes":514,"lines":49,"sha256":"6bf66cc6726bca54fdd8f238548c800a65b24401bfe395fc871428757c4d4ffc"}
-{"path":"src/main.rs","language":"rust","bytes":48,"lines":3,"sha256":"47935a88cc3d17283a01c57a188dec3f6c2b0ffd39ce0a4adb0ed77f75a40aa9"}
-{"path":"src/util.rs","language":"rust","bytes":36,"lines":3,"sha256":"bb82cb567c7aa0ee6cdea4961ca351492a1c47033e710f87abfd7159ef21a350"}
+{"path":"src/bin/tool.rs","language":"rust","bytes":48,"lines":3,"sha256":"8b1c2f721f52bfb1086eff639cd09982771ec5221bc2d49b4e59f2045819dfad","targets":["cargo:diff-basic:bin:tool"]}
+{"path":"src/lib.rs","language":"rust","bytes":514,"lines":49,"sha256":"6bf66cc6726bca54fdd8f238548c800a65b24401bfe395fc871428757c4d4ffc","targets":["cargo:diff-basic:lib:diff_basic"]}
+{"path":"src/main.rs","language":"rust","bytes":48,"lines":3,"sha256":"47935a88cc3d17283a01c57a188dec3f6c2b0ffd39ce0a4adb0ed77f75a40aa9","targets":["cargo:diff-basic:bin:diff-basic"]}
+{"path":"src/util.rs","language":"rust","bytes":36,"lines":3,"sha256":"bb82cb567c7aa0ee6cdea4961ca351492a1c47033e710f87abfd7159ef21a350","targets":["cargo:diff-basic:lib:diff_basic"]}

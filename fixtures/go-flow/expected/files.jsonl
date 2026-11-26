@@ -1,6 +1,6 @@
-{"path":"external_test.go","language":"go","bytes":626,"lines":26,"sha256":"2cedaefe7158322b69ca7bb25ca86a70140775fb388e098c8819d82da73d65dd"}
-{"path":"flow.go","language":"go","bytes":2568,"lines":127,"sha256":"f8ffdce0126b776f4bced4a76a8507dbd21a414984a4ebc62a0a55629bd51f53"}
-{"path":"flow_test.go","language":"go","bytes":974,"lines":42,"sha256":"8c9bf20b36c4304617c0a8115a022066489f17b4c7cda524b12ef14b2ef0d0a7"}
-{"path":"meter/meter.go","language":"go","bytes":439,"lines":30,"sha256":"25538491eaafcd65796f612c3a4fa0bcbe9478fa407517f26c1fbd43d7b4a78c"}
-{"path":"tagged.go","language":"go","bytes":71,"lines":5,"sha256":"5bef7d6c1bf000e367c062ce081ae2deafb309fcb114c92ae2982d7850ac93f1"}
-{"path":"zz_generated.go","language":"go","bytes":153,"lines":6,"sha256":"a5c15d35753e79ca6922eeacae526eab8f21bad0415a9e756b48b5796eb27679"}
+{"path":"external_test.go","language":"go","bytes":626,"lines":26,"sha256":"2cedaefe7158322b69ca7bb25ca86a70140775fb388e098c8819d82da73d65dd","targets":["gomod:example.com/goflow:example.com/goflow:test"],"test":"file"}
+{"path":"flow.go","language":"go","bytes":2568,"lines":127,"sha256":"f8ffdce0126b776f4bced4a76a8507dbd21a414984a4ebc62a0a55629bd51f53","targets":["gomod:example.com/goflow:example.com/goflow:package","gomod:example.com/goflow:example.com/goflow:test"]}
+{"path":"flow_test.go","language":"go","bytes":974,"lines":42,"sha256":"8c9bf20b36c4304617c0a8115a022066489f17b4c7cda524b12ef14b2ef0d0a7","targets":["gomod:example.com/goflow:example.com/goflow:test"],"test":"file"}
+{"path":"meter/meter.go","language":"go","bytes":439,"lines":30,"sha256":"25538491eaafcd65796f612c3a4fa0bcbe9478fa407517f26c1fbd43d7b4a78c","targets":["gomod:example.com/goflow:example.com/goflow/meter:package"]}
+{"path":"tagged.go","language":"go","bytes":71,"lines":5,"sha256":"5bef7d6c1bf000e367c062ce081ae2deafb309fcb114c92ae2982d7850ac93f1","targets":["gomod:example.com/goflow:example.com/goflow:package","gomod:example.com/goflow:example.com/goflow:test"],"constraint":"//go:build go1.21"}
+{"path":"zz_generated.go","language":"go","bytes":153,"lines":6,"sha256":"a5c15d35753e79ca6922eeacae526eab8f21bad0415a9e756b48b5796eb27679","targets":["gomod:example.com/goflow:example.com/goflow:package","gomod:example.com/goflow:example.com/goflow:test"]}

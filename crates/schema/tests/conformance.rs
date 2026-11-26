@@ -54,7 +54,7 @@ impl Schemas {
                 .expect("schema registers");
             count += 1;
         }
-        assert_eq!(count, 16, "the specification names sixteen schemas");
+        assert_eq!(count, 18, "the specification names eighteen schemas");
         Self {
             registry: registry
                 .prepare()
@@ -155,6 +155,7 @@ fn entity(key: &str) -> EntityRow {
             body_src: Some("scip:rust-analyzer".into()),
         }),
         decls: None,
+        test: None,
         src: "scip:rust-analyzer".into(),
     }
 }
@@ -202,6 +203,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
                 base: LayerState::Present,
                 syntax: LayerState::Failed,
                 calls: LayerState::Absent,
+                build: LayerState::NotRequested,
             },
             builds: vec![build("debug-default")],
         }],
@@ -212,6 +214,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
             relations: 7,
             syntax: 1,
             gaps: 2,
+            targets: 0,
             dropped_local_references: 4,
         },
     };
@@ -223,6 +226,9 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
         bytes: 612,
         lines: 33,
         sha256: "0".repeat(64),
+        targets: None,
+        test: None,
+        constraint: None,
     };
     schemas.assert_valid("file", &to_value(&file));
 
@@ -239,6 +245,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
         member_of: None,
         def: None,
         decls: None,
+        test: None,
         src: "core:containment".into(),
     };
     schemas.assert_valid("entity", &to_value(&container));
@@ -336,6 +343,168 @@ fn syntax_rows_pass_their_schema() {
         src: "adapter:fake/syntax".into(),
     };
     schemas.assert_valid("syntax", &to_value(&syntax));
+}
+
+#[test]
+fn build_rows_pass_their_schema() {
+    let schemas = Schemas::load();
+    let target = json!({"row": "target", "key": "cargo:demo:lib:demo", "kind": "lib", "name": "demo",
+        "root": {"symbol": "rust-analyzer cargo demo 0.1.0 crate/", "anchor": {"file": "src/lib.rs", "line": 0, "col": 0}},
+        "required_features": ["x"], "test": true});
+    schemas.assert_valid("build", &target);
+    schemas.assert_valid("build", &json!({"row": "target", "key": "gomod:m:m/p:package", "kind": "package", "name": "p", "root": {"symbol": "scip-go gomod m v1 `m/p`/"}}));
+    schemas.assert_valid("build", &json!({"row": "file", "file": "src/lib.rs", "targets": ["cargo:demo:lib:demo"], "test": "target", "constraint": "//go:build linux"}));
+    for only in [
+        json!({"targets": ["k"]}),
+        json!({"test": "cfg"}),
+        json!({"constraint": ""}),
+    ] {
+        let mut row = json!({"row": "file", "file": "a.go"});
+        row.as_object_mut()
+            .unwrap()
+            .extend(only.as_object().unwrap().clone());
+        schemas.assert_valid("build", &row);
+    }
+    for bad in [
+        json!({"row": "file", "file": "a.go"}),
+        json!({"row": "file", "file": "a.go", "targets": []}),
+        json!({"row": "file", "file": "a.go", "targets": ["k", "k"]}),
+        json!({"row": "file", "file": "a.go", "test": "attribute"}),
+        json!({"row": "file", "file": "/abs/a.go", "test": "file"}),
+        json!({"row": "target", "kind": "lib", "name": "demo"}),
+        json!({"row": "target", "key": "has space", "kind": "lib", "name": "demo"}),
+        json!({"row": "target", "key": "bad%zz", "kind": "lib", "name": "demo"}),
+        json!({"row": "target", "key": "k", "kind": "Lib", "name": "demo"}),
+        json!({"row": "target", "key": "k", "kind": "lib", "name": "demo", "test": false}),
+        json!({"row": "target", "key": "k", "kind": "lib", "name": "demo", "root": {"anchor": {"file": "a", "line": 0, "col": 0}}}),
+        json!({"row": "other", "key": "k"}),
+        json!({"key": "k", "kind": "lib", "name": "demo"}),
+    ] {
+        schemas.assert_invalid("build", &bad);
+    }
+    let long = "k".repeat(1025);
+    schemas.assert_invalid(
+        "build",
+        &json!({"row": "target", "key": long, "kind": "lib", "name": "demo"}),
+    );
+    schemas.assert_valid(
+        "build",
+        &json!({"row": "target", "key": "k".repeat(1024), "kind": "lib", "name": "demo"}),
+    );
+}
+
+#[test]
+fn test_rows_pass_their_schema() {
+    let schemas = Schemas::load();
+    for test in ["attribute", "cfg"] {
+        schemas.assert_valid("syntax-fact", &json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": test}));
+    }
+    schemas.assert_valid("syntax-fact", &json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "name": "t"}, "test": "cfg"}));
+    for bad in [
+        json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}}),
+        json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "target"}),
+        json!({"row": "test", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "cfg", "attributes": ["test"]}),
+        json!({"row": "syntax", "anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "cfg"}),
+        json!({"row": "test", "test": "cfg"}),
+        json!({"anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "test": "cfg"}),
+    ] {
+        schemas.assert_invalid("syntax-fact", &bad);
+    }
+    schemas.assert_valid(
+        "syntax-fact",
+        &json!({"anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "attributes": ["test"]}),
+    );
+}
+
+#[test]
+fn target_rows_pass_their_schema() {
+    let schemas = Schemas::load();
+    let full = json!({"scope": ".", "key": "cargo:demo:lib:demo", "kind": "lib", "name": "demo",
+        "root": {"symbol": "rust-analyzer cargo demo 0.1.0 crate/", "anchor": {"file": "src/lib.rs", "line": 0, "col": 0}},
+        "entity": "cargo:demo:crate/~1", "required_features": ["x"], "test": true, "src": "adapter:rust/build"});
+    schemas.assert_valid("target", &full);
+    schemas.assert_valid("target", &json!({"scope": "pkg", "key": "gomod:m:m/p:test", "kind": "test", "name": "p", "src": "adapter:go/build"}));
+    for (field, value) in [
+        ("scope", json!("/abs")),
+        ("key", json!("a b")),
+        ("entity", json!("not a key")),
+        ("src", json!("adapter:rust/syntax")),
+        ("test", json!(false)),
+    ] {
+        let mut row = full.clone();
+        row[field] = value;
+        schemas.assert_invalid("target", &row);
+    }
+    for missing in ["scope", "key", "kind", "name", "src"] {
+        let mut row = full.clone();
+        row.as_object_mut().unwrap().remove(missing);
+        schemas.assert_invalid("target", &row);
+    }
+}
+
+#[test]
+fn file_build_fields_pass_their_schema() {
+    let schemas = Schemas::load();
+    let plain = json!({"path": "src/lib.rs", "language": "rust", "bytes": 3, "lines": 1, "sha256": "0".repeat(64)});
+    schemas.assert_valid("file", &plain);
+    for (field, value) in [
+        (
+            "targets",
+            json!(["cargo:demo:lib:demo", "cargo:demo:test:it"]),
+        ),
+        ("test", json!("cfg")),
+        ("test", json!("target")),
+        ("test", json!("file")),
+        ("constraint", json!("//go:build linux && amd64")),
+    ] {
+        let mut row = plain.clone();
+        row[field] = value;
+        schemas.assert_valid("file", &row);
+    }
+    for (field, value) in [
+        ("targets", json!([])),
+        ("targets", json!(["k", "k"])),
+        ("targets", json!(["a b"])),
+        ("test", json!("attribute")),
+        ("test", json!(true)),
+        ("constraint", json!(1)),
+    ] {
+        let mut row = plain.clone();
+        row[field] = value;
+        schemas.assert_invalid("file", &row);
+    }
+    schemas.assert_valid("entity", &json!({"key": "cargo:demo:t().", "symbol": "s", "role": "callable", "name": "t",
+        "def": {"file": "src/lib.rs", "name": [0, 3, 0, 4]}, "test": "attribute", "src": "scip:rust-analyzer"}));
+    schemas.assert_invalid("entity", &json!({"key": "cargo:demo:t().", "symbol": "s", "role": "callable", "name": "t",
+        "def": {"file": "src/lib.rs", "name": [0, 3, 0, 4]}, "test": "yes", "src": "scip:rust-analyzer"}));
+}
+
+#[test]
+fn unresolved_root_gap_passes_its_schema() {
+    let schemas = Schemas::load();
+    let gap = json!({"gap": "unresolved-root", "layer": "build", "target": "cargo:demo:bin:demo",
+        "anchor": {"file": "src/main.rs", "line": 0, "col": 0}, "src": "adapter:rust/build"});
+    schemas.assert_valid("gap", &gap);
+    schemas.assert_valid("gap", &json!({"gap": "unresolved-root", "layer": "build", "target": "k", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "unknown-file", "layer": "build", "file": "gen/x.rs", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "skipped-file", "layer": "build", "file": "src/a.rs", "code": "target-unknown", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "missing-layer", "layer": "build", "scope": ".", "src": "adapter:rust/build"}));
+    schemas.assert_valid("gap", &json!({"gap": "failed-layer", "layer": "build", "scope": "pkg", "detail": "row-invalid", "src": "adapter:rust/build"}));
+    for bad in [
+        json!({"gap": "unresolved-root", "layer": "build", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "target": "k", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "layer": "syntax", "target": "k", "src": "adapter:rust/syntax"}),
+        json!({"gap": "unresolved-root", "layer": "build", "target": "a b", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "layer": "build", "target": "k", "file": "src/a.rs", "src": "adapter:rust/build"}),
+        json!({"gap": "unresolved-root", "layer": "build", "target": "k", "src": "scip:rust-analyzer"}),
+        json!({"gap": "unknown-file", "layer": "build", "src": "adapter:rust/build"}),
+        json!({"gap": "unknown-file", "layer": "build", "file": "a", "target": "k", "src": "adapter:rust/build"}),
+        json!({"gap": "missing-layer", "layer": "build", "src": "adapter:rust/build"}),
+        json!({"gap": "failed-layer", "layer": "build", "detail": "row-invalid", "src": "adapter:rust/build"}),
+        json!({"gap": "skipped-file", "layer": "build", "file": "src/a.rs", "code": "target-unknown", "src": "adapter:rust/syntax"}),
+    ] {
+        schemas.assert_invalid("gap", &bad);
+    }
 }
 
 /// One valid row of every gap kind.
@@ -440,8 +609,8 @@ fn every_gap_kind_passes_its_schema() {
 
 #[test]
 fn the_interfaces_are_at_their_current_versions() {
-    assert_eq!(CONTRACT_VERSION.to_string(), "0.4");
-    assert_eq!(SCHEMA_VERSION.to_string(), "0.4");
+    assert_eq!(CONTRACT_VERSION.to_string(), "0.5");
+    assert_eq!(SCHEMA_VERSION.to_string(), "0.5");
     assert_eq!(
         gosanja_schema::diff::SCHEMA_VERSION.to_string(),
         DIFF_SCHEMA
@@ -453,7 +622,7 @@ fn the_interfaces_are_at_their_current_versions() {
 #[test]
 fn only_optional_layers_may_be_not_requested() {
     let schemas = Schemas::load();
-    let layers = |base: &str, syntax: &str, calls: &str| json!({"base": base, "syntax": syntax, "calls": calls});
+    let layers = |base: &str, syntax: &str, calls: &str| json!({"base": base, "syntax": syntax, "calls": calls, "build": "not-requested"});
     let snapshot = |layers: Value| {
         json!({
             "format": FORMAT,
@@ -462,7 +631,7 @@ fn only_optional_layers_may_be_not_requested() {
             "project": {"name": "demo"},
             "scopes": [{"path": ".", "indexers": [], "layers": layers, "builds": []}],
             "counts": {"files": 0, "entities": 0, "externals": 0, "relations": 0,
-                       "syntax": 0, "gaps": 0, "dropped_local_references": 0}
+                       "syntax": 0, "gaps": 0, "targets": 0, "dropped_local_references": 0}
         })
     };
     let side = |layers: Value| {
@@ -472,7 +641,7 @@ fn only_optional_layers_may_be_not_requested() {
             "layers": layers,
             "builds": [],
             "counts": {"files": 0, "entities": 0, "externals": 0, "relations": 0,
-                       "syntax": 0, "gaps": 0, "dropped_local_references": 0},
+                       "syntax": 0, "gaps": 0, "targets": 0, "dropped_local_references": 0},
             "gaps": {}
         })
     };
@@ -501,7 +670,13 @@ fn only_optional_layers_may_be_not_requested() {
         layers("present", "not-requested", "not-requested"),
         layers("failed", "not-requested", "absent"),
     ];
+    let mut without_build = layers("present", "present", "present");
+    without_build.as_object_mut().unwrap().remove("build");
+    let mut build_skipped = layers("present", "present", "present");
+    build_skipped["build"] = json!("skipped");
     let refused = [
+        without_build,
+        build_skipped,
         layers("not-requested", "present", "present"),
         layers("present", "skipped", "present"),
         layers("present", "present", "requested"),
@@ -836,16 +1011,16 @@ fn only_a_call_node_names_a_callee_and_it_may_omit_it() {
 
 /// The marker and the schema version of a diff, as `spec/diff.md` states them.
 const DIFF_FORMAT: &str = "gosanja-diff";
-const DIFF_SCHEMA: &str = "0.3";
+const DIFF_SCHEMA: &str = "0.4";
 
 #[test]
-fn diff_schema_version_accepts_0_3_and_refuses_0_2() {
+fn diff_schema_version_accepts_0_4_and_refuses_0_3() {
     use gosanja_schema::diff::SCHEMA_VERSION as DIFF_VERSION;
     let path = repository().join("spec/examples/diff-basic/manifest.json");
     let current: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    assert_eq!(current["schema"], "0.3");
-    assert_eq!(current["old"]["schema"], "0.4");
-    assert_eq!(current["new"]["schema"], "0.4");
+    assert_eq!(current["schema"], "0.4");
+    assert_eq!(current["old"]["schema"], "0.5");
+    assert_eq!(current["new"]["schema"], "0.5");
     let writer = |manifest: &Value| {
         manifest["schema"]
             .as_str()
@@ -858,7 +1033,7 @@ fn diff_schema_version_accepts_0_3_and_refuses_0_2() {
         Ok(compat::Acceptance::Full)
     );
     let mut previous = current;
-    previous["schema"] = json!("0.2");
+    previous["schema"] = json!("0.3");
     let writer = writer(&previous);
     assert_eq!(
         compat::accept(DIFF_VERSION, writer),
@@ -896,6 +1071,7 @@ impl Output {
                 ("relations.jsonl", "relation"),
                 ("syntax.jsonl", "syntax"),
                 ("gaps.jsonl", "gap"),
+                ("targets.jsonl", "target"),
             ],
             Self::Diff => &[
                 ("manifest.json", "diff-manifest"),
@@ -971,14 +1147,24 @@ fn outputs_in_the_repository_pass_the_schemas() {
         );
     }
     for (directory, kind) in directories {
+        let frozen = directory.starts_with(root.join("fixtures/diff-public"));
+        if frozen || kind == Output::Diff {
+            assert!(
+                !directory.join("targets.jsonl").exists(),
+                "{}",
+                directory.display()
+            );
+        }
         for (name, schema) in kind.files() {
+            if frozen && *name == "targets.jsonl" {
+                continue;
+            }
             let path = directory.join(name);
             let text = fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("{} must exist: {e}", path.display()));
             if *name == "manifest.json" {
                 let manifest: Value = serde_json::from_str(&text).expect("manifest is JSON");
-                schemas.assert_valid(schema, &manifest);
-                if directory.starts_with(root.join("fixtures/diff-public")) {
+                if frozen {
                     // Frozen inputs keep the schema they were measured at, which the
                     // reader of the current minor refuses.
                     assert_eq!(manifest["schema"], json!("0.2"), "{}", path.display());
@@ -989,6 +1175,7 @@ fn outputs_in_the_repository_pass_the_schemas() {
                         path.display()
                     );
                 } else {
+                    schemas.assert_valid(schema, &manifest);
                     assert_eq!(
                         manifest["schema"],
                         json!(kind.schema()),
@@ -1015,6 +1202,107 @@ fn outputs_in_the_repository_pass_the_schemas() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn frozen_fixtures_keep_their_layout_and_version() {
+    use std::fmt::Write as _;
+
+    use sha2::{Digest, Sha256};
+
+    let root = repository().join("fixtures/diff-public");
+    for (side, hashes) in [
+        (
+            "v0.20.0",
+            [
+                (
+                    "entities.jsonl",
+                    "d6c4f5fccc9c87e4f1dd564995f5ee8354826baf7bf3d78a253c6f18c1782806",
+                ),
+                (
+                    "externals.jsonl",
+                    "ab939dba9ab4039b59c22ff75c9bde253e058970d1cd12cf6dd4c125c9ba3c05",
+                ),
+                (
+                    "files.jsonl",
+                    "c18ed72e8b96435a76ab8dccc635b17289592d116c041f7dacc0e5cd630d80c8",
+                ),
+                (
+                    "gaps.jsonl",
+                    "dc8839208e98e005eb8c97bcd2a7652d58d90b1c0b8d29d849ec17884ec8ad37",
+                ),
+                (
+                    "manifest.json",
+                    "240574d115cbd02cf19850abe519d31556eb2abacffdf8be1ddd68d9f460538b",
+                ),
+                (
+                    "relations.jsonl",
+                    "05fcb7b4e68ae16905009df402b0e735e13db3db09af5a258796bd44704175c6",
+                ),
+                (
+                    "syntax.jsonl",
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                ),
+            ],
+        ),
+        (
+            "v0.21.0",
+            [
+                (
+                    "entities.jsonl",
+                    "8ce8722e0334a24b7271729cd38a0484018d40cc072d138fc4625fdf868fad34",
+                ),
+                (
+                    "externals.jsonl",
+                    "03f2795f3d3664fb39a4f3caf2e03f860998291f7ef91659c96483b4c66abc0d",
+                ),
+                (
+                    "files.jsonl",
+                    "6c3a281e3ff778db0925a92632cab103b85c00ebe508bfb6282a9f9b1b6c46bc",
+                ),
+                (
+                    "gaps.jsonl",
+                    "dc8839208e98e005eb8c97bcd2a7652d58d90b1c0b8d29d849ec17884ec8ad37",
+                ),
+                (
+                    "manifest.json",
+                    "0f945c95fa826e46d769225f237e02c6cd4d3f6227085a6095272627fb83e5d1",
+                ),
+                (
+                    "relations.jsonl",
+                    "952465b91e63fcab972ba1f9857ae5dc568429f823144da259adaa246776f561",
+                ),
+                (
+                    "syntax.jsonl",
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                ),
+            ],
+        ),
+    ] {
+        let directory = root.join(side);
+        let actual: BTreeMap<_, _> = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let name = entry.file_name().into_string().unwrap();
+                let bytes = fs::read(entry.path()).unwrap();
+                let mut sha256 = String::with_capacity(64);
+                for byte in Sha256::digest(bytes) {
+                    write!(sha256, "{byte:02x}").unwrap();
+                }
+                (name, sha256)
+            })
+            .collect();
+        let expected: BTreeMap<_, _> = hashes
+            .into_iter()
+            .map(|(file, sha256)| (file.to_owned(), sha256.to_owned()))
+            .collect();
+        assert_eq!(actual, expected, "frozen fixture {side}");
+
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(directory.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["schema"], "0.2");
     }
 }
 

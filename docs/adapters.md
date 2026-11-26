@@ -41,8 +41,8 @@ gosanja adapter list
 ```
 
 ```text
-old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.3, this reader implements 0.4; 0.x versions are only compatible with themselves
-rust 1.2.3 contract=0.4 languages=rust layers=base,syntax,calls markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
+old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.4, this reader implements 0.5; 0.x versions are only compatible with themselves
+rust 1.2.3 contract=0.5 languages=rust layers=base,syntax,calls,build markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
   requires rust-analyzer: found /usr/bin/rust-analyzer
   requires cargo: missing
 ```
@@ -96,8 +96,8 @@ one, give its path.
 gosanja index --root <project> --out <dir> --layers base,syntax
 ```
 
-`--layers` names the layers to ask the adapter for: `base`, `syntax` and `calls`, separated by
-commas, each at most once, with no spaces, always including `base`. Without it all three are
+`--layers` names the layers to ask the adapter for: `base`, `syntax`, `calls` and `build`, separated by
+commas, each at most once, with no spaces, always including `base`. Without it all four are
 asked for. Build contexts reported by an adapter whose manifest does not offer the calls layer
 are not copied, and an entry the adapter wrote for a layer it does not offer is discarded
 before the result is validated, so a malformed one does not fail the run by itself. A list that breaks
@@ -106,7 +106,7 @@ these rules exits with code 2 and says what is wrong with it, and no adapter run
 
 The adapter is chosen first, by name, by path or by markers, exactly as above; the list plays
 no part in that choice. The engine then passes the adapter `--layers` with the layers you
-asked for that its manifest offers, always in the order `base`, `syntax`, `calls`. The
+asked for that its manifest offers, always in the order `base`, `syntax`, `calls`, `build`. The
 snapshot records each optional layer:
 
 | You asked for it | The adapter offers it | State in the snapshot | Gap |
@@ -144,6 +144,13 @@ one runs; two usable ones are still refused as ambiguous.
 An engine of contract 0.4 refuses an adapter of 0.3, as above. An adapter of 0.4 may list in
 its base entry's `merged` the symbols whose definitions at several sites declare one entity;
 an adapter with nothing to list writes what it wrote under 0.3, with `0.4` as its contract.
+
+### Upgrading to adapter contract 0.5
+
+An engine of contract 0.5 requires `0.5` in the manifest and in `result.json`.
+An adapter can offer the optional `build` layer to report targets and file membership in
+`build.jsonl`. Syntax adapters can also write test evidence as separate test rows in
+`syntax.jsonl`. The adapter contract specifies the row shapes and how each layer is read.
 
 ## Trying it without a real adapter
 

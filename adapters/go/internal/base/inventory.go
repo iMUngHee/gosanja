@@ -12,13 +12,15 @@ import (
 
 // inventoryFields are the fields the inventory selects. Selecting fields keeps go list from
 // stamping VCS information, which runs git in the root.
-const inventoryFields = "ImportPath,Dir,Module,DepOnly,GoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles,IgnoredOtherFiles,CgoFiles,InvalidGoFiles,Error"
+const inventoryFields = "ImportPath,Dir,Name,ForTest,Module,DepOnly,GoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles,IgnoredOtherFiles,CgoFiles,InvalidGoFiles,Error"
 
 // Package is one package of the inventory, as `go list -json` prints it.
 type Package struct {
 	ImportPath        string
 	Dir               string
-	Module            *struct{ Main bool }
+	Name              string
+	ForTest           string
+	Module            *Module
 	DepOnly           bool
 	GoFiles           []string
 	TestGoFiles       []string
@@ -28,6 +30,12 @@ type Package struct {
 	CgoFiles          []string
 	InvalidGoFiles    []string
 	Error             *struct{ Pos, Err string }
+}
+
+// Module holds the inventory's module identity.
+type Module struct {
+	Main bool
+	Path string
 }
 
 // Main reports whether the package belongs to the main module.
@@ -95,21 +103,31 @@ func (inv *Inventory) moduleFiles(root string, lists func(Package) [][]string) [
 		}
 		for _, list := range lists(p) {
 			for _, name := range list {
-				abs := filepath.Join(p.Dir, name)
-				rel, err := filepath.Rel(root, abs)
-				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				rel, ok := p.RelativeFile(root, name)
+				if !ok {
 					continue
 				}
-				rel = filepath.ToSlash(rel)
 				if !seen[rel] {
 					seen[rel] = true
-					out = append(out, file{rel: rel, abs: abs})
+					out = append(out, file{rel: rel, abs: filepath.Join(p.Dir, name)})
 				}
 			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
 	return out
+}
+
+// RelativeFile resolves a Go inventory filename against the package directory.
+func (p Package) RelativeFile(root, name string) (string, bool) {
+	if filepath.IsAbs(name) {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, filepath.Join(p.Dir, name))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }
 
 // sources are the files the adapter reads itself and requires in the index when readable.

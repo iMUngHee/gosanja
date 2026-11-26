@@ -1,4 +1,4 @@
-# Adapter contract, version 0.4
+# Adapter contract, version 0.5
 
 An adapter is a program that knows one language ecosystem. The engine knows none: it runs an
 adapter, reads the files the adapter wrote, and builds a [snapshot](snapshot.md) from them. An
@@ -9,7 +9,7 @@ The conventions for paths, ranges and versions, and the rules a reader follows, 
 
 ## Layers
 
-An adapter produces up to three layers for one scope, a directory tree in one language
+An adapter produces up to four layers for one scope, a directory tree in one language
 ecosystem. A run produces only the layers it is asked for (see [index](#index)).
 
 | Layer | Content | File | Required |
@@ -17,6 +17,7 @@ ecosystem. A run produces only the layers it is asked for (see [index](#index)).
 | `base` | definitions, references and relationships | `index.scip`, a [SCIP](https://github.com/scip-code/scip) index | yes |
 | `syntax` | bodies, visibility, qualifiers, attributes and a control-flow outline | `syntax.jsonl` | no |
 | `calls` | call evidence from a compiler or an equivalent whole-program analysis | `calls.jsonl` | no |
+| `build` | build targets, which targets include each source file, file-level test code and build constraints | `build.jsonl` | no |
 
 The base layer may come from an existing SCIP indexer that the adapter runs. Its document
 paths must be relative to `--root`. Indexers also record the absolute project root in the index
@@ -93,9 +94,9 @@ Options may come in any order.
   file of it. An adapter given a list it cannot accept exits 2 and writes nothing.
 - The engine always passes `--layers`, so an adapter's default never decides what was asked.
   What it passes, the *argument*, is the *request* (the layers the user asked for, `base`
-  always among them, all three when the user names none; see
+  always among them, all four when the user names none; see
   [snapshot.md](snapshot.md#manifestjson)) intersected with the layers the manifest lists, in
-  the order `base`, `syntax`, `calls`. Which adapter runs is decided before, and the request
+  the order `base`, `syntax`, `calls`, `build`. Which adapter runs is decided before, and the request
   plays no part in it (see [describe](#describe)).
 - One run handles the whole scope. The engine does not run an adapter once per file.
 - Standard output and standard error are free text for a human. The engine shows them and never
@@ -109,6 +110,7 @@ Options may come in any order.
 | `index.scip` | the base layer succeeded |
 | `syntax.jsonl` | the run was asked for the syntax layer and it succeeded |
 | `calls.jsonl` | the run was asked for the calls layer and it succeeded |
+| `build.jsonl` | the run was asked for the build layer and it succeeded |
 
 ### result.json
 
@@ -274,7 +276,9 @@ is `unanchored`.
 
 ## syntax.jsonl
 
-One row per definition the adapter describes, and at most one row for any definition.
+One row per definition the adapter describes, and at most one row for any definition. Besides
+these *syntax rows*, the file may hold *test rows* (see [Test rows](#test-rows)), told apart by
+`"row": "test"`; a syntax row never carries `row` or `test`.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -314,6 +318,38 @@ schema (`failed-layer`, detail `row-invalid`), so that the result cannot depend 
 the rows. The order in which these checks apply is given under
 [How a layer is read](#how-a-layer-is-read).
 
+### Test rows
+
+A test row states that a definition is test code on evidence the adapter read from the
+definition itself:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `row` | `"test"` | marks the row as a test row |
+| `anchor` | anchor | the definition |
+| `test` | `attribute` or `cfg` | the evidence |
+
+- `cfg`: the definition's own conditional-compilation gate, together with the gates of what
+  encloses it in its file, excludes it from every non-test compilation, and a test compilation
+  read its file.
+- `attribute`: the adapter proved that the definition is the language's built-in test or
+  benchmark at its expansion site, read by a test-harness compilation, in a file that no
+  non-test compilation the adapter observed read. An adapter that cannot prove this sends no
+  `attribute`.
+
+A test row is evidence about the entity, not a syntax property. The engine never publishes it to
+the snapshot's `syntax.jsonl`, never counts it in `counts.syntax`, and never lets it decide
+whether a symbol listed in `merged` folds. Adding or removing valid test rows therefore leaves
+every published syntax row, every fold and every entity identity as they are. The entity's
+`test` comes from it (see [snapshot.md](snapshot.md#entitiesjsonl)).
+
+- At most one test row per definition: two test rows that resolve to one definition, through a
+  column anchor and a name-only anchor for instance, make the layer malformed whatever their
+  values. A test row and a syntax row for one definition are not a repetition.
+- An adapter sends no test row at a site of a symbol it lists in `merged`; the engine discards
+  such a row when it folds the symbol.
+- A malformed or repeated test row discards the syntax layer like any bad row.
+
 ## calls.jsonl
 
 One row per observation of a call.
@@ -343,13 +379,56 @@ One row per observation of a call.
   `callee` not resolved (`unanchored`). A row with both problems is counted once, under
   `unknown-build-context`.
 
+## build.jsonl
+
+The build layer states which build targets the scope has, which targets include each source
+file, which files are test code, and each file's build constraint as written. The engine joins
+these facts to the snapshot's entities and files; it evaluates none of them.
+
+Two row forms, told apart by `row`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `row` | `"target"` | |
+| `key` | target key | unique in the layer |
+| `kind` | string | lower-case word from an open set; recommended `lib`, `bin`, `test`, `bench`, `example`, `build`, `proc-macro`, `package`, `command` |
+| `name` | string | the adapter's name for the target |
+| `root` | `{symbol, anchor?}`, optional | the target's root: a global SCIP symbol, with an anchor when the symbol alone does not choose among several definitions |
+| `required_features` | array of strings, optional | features the target needs, as the build tool reports them |
+| `test` | `true`, optional | the target is built only for tests |
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `row` | `"file"` | |
+| `file` | path | relative to `--root` |
+| `targets` | array of target keys, optional | targets proven to include the file, sorted by bytes, distinct, at least one |
+| `test` | `cfg`, `target` or `file`, optional | every compilation that read the file, as code or as text, was a test compilation; the value says on what evidence |
+| `constraint` | string, optional | the file's build constraint as written, an opaque string |
+
+A file row holds at least one of `targets`, `test` and `constraint`.
+
+- A *target key* is 1 to 1024 bytes of UTF-8 without whitespace or control characters, in which
+  `%` appears only before two upper-case hex digits; an adapter escapes `%`, whitespace and
+  control characters that way. A reader must not parse a key.
+- A root's `anchor` uses the manifest's `position_encoding` and matches as described under
+  [Anchors](#anchors), except that it must resolve to a declaration of an entity with the root's
+  symbol.
+- `targets` proves inclusion and claims no exclusion. When another target may include the file
+  too, the adapter lists the file in the build entry's `skipped` with code
+  `targets-incomplete`. When it could not establish any target for the file, the row has no
+  `targets` and the file is listed with code `target-unknown`; a file with no other fact gets
+  only the skip. A file whose build constraint cannot be read is listed with
+  `constraint-unreadable`.
+- The adapter writes build facts and skips only for documents of its own base layer.
+
 ## How a layer is read
 
 The engine reads an optional layer in phases, each over all rows, so that the outcome does not
 depend on the order of the rows.
 
 1. **Shape.** Every row must pass its schema and, in `syntax.jsonl`, the range rules. One
-   failing row discards the layer (`row-invalid`).
+   failing row discards the layer (`row-invalid`). Test rows pass this phase, phase 3, phase 4
+   among themselves and phase 5; phase 6 does not apply to them.
 2. **Build contexts**, `calls.jsonl` only. A row naming a build context that `result.json`
    does not list is dropped and counted in `unknown-build-context`.
 3. **Anchors.** A row with an anchor that does not resolve is dropped and recorded as
@@ -367,6 +446,28 @@ depend on the order of the rows.
 
 A discarded layer contributes nothing but its one `failed-layer` gap: no rows, no bodies, no
 file rows, none of the gaps that an earlier phase recorded for it, and no `skipped-file` gap.
+
+The build layer is read after the syntax layer's phases and the folding of `merged` symbols,
+on the entities and sites the snapshot keeps, in its own phases:
+
+1. **Shape** (terminal). Every row passes its schema; a file row's `targets` is sorted by bytes
+   without repeats; every `root.symbol` is a global SCIP symbol; every key fits the key grammar.
+   A failure discards the layer (`row-invalid`).
+2. **Keys** (terminal). Target keys are unique; every key a file row names is a target of the
+   layer; a file appears in at most one file row; no file has both a row with `targets` and a
+   `target-unknown` skip; no file has a `targets-incomplete` skip without a row with `targets`;
+   every file row without `targets` has a `target-unknown` skip. A failure discards the layer
+   (`row-invalid`).
+3. **Roots** (per row). A root's anchor is converted to UTF-8 byte columns first; a conversion
+   that fails leaves the target without its entity and without the anchor, with an
+   `unresolved-root` gap. A root with an anchor resolves to the entity whose kept declaration of
+   the root's symbol sits at the anchor, even when only one entity with that symbol survives; a
+   root without an anchor resolves to the one entity with its symbol. Anything else leaves the
+   target without its entity, with an `unresolved-root` gap. A target without `root` has no
+   entity and no gap.
+4. **Files** (per row). A file row or skip whose `file` is not a document the base layer
+   admitted is dropped, and recorded once per file as an `unknown-file` gap; such a skip gives
+   no `skipped-file` gap.
 
 ## Worked examples
 

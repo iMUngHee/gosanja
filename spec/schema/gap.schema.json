@@ -19,7 +19,9 @@
         "opaque-region",
         "unknown-build-context",
         "unknown-value",
-        "skipped-file"
+        "skipped-file",
+        "unresolved-root",
+        "unknown-file"
       ]
     },
     "file": {
@@ -63,6 +65,23 @@
         {
           "type": "string",
           "pattern": "^adapter:[a-z0-9-]+/base$"
+        },
+        {
+          "type": "string",
+          "pattern": "^adapter:[a-z0-9-]+/build$"
+        }
+      ]
+    },
+    "target": {
+      "$ref": "build.schema.json#/$defs/key"
+    },
+    "scope": {
+      "anyOf": [
+        {
+          "$ref": "file.schema.json#/$defs/path"
+        },
+        {
+          "const": "."
         }
       ]
     }
@@ -279,9 +298,28 @@
         ],
         "properties": {
           "src": {
-            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls|build)$"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "layer": {
+                  "const": "build"
+                }
+              },
+              "required": [
+                "layer"
+              ]
+            },
+            "then": {
+              "required": [
+                "scope"
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -302,9 +340,28 @@
         ],
         "properties": {
           "src": {
-            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls|build)$"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "layer": {
+                  "const": "build"
+                }
+              },
+              "required": [
+                "layer"
+              ]
+            },
+            "then": {
+              "required": [
+                "scope"
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -325,7 +382,7 @@
         ],
         "properties": {
           "src": {
-            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls|build)$"
           }
         }
       }
@@ -425,7 +482,7 @@
         ],
         "properties": {
           "src": {
-            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls)$"
+            "pattern": "^adapter:[a-z0-9-]+/(?:syntax|calls|build)$"
           }
         }
       }
@@ -454,7 +511,74 @@
           "anchor": false,
           "detail": false,
           "src": {
-            "pattern": "^adapter:[a-z0-9-]+/(?:base|syntax|calls)$"
+            "pattern": "^adapter:[a-z0-9-]+/(?:base|syntax|calls|build)$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gap": {
+            "const": "unresolved-root"
+          }
+        },
+        "required": [
+          "gap"
+        ]
+      },
+      "then": {
+        "required": [
+          "layer",
+          "target"
+        ],
+        "properties": {
+          "layer": {
+            "const": "build"
+          },
+          "file": false,
+          "range": false,
+          "count": false,
+          "keys": false,
+          "code": false,
+          "detail": false,
+          "scope": false,
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/build$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gap": {
+            "const": "unknown-file"
+          }
+        },
+        "required": [
+          "gap"
+        ]
+      },
+      "then": {
+        "required": [
+          "layer",
+          "file"
+        ],
+        "properties": {
+          "layer": {
+            "const": "build"
+          },
+          "range": false,
+          "count": false,
+          "keys": false,
+          "anchor": false,
+          "code": false,
+          "detail": false,
+          "target": false,
+          "scope": false,
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/build$"
           }
         }
       }
@@ -515,6 +639,25 @@
         "properties": {
           "layer": {
             "const": "calls"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "src": {
+            "pattern": "^adapter:[a-z0-9-]+/build$"
+          }
+        },
+        "required": [
+          "layer"
+        ]
+      },
+      "then": {
+        "properties": {
+          "layer": {
+            "const": "build"
           }
         }
       }

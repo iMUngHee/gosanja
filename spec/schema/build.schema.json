@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "build.schema.json",
+  "type": "object",
+  "properties": {
+    "row": {
+      "enum": [
+        "target",
+        "file"
+      ]
+    }
+  },
+  "required": [
+    "row"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "row": {
+            "const": "target"
+          }
+        },
+        "required": [
+          "row"
+        ]
+      },
+      "then": {
+        "properties": {
+          "key": {
+            "$ref": "build.schema.json#/$defs/key"
+          },
+          "kind": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "root": {
+            "$ref": "build.schema.json#/$defs/root"
+          },
+          "required_features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "test": {
+            "const": true
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "name"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "row": {
+            "const": "file"
+          }
+        },
+        "required": [
+          "row"
+        ]
+      },
+      "then": {
+        "properties": {
+          "file": {
+            "$ref": "file.schema.json#/$defs/path"
+          },
+          "targets": {
+            "$ref": "build.schema.json#/$defs/targets"
+          },
+          "test": {
+            "$ref": "build.schema.json#/$defs/file-test"
+          },
+          "constraint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "targets"
+            ]
+          },
+          {
+            "required": [
+              "test"
+            ]
+          },
+          {
+            "required": [
+              "constraint"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?:[^\\s\\p{Cc}%]|%[0-9A-F]{2})+$"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "$ref": "build.schema.json#/$defs/key"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "file-test": {
+      "enum": [
+        "cfg",
+        "target",
+        "file"
+      ]
+    },
+    "root": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "anchor": {
+          "$ref": "syntax-fact.schema.json#/$defs/anchor"
+        }
+      },
+      "required": [
+        "symbol"
+      ]
+    }
+  }
+}

@@ -11,6 +11,7 @@ origin. The facts come from compilers and indexers. Nothing is guessed.
               │  index.scip      definitions, references          (base layer)
               │  syntax.jsonl    bodies, outline, attributes      (syntax layer, optional)
               │  calls.jsonl     compiler-backed call evidence    (calls layer, optional)
+              │  build.jsonl     targets, file membership         (build layer, optional)
               ▼
   ┌────────────────────────────── core ──────────────────────────────┐
   │ decode ─► keys ─► entities, containment ─► ownership ─► relations │
@@ -18,7 +19,7 @@ origin. The facts come from compilers and indexers. Nothing is guessed.
   │               anchors join the side-cars                          │
   └──────────────────────────────┬───────────────────────────────────┘
                                  ▼
-                    snapshot (seven files) ─► validate
+                    snapshot (eight files) ─► validate
                                  │
                                  ▼  two of them, old and new
                  validate ─► pair ─► compare ─► candidates      (core: diff)
@@ -98,6 +99,7 @@ Core modules:
 | `graph` | Entities, containment, ownership of references, relations. |
 | `anchor` | Matches adapter anchors against definitions. |
 | `sidecar` | Reads the syntax and calls layers and joins them to the graph. |
+| `build` | Validates and joins the build layer and applies item and file test evidence. |
 | `adapter` | Runs one given adapter program and classifies what it produced. The program that was described is the one that is run. |
 | `write` | Serialises a snapshot or a diff deterministically, and reads sources and snapshots from disk. |
 | `publish` | Moves a finished snapshot or diff into place, and protects what was there and the inputs it was made from. |

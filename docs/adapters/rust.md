@@ -1,11 +1,12 @@
 # The Rust adapter
 
-`gosanja-adapter-rust` gives the engine three layers for a Cargo workspace:
+`gosanja-adapter-rust` gives the engine four layers for a Cargo workspace:
 
 - the base layer, an index made by `rust-analyzer scip`;
 - the syntax layer, read from the source with `syn`;
 - the calls layer, read from the LLVM IR the compiler emits when the adapter builds the
-  project's library and binary targets.
+  project's library and binary targets;
+- the build layer, Cargo target information and file membership from compiler dependency info.
 
 A call relation of the calls layer says this: in one build, the compiler emitted at a line of
 the project's source a direct call to a function, and on that line the base layer holds a
@@ -99,6 +100,22 @@ target/debug/gosanja index --root fixtures/rust-flow --out /tmp/gosanja-rust-flo
 target/debug/gosanja validate /tmp/gosanja-rust-flow --root fixtures/rust-flow
 ```
 
+### Choosing build facts
+
+Use `--layers base,build` to publish Cargo targets and file membership without the syntax and
+calls layers. The build layer reads Cargo metadata and dependency info from four isolated
+`cargo check` runs. These checks select the active toolchain's `rustc` and clear Cargo's
+configured compiler wrappers. They record proven membership and report gaps where the
+compiler output leaves membership uncertain. Test marks depend on the observed default
+feature build. Other feature contexts can withhold a mark. The adapter withholds Rust test marks on Windows. A `cfg` mark on an item
+can come from syntax evidence about its own gate or build evidence about its file.
+
+These facts assume that compiler output describes the project honestly. In particular,
+build scripts and wrappers can cause the reported build to diverge from the files the
+adapter reads. The adapter withholds facts where it detects a divergence, such as an opaque
+compiler invocation or unverified dependency file. A project crafted to defeat the checks
+can make it publish a wrong mark.
+
 ### Without the calls layer
 
 ```sh
@@ -107,8 +124,9 @@ gosanja index --root <workspace> --out <dir> --layers base,syntax
 
 When it is not asked for the calls layer, the adapter selects no target, runs no
 `cargo rustc` and writes no `calls.jsonl` and no build context; the snapshot records the calls
-layer `not-requested`. This saves the calls build, not every compilation: `rust-analyzer scip`
-still builds and runs the project's build scripts and procedural macros for the base layer.
+layer `not-requested`. The base indexer still builds and runs the project's build scripts
+and procedural macros. The syntax layer can run the Cargo checks to prove item test marks,
+including when the build layer is unrequested.
 When it is not asked for the syntax layer (`--layers base` or `--layers base,calls`), it does
 not parse the sources for that layer and writes no `syntax.jsonl`. The calls layer, when it is
 asked for, still reads the files its IR names to check its sites, whatever the syntax layer

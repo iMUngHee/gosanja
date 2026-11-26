@@ -43,6 +43,10 @@ pub enum Schema {
     Syntax,
     /// `gap.schema.json`
     Gap,
+    /// `build.schema.json`
+    Build,
+    /// `target.schema.json`
+    Target,
 }
 
 const BASE: &str = "https://gosanja.invalid/schema/";
@@ -74,6 +78,8 @@ bundled! {
     Relation => "relation",
     Syntax => "syntax",
     Gap => "gap",
+    Build => "build",
+    Target => "target",
 }
 
 static VALIDATORS: LazyLock<Vec<(Schema, Validator)>> = LazyLock::new(|| {

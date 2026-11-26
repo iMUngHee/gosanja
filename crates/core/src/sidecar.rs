@@ -5,7 +5,7 @@ use crate::{
     write::{Location, SourceReader},
 };
 use gosanja_schema::{
-    contract::{Anchor, CallEvidence, SyntaxFact},
+    contract::{Anchor, CallEvidence, ItemTest, SyntaxFact, TestRow},
     position::{PositionEncoding, Range, Site},
     snapshot::{
         EntityRow, Evidence, FailedDetail, GapKind, GapRow, Layer, LayerState, Mechanism,
@@ -81,21 +81,44 @@ pub fn apply_syntax(
     column: &Column<'_>,
     gaps: &mut Vec<GapRow>,
 ) -> Vec<SyntaxRow> {
+    apply_syntax_and_tests(entities, facts, &[], adapter, column, gaps).0
+}
+
+/// [`apply_syntax`], with the layer's test rows.
+///
+/// Test rows pass the same phases among themselves (shape, anchors, one row per definition)
+/// and become the test evidence of their entities, keyed by entity key, never a syntax row.
+pub fn apply_syntax_and_tests(
+    entities: &mut [EntityRow],
+    facts: &[SyntaxFact],
+    tests: &[TestRow],
+    adapter: &str,
+    column: &Column<'_>,
+    gaps: &mut Vec<GapRow>,
+) -> (Vec<SyntaxRow>, BTreeMap<String, ItemTest>) {
     let src = format!("adapter:{adapter}/syntax");
     let index = Anchors::new(entities);
     let resolved: Vec<_> = facts
         .iter()
         .map(|fact| index.resolve(&fact.anchor, column))
         .collect();
+    let tested: Vec<_> = tests
+        .iter()
+        .map(|test| index.resolve(&test.anchor, column))
+        .collect();
     let discard = |gaps: &mut Vec<GapRow>| {
         let mut gap = GapRow::new(GapKind::FailedLayer, &src);
         gap.detail = Some(FailedDetail::RowInvalid);
         gap.layer = Some(Layer::Syntax);
         gaps.push(gap);
-        Vec::new()
+        (Vec::new(), BTreeMap::new())
     };
     let mut seen = BTreeSet::new();
-    if !facts.iter().all(valid_ranges) || !resolved.iter().flatten().all(|i| seen.insert(*i)) {
+    let mut seen_tests = BTreeSet::new();
+    if !facts.iter().all(valid_ranges)
+        || !resolved.iter().flatten().all(|i| seen.insert(*i))
+        || !tested.iter().flatten().all(|i| seen_tests.insert(*i))
+    {
         return discard(gaps);
     }
     let mut bodies = Vec::new();
@@ -149,9 +172,18 @@ pub fn apply_syntax(
             def.body_src = Some(src.clone());
         }
     }
+    let mut evidence = BTreeMap::new();
+    for (test, resolved) in tests.iter().zip(tested) {
+        match resolved {
+            Some(i) => {
+                evidence.insert(entities[i].key.clone(), test.test);
+            }
+            None => unmatched.push(unanchored(&test.anchor, Layer::Syntax, &src)),
+        }
+    }
     gaps.extend(unmatched);
     gaps.extend(position_gaps(bad, Layer::Syntax, &src));
-    rows
+    (rows, evidence)
 }
 
 type Calls = BTreeMap<(String, String, Mechanism, Resolution, String), Vec<Evidence>>;
@@ -379,7 +411,10 @@ pub fn build(
         builds,
         mut layers,
         syntax,
+        tests,
         calls,
+        build,
+        build_skipped,
         merged,
         mut gaps,
         ..
@@ -388,6 +423,19 @@ pub fn build(
     for fact in &syntax {
         needed.insert(fact.anchor.file.as_str());
     }
+    for test in &tests {
+        needed.insert(test.anchor.file.as_str());
+    }
+    let root_files: Vec<String> = build
+        .iter()
+        .filter_map(|row| match row {
+            gosanja_schema::contract::BuildRow::Target(target) => {
+                Some(target.root.as_ref()?.anchor.as_ref()?.file.clone())
+            }
+            gosanja_schema::contract::BuildRow::File(_) => None,
+        })
+        .collect();
+    needed.extend(root_files.iter().map(String::as_str));
     for row in &calls {
         needed.insert(row.caller.file.as_str());
         needed.insert(row.callee.file.as_str());
@@ -401,12 +449,14 @@ pub fn build(
         bytes: std::cell::RefCell::default(),
     };
     let merged: BTreeSet<String> = merged.into_iter().collect();
+    let mut evidence = BTreeMap::new();
     let mut snapshot =
         crate::graph::build_with(&mut index, &reader, project_name, &merged, |snapshot| {
             reader.with_columns(manifest.position_encoding, |column| {
-                snapshot.syntax = apply_syntax(
+                (snapshot.syntax, evidence) = apply_syntax_and_tests(
                     &mut snapshot.entities,
                     &syntax,
+                    &tests,
                     &manifest.name,
                     column,
                     &mut snapshot.gaps,
@@ -421,9 +471,22 @@ pub fn build(
         layers.syntax = LayerState::Failed;
         gaps.retain(|g| g.layer != Some(Layer::Syntax));
     }
-    snapshot.scope.layers = layers;
     snapshot.scope.builds = builds;
     snapshot.gaps.extend(gaps);
+    reader.with_columns(manifest.position_encoding, |column| {
+        crate::build::apply(
+            &mut snapshot,
+            &mut layers.build,
+            crate::build::BuildInput {
+                rows: build,
+                skipped: build_skipped,
+            },
+            &evidence,
+            &manifest.name,
+            column,
+        );
+    });
+    snapshot.scope.layers = layers;
     reader.with_columns(manifest.position_encoding, |column| {
         derive_with_sources(
             &mut snapshot,

@@ -11,6 +11,20 @@
     "outline": {"type": "array", "items": {"$ref": "syntax.schema.json#/$defs/node"}}
   },
   "required": ["anchor"],
+  "if": {"required": ["row"]},
+  "then": {
+    "properties": {
+      "row": {"const": "test"},
+      "test": {"enum": ["attribute", "cfg"]},
+      "body": false,
+      "visibility": false,
+      "qualifiers": false,
+      "attributes": false,
+      "outline": false
+    },
+    "required": ["row", "anchor", "test"]
+  },
+  "else": {"properties": {"test": false}},
   "$defs": {
     "anchor": {
       "type": "object",

@@ -5,6 +5,7 @@
 
 pub mod adapter;
 pub mod anchor;
+pub mod build;
 pub mod diff;
 pub mod graph;
 pub mod identity;

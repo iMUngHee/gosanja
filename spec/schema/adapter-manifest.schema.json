@@ -26,7 +26,7 @@
   "required": ["contract", "name", "version", "languages", "position_encoding", "layers"],
   "$defs": {
     "name": {"type": "string", "pattern": "^[a-z0-9-]+$"},
-    "layer": {"enum": ["base", "syntax", "calls"]},
+    "layer": {"enum": ["base", "syntax", "calls", "build"]},
     "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
     "file-name": {"type": "string", "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._-]+$"}
   }

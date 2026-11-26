@@ -280,9 +280,9 @@ fn layer_requests_are_intersected_with_the_manifest() {
     let record = temp.path().join("argv");
     for (offered, cases) in [
         (
-            r#"["base","syntax","calls"]"#,
+            r#"["base","syntax","calls","build"]"#,
             [
-                (None, "base,syntax,calls", Present, Present),
+                (None, "base,syntax,calls,build", Present, Present),
                 (Some("base"), "base", NotRequested, NotRequested),
                 (Some("base,syntax"), "base,syntax", Present, NotRequested),
                 (Some("base,calls"), "base,calls", NotRequested, Present),
@@ -299,6 +299,11 @@ fn layer_requests_are_intersected_with_the_manifest() {
         ),
     ] {
         for (request, argument, syntax, calls) in cases {
+            let build = match request {
+                Some(list) if !list.contains("build") => NotRequested,
+                _ if offered.contains("build") => Present,
+                _ => Absent,
+            };
             fs::write(&record, "").unwrap();
             let described = configured_adapter("good", offered, &record);
             let output = match request {
@@ -314,16 +319,21 @@ fn layer_requests_are_intersected_with_the_manifest() {
                 (
                     output.layers.base,
                     output.layers.syntax,
-                    output.layers.calls
+                    output.layers.calls,
+                    output.layers.build
                 ),
-                (Present, syntax, calls)
+                (Present, syntax, calls, build)
             );
-            let expected: Vec<_> = [(syntax, Layer::Syntax), (calls, Layer::Calls)]
-                .into_iter()
-                .filter_map(|(state, layer)| {
-                    (state == Absent).then_some((GapKind::MissingLayer, Some(layer)))
-                })
-                .collect();
+            let expected: Vec<_> = [
+                (syntax, Layer::Syntax),
+                (calls, Layer::Calls),
+                (build, Layer::Build),
+            ]
+            .into_iter()
+            .filter_map(|(state, layer)| {
+                (state == Absent).then_some((GapKind::MissingLayer, Some(layer)))
+            })
+            .collect();
             assert_eq!(
                 output
                     .gaps
@@ -353,8 +363,8 @@ fn explicit_all_and_omission_have_equal_argv_and_snapshots() {
     let root = support::fixture("rust-basic");
     let sources = FsSource::new(&root).unwrap();
     let record = parent.join("argv");
-    let all = "base,syntax,calls".parse::<LayerRequest>().unwrap();
-    for offered in [r#"["base","syntax","calls"]"#, r#"["base"]"#] {
+    let all = "base,syntax,calls,build".parse::<LayerRequest>().unwrap();
+    for offered in [r#"["base","syntax","calls","build"]"#, r#"["base"]"#] {
         let run = |request| {
             fs::write(&record, "").unwrap();
             let described = configured_adapter("good", offered, &record);
@@ -393,7 +403,7 @@ fn calls_output_is_filtered_before_schema_and_build_checks() {
     let root = temp.path().join("root");
     fs::create_dir(&root).unwrap();
     let record = temp.path().join("argv");
-    let full = r#"["base","syntax","calls"]"#;
+    let full = r#"["base","syntax","calls","build"]"#;
     let no_calls = "base,syntax".parse::<LayerRequest>().unwrap();
     let run = |mode, offered, request| {
         configured_adapter(mode, offered, &record).run_with_layers(&root, temp.path(), request)
@@ -823,3 +833,5 @@ mod merged {
         assert_eq!(calls_to_package(&run.snapshot()), 1);
     }
 }
+
+include!("build/protocol.rs");

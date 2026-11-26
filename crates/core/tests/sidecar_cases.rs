@@ -12,7 +12,10 @@ fn newer_minor_skips_only_unknown_enum_strings() {
     let data = format!("{unknown}\n{known}\n");
     let (rows, skipped) = read_syntax(Cursor::new(&data), policy).unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].visibility.as_deref(), Some("pub"));
+    let gosanja_schema::contract::SyntaxLine::Fact(row) = &rows[0] else {
+        panic!("a syntax row")
+    };
+    assert_eq!(row.visibility.as_deref(), Some("pub"));
     assert_eq!(skipped, 1);
     read_syntax(Cursor::new(&data), Acceptance::Full).unwrap_err();
     for invalid in [

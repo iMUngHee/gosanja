@@ -503,7 +503,7 @@ fn parents_and_groups_must_exist() {
 fn newer(extra: &[(&str, &str)]) -> SnapshotFiles {
     let mut files = SnapshotFiles {
         manifest: Some(
-            br#"{"format":"gosanja-snapshot","schema":"1.1","tool":{"name":"gosanja","version":"9"},"project":{"name":"p"},"scopes":[{"path":".","indexers":[],"layers":{"base":"present","syntax":"partial","calls":"absent"},"builds":[]}],"counts":{"files":0,"entities":0,"externals":0,"relations":0,"syntax":0,"gaps":0,"dropped_local_references":0}}"#
+            br#"{"format":"gosanja-snapshot","schema":"1.1","tool":{"name":"gosanja","version":"9"},"project":{"name":"p"},"scopes":[{"path":".","indexers":[],"layers":{"base":"present","syntax":"partial","calls":"absent","build":"absent"},"builds":[]}],"counts":{"files":0,"entities":0,"externals":0,"relations":0,"syntax":0,"gaps":0,"targets":0,"dropped_local_references":0}}"#
                 .to_vec(),
         ),
         files: Some(Vec::new()),
@@ -520,6 +520,7 @@ fn newer(extra: &[(&str, &str)]) -> SnapshotFiles {
         externals: Some(Vec::new()),
         relations: Some(Vec::new()),
         syntax: Some(Vec::new()),
+        targets: Some(Vec::new()),
         gaps: Some(Vec::new()),
         unreadable: Vec::new(),
     };
@@ -939,3 +940,5 @@ fn decls_a_syntax_row_keyed_to_them_is_reported() {
     });
     assert_eq!(check(&files), [("syntax.jsonl", "syntax-on-decls")]);
 }
+
+include!("build/validate.rs");

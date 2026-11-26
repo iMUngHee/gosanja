@@ -150,14 +150,13 @@ fn compare_inputs(
     compare_rows(&left, &right, &old_symbols, &new_symbols)
 }
 
-fn compare_rows(
+/// The comparisons left out, as `spec/diff.md` ("What is not compared") decides them, sorted.
+fn not_compared(
     old_snapshot: &ReadSnapshot,
+    old_scope: &Scope,
     new_snapshot: &ReadSnapshot,
-    old_symbols: &crate::validate::SymbolIndex,
-    new_symbols: &crate::validate::SymbolIndex,
-) -> Result<Comparison, CompareError> {
-    let (old, old_scope) = side(old_snapshot)?;
-    let (new, new_scope) = side(new_snapshot)?;
+    new_scope: &Scope,
+) -> Vec<Excluded> {
     let present = |state| state == LayerState::Present;
     let not_comparable = |old, new| {
         old == LayerState::NotRequested
@@ -165,6 +164,9 @@ fn compare_rows(
             || present(old) != present(new)
     };
     let mut excluded = Vec::new();
+    if present(old_scope.layers.build) || present(new_scope.layers.build) {
+        excluded.push(Excluded::Build);
+    }
     let old_calls = present(old_scope.layers.calls);
     let new_calls = present(new_scope.layers.calls);
     if not_comparable(old_scope.layers.calls, new_scope.layers.calls)
@@ -184,6 +186,25 @@ fn compare_rows(
     if not_comparable(old_scope.layers.syntax, new_scope.layers.syntax) {
         excluded.push(Excluded::Syntax);
     }
+    let marked = |snapshot: &ReadSnapshot| {
+        snapshot.entities.iter().any(|(_, e)| e.test.is_some())
+            || snapshot.files.iter().any(|(_, f)| f.test.is_some())
+    };
+    if marked(old_snapshot) || marked(new_snapshot) {
+        excluded.push(Excluded::Test);
+    }
+    excluded
+}
+
+fn compare_rows(
+    old_snapshot: &ReadSnapshot,
+    new_snapshot: &ReadSnapshot,
+    old_symbols: &crate::validate::SymbolIndex,
+    new_symbols: &crate::validate::SymbolIndex,
+) -> Result<Comparison, CompareError> {
+    let (old, old_scope) = side(old_snapshot)?;
+    let (new, new_scope) = side(new_snapshot)?;
+    let excluded = not_compared(old_snapshot, old_scope, new_snapshot, new_scope);
     let pairs = pair::pairs(old_snapshot, new_snapshot, old_symbols, new_symbols);
     let reverse = pairs.iter().map(|(&old, &new)| (new, old)).collect();
     let entities = entities::changes(

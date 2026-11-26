@@ -53,7 +53,19 @@ esac
 # written.
 fresh=$(mktemp -d /var/tmp/check-live.XXXXXX)
 trap 'rm -rf "$fresh"' EXIT
-fixtures="rust-basic rust-flow rust-recall rust-calls rust-calls-variants diff-basic"
+for run in one two; do
+    if ! TMPDIR=/var/tmp fixtures/regenerate.sh --out "$fresh/rust-targets-$run" rust-targets 2>"$fresh/log"; then
+        tail -n 20 "$fresh/log" >&2
+        echo "check-live: rust-targets regeneration $run failed" >&2
+        exit 1
+    fi
+done
+if ! diff -r "$fresh/rust-targets-one/rust-targets" "$fresh/rust-targets-two/rust-targets" >"$fresh/diff" 2>&1; then
+    echo "check-live: the two rust-targets regenerations differ:" >&2
+    cat "$fresh/diff" >&2
+    exit 1
+fi
+fixtures="rust-basic rust-flow rust-recall rust-calls rust-calls-variants rust-targets diff-basic"
 # shellcheck disable=SC2086 # the fixture names are words
 if ! TMPDIR=/var/tmp fixtures/regenerate.sh --out "$fresh/out" $fixtures 2>"$fresh/log"; then
     tail -n 20 "$fresh/log" >&2

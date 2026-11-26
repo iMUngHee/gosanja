@@ -10,7 +10,7 @@ use std::io::Read;
 use gosanja_schema::position::{PositionEncoding, Range, Site};
 use gosanja_schema::snapshot::{
     Decl, Def, EntityRow, ExternalRow, FileRow, GapKind, GapRow, LayerState, Layers, Package,
-    Project, RefRole, Rel, RelationRow, Scope, SyntaxRow, Tool,
+    Project, RefRole, Rel, RelationRow, Scope, SyntaxRow, TargetRow, Tool,
 };
 use protobuf::EnumFull;
 use scip::types::occurrence::{Typed_enclosing_range, Typed_range};
@@ -43,6 +43,8 @@ pub struct Snapshot {
     pub syntax: Vec<SyntaxRow>,
     /// Rows of `gaps.jsonl`.
     pub gaps: Vec<GapRow>,
+    /// Rows of `targets.jsonl`.
+    pub targets: Vec<TargetRow>,
     /// References to local symbols, which are not recorded.
     pub dropped_local_references: u64,
 }
@@ -69,6 +71,9 @@ impl std::error::Error for BuildError {
         }
     }
 }
+
+/// The `path` of the one scope the engine writes.
+pub const SCOPE: &str = ".";
 
 const CONTAINMENT: &str = "core:containment";
 const IDENTITY: &str = "core:identity";
@@ -318,13 +323,14 @@ impl Input {
                 name: project_name.to_owned(),
             },
             scope: Scope {
-                path: ".".to_owned(),
+                path: SCOPE.to_owned(),
                 adapter: None,
                 indexers: self.tools.iter().cloned().collect(),
                 layers: Layers {
                     base: LayerState::Present,
                     syntax: LayerState::Absent,
                     calls: LayerState::Absent,
+                    build: LayerState::Absent,
                 },
                 builds: Vec::new(),
             },
@@ -334,6 +340,7 @@ impl Input {
             relations: Vec::new(),
             syntax: Vec::new(),
             gaps: Vec::new(),
+            targets: Vec::new(),
             dropped_local_references: 0,
         };
         self.document_gaps(&mut out.gaps);
@@ -377,6 +384,9 @@ pub fn file_row(path: &str, language: Option<String>, text: &[u8]) -> FileRow {
         bytes: text.len() as u64,
         lines: LineIndex::new(text).count(),
         sha256: hex(&Sha256::digest(text)),
+        targets: None,
+        test: None,
+        constraint: None,
     }
 }
 
@@ -683,6 +693,7 @@ impl<'a> Graph<'a> {
                 member_of: None,
                 def: None,
                 decls: None,
+                test: None,
                 src: CONTAINMENT.to_owned(),
             };
             let Some(observations) = self.defs.get(raw) else {

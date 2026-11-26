@@ -61,7 +61,7 @@ fn manifest() {
     assert!(validator(Schema::AdapterManifest).is_valid(&r), "{r}");
     assert_eq!(
         r,
-        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.4","languages":["rust"],"layers":["base","syntax","calls"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
+        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.5","languages":["rust"],"layers":["base","syntax","calls","build"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
     );
 }
 #[test]
@@ -433,6 +433,7 @@ fn child_environment_and_workspace_writes() {
         assert_eq!(
             published,
             [
+                "build.jsonl",
                 "calls.jsonl",
                 "index.scip",
                 "result.json",
@@ -562,7 +563,12 @@ fn repeatable_results_preserve_extractors_skipped_files() {
         let result = c.run(&mut c.index());
         assert_eq!(
             result["layers"]["syntax"],
-            json!({"status":"ok", "skipped":[{"file":"kit/src/lib.rs","code":"parse-failed"}]})
+            json!({"status":"ok", "skipped":[
+                {"file":"app/src/extra.rs","code":"test-unknown"},
+                {"file":"app/src/main.rs","code":"test-unknown"},
+                {"file":"kit/src/lib.rs","code":"parse-failed"},
+                {"file":"kit/src/lib.rs","code":"test-unknown"}
+            ]})
         );
         let bytes = fs::read(c.out.join("result.json")).unwrap();
         if let Some(expected) = &first {
@@ -1638,6 +1644,7 @@ fn requested_layers_control_output_and_the_cargo_rustc_build() {
         (Some("base,calls"), false, true),
         (Some("calls,base"), false, true),
         (Some("base"), false, false),
+        (Some("base,build"), false, false),
         (None, true, true),
     ];
     for (i, (list, syntax, calls)) in choices.into_iter().enumerate() {
@@ -1690,7 +1697,13 @@ fn requested_layers_control_output_and_the_cargo_rustc_build() {
             "{result}"
         );
         let layers = result["layers"].as_object().unwrap();
-        assert_eq!(layers.len(), 1 + usize::from(syntax) + usize::from(calls));
+        let build = list.is_none_or(|list| list.contains("build"));
+        assert_eq!(
+            layers.len(),
+            1 + usize::from(syntax) + usize::from(calls) + usize::from(build)
+        );
+        assert_eq!(layers.contains_key("build"), build);
+        assert_eq!(c.out.join("build.jsonl").is_file(), build);
         assert_eq!(layers["base"]["status"], "ok", "{result}");
         assert_eq!(layers.contains_key("syntax"), syntax);
         assert_eq!(layers.contains_key("calls"), calls);
@@ -1702,6 +1715,13 @@ fn requested_layers_control_output_and_the_cargo_rustc_build() {
             assert!(!calls_rows(&c).is_empty(), "{result}");
         }
         let cargo = fs::read_to_string(log).unwrap();
+        assert_eq!(
+            cargo
+                .lines()
+                .filter(|line| line.starts_with("check\t"))
+                .count(),
+            if build || syntax { 4 } else { 0 }
+        );
         let targets: Vec<_> = cargo
             .lines()
             .filter(|line| line.starts_with("rustc\t"))
@@ -1718,16 +1738,20 @@ fn requested_layers_control_output_and_the_cargo_rustc_build() {
         };
         assert_eq!(targets, expected, "{cargo}");
     }
+}
 
+#[test]
+fn base_failure_reports_the_requested_optional_layers() {
     let c = Case::new();
     probe(&c, "", &[]);
     fs::remove_file(c.root.join("Cargo.lock")).unwrap();
-    let result = c.run(c.index().args(["--layers", "base,calls"]));
+    let result = c.run(c.index().args(["--layers", "base,calls,build"]));
     assert_eq!(
         result["layers"],
         json!({
             "base": {"status":"failed", "diagnostics":[{"code":"lockfile-missing"}]},
             "calls": {"status":"failed", "diagnostics":[{"code":"base-failed"}]},
+            "build": {"status":"failed", "diagnostics":[{"code":"base-failed"}]},
         })
     );
 }

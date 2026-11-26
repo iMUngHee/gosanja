@@ -196,7 +196,7 @@ fn a_snapshot_compared_with_itself_gives_five_files_and_no_row() {
 #[test]
 fn another_schema_version_is_refused_before_anything_is_written() {
     let input = edited("version", "manifest.json", |m| {
-        m.replace(r#""schema":"0.4""#, r#""schema":"0.1""#)
+        m.replace(r#""schema":"0.5""#, r#""schema":"0.1""#)
     });
     for (a, b) in [(&input, &new()), (&old(), &input)] {
         let out = scratch("refused");
@@ -457,7 +457,7 @@ fn another_schema_version_is_refused_whatever_its_tables_hold() {
         ),
     ] {
         let input = edited(name, "manifest.json", |m| {
-            m.replace(r#""schema":"0.4""#, r#""schema":"9.9""#)
+            m.replace(r#""schema":"0.5""#, r#""schema":"9.9""#)
         });
         damage(&input);
         for (a, b) in [(&input, &new()), (&old(), &input)] {
@@ -502,7 +502,7 @@ fn validate_refuses_frozen_public_snapshots() {
         assert_refused(&result, side);
         let message = stderr(&result);
         assert!(
-            message.contains("written with version 0.2, this reader implements 0.4"),
+            message.contains("written with version 0.2, this reader implements 0.5"),
             "{side}: {message}"
         );
     }
@@ -518,17 +518,17 @@ fn a_diff_of_the_previous_schema_at_the_output_is_replaced() {
     copy(&repo("fixtures/diff-basic/expected"), &out);
     let manifest = out.join("manifest.json");
     let text = fs::read_to_string(&manifest).expect("read");
-    // A diff written before this schema: diff 0.2 over snapshot 0.3 sides from contract 0.3.
+    // A diff written before this schema: diff 0.3 over snapshot 0.4 sides from contract 0.4.
     let previous = text
-        .replacen(r#""schema":"0.3""#, r#""schema":"0.2""#, 1)
-        .replace(r#""schema":"0.4""#, r#""schema":"0.3""#)
-        .replace(r#""contract":"0.4""#, r#""contract":"0.3""#);
+        .replacen(r#""schema":"0.4""#, r#""schema":"0.3""#, 1)
+        .replace(r#""schema":"0.5""#, r#""schema":"0.4""#)
+        .replace(r#""contract":"0.5""#, r#""contract":"0.4""#);
     for stamp in [
-        r#""schema":"0.2""#,
         r#""schema":"0.3""#,
-        r#""contract":"0.3""#,
+        r#""schema":"0.4""#,
+        r#""contract":"0.4""#,
     ] {
-        let expected = if stamp.contains("0.2") { 1 } else { 2 };
+        let expected = if stamp.contains("0.3") { 1 } else { 2 };
         assert_eq!(previous.matches(stamp).count(), expected, "{stamp}");
     }
     fs::write(&manifest, previous).expect("write");
@@ -550,3 +550,5 @@ fn a_diff_of_the_previous_schema_at_the_output_is_replaced() {
     assert_eq!(written["schema"], SCHEMA_VERSION.to_string());
     assert_eq!(tree(&out), tree(&repo("fixtures/diff-basic/expected")));
 }
+
+include!("build/diff.rs");
