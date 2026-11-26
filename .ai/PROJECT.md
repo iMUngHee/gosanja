@@ -16,7 +16,15 @@ gosanja is a Rust engine that builds a deterministic map of a codebase from comp
 
 ## Versioning
 
-Three versions move independently. The release is the workspace package version in the root `Cargo.toml` (semver) and governs the command line and the Rust API. The snapshot schema and the adapter contract are `major.minor` versions recorded in every manifest and specified under `spec/`; their compatibility rules and change classes are in `spec/README.md`. A change to either interface is recorded in `CHANGELOG.md` with what a reader or an adapter author has to do.
+Four versions move independently. The workspace release is the SemVer package version in the root `Cargo.toml`. The snapshot schema, adapter contract, and diff schema have separate `major.minor` versions and change classes in `spec/README.md`. Record each interface change in `CHANGELOG.md` and explain what readers or adapter authors need to change.
+
+Measure release compatibility against the previous release's documented CLI, public Rust API, and supported file formats and adapter contract. Apply the largest bump required by the changes in the release.
+
+- **Patch** for compatible fixes, including indexing corrections that preserve the documented interfaces.
+- **Minor** for compatible new functionality. In the `0.x` series, use a minor bump for incompatible changes as well.
+- **Major** for incompatible changes starting with the `1.x` series.
+
+Record each incompatible change and the migration steps in `CHANGELOG.md`. The workspace release follows SemVer 2.0.0. https://semver.org/
 
 - For every workspace release, including patch releases, add a `diff (old -> new, tool-version: new)` entry to `docs/self-index-history.md`. Build Gosanja and its Rust adapter from the new release, use them to index both releases with the same toolchain and layers, validate both snapshots, and record the structural diff before tagging.
 - Tag the final release commit on `main` with an annotated `vX.Y.Z` tag matching the workspace package version. Push the tag with the release and verify it resolves to that commit on the remote.
