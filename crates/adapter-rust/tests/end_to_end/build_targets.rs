@@ -530,6 +530,47 @@ fn build_alias_only_document_keeps_membership() {
 }
 
 #[test]
+fn build_alias_withholds_marks_on_both_document_paths() {
+    let case = targets();
+    symlink("tests.rs", case.root.join("src/tests_alias.rs")).unwrap();
+    let path = case.root.join("index.scip");
+    let mut index = Index::parse_from_bytes(&fs::read(&path).unwrap()).unwrap();
+    let original = "src/tests.rs";
+    let alias = "src/tests_alias.rs";
+    let mut alias_doc = index
+        .documents
+        .iter()
+        .find(|doc| doc.relative_path == original)
+        .unwrap()
+        .clone();
+    alias_doc.relative_path = alias.into();
+    index.documents.push(alias_doc);
+    fs::write(path, index.write_to_bytes().unwrap()).unwrap();
+
+    let out = snapshot(&case, Some("base,syntax,build"));
+    let files = table(&out, "files.jsonl");
+    let entities = table(&out, "entities.jsonl");
+    for path in [original, alias] {
+        let file = files.iter().find(|row| row["path"] == path).unwrap();
+        assert_eq!(
+            file["targets"],
+            json!(["cargo:rust-targets:lib:rust_targets"])
+        );
+        assert!(file.get("test").is_none(), "{file}");
+        let entity = entities
+            .iter()
+            .find(|row| row["def"]["file"] == path && row["name"] == "t")
+            .unwrap();
+        assert!(entity.get("test").is_none(), "{entity}");
+    }
+    let unchanged = files
+        .iter()
+        .find(|row| row["path"] == "indep/src/only_test.rs")
+        .unwrap();
+    assert_eq!(unchanged["test"], "cfg");
+}
+
+#[test]
 fn build_contradiction_in_both_cfg_forms() {
     for flags in ["[\"--cfg\", \"test\"]", "[\"--cfg=test\"]"] {
         let case = targets();

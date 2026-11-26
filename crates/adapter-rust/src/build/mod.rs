@@ -394,6 +394,10 @@ pub fn collect(
     summarise(root, documents, targets, diagnostic, &runs, &unstable)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "membership and test marks share the same accounting of compiler evidence"
+)]
 fn summarise(
     root: &Path,
     documents: BTreeMap<String, PathBuf>,
@@ -453,6 +457,13 @@ fn summarise(
             }
         }
     }
+    for (file, path) in &documents {
+        if units::lexical(&root.join(file)) != *path
+            && let Some(ev) = evidence.get_mut(path)
+        {
+            ev.aliased = true;
+        }
+    }
     let complete = runs.iter().all(|run| run.complete) && seen.len() == targets.len();
     membership_incomplete |= !complete;
     let mut layer = Build {
@@ -471,9 +482,8 @@ fn summarise(
         {
             layer.withheld.insert(file.clone());
         }
-        let eligible = !layer.withheld.contains(&file)
-            && units::lexical(&root.join(&file)) == path
-            && ev.is_some_and(|ev| ev.eligible && !ev.aliased);
+        let eligible =
+            !layer.withheld.contains(&file) && ev.is_some_and(|ev| ev.eligible && !ev.aliased);
         if eligible {
             layer.eligible.insert(file.clone());
         }

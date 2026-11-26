@@ -208,6 +208,53 @@ fn build_layer_roots_resolve() {
 }
 
 #[test]
+fn build_layer_root_anchor_must_identify_one_folded_site() {
+    use build_run::{PACKAGE, root, run, standard, target};
+    use support::{DEF, occ};
+
+    let mut spec = standard();
+    let document = spec
+        .documents
+        .iter_mut()
+        .find(|doc| doc.relative_path == "a.go")
+        .unwrap();
+    document
+        .occurrences
+        .push(occ(PACKAGE, DEF, &[0, 21, 24], &[]));
+    let (_, text) = spec
+        .sources
+        .iter_mut()
+        .find(|(file, _)| *file == "a.go")
+        .unwrap();
+    *text = "package pkg; package pkg\n".into();
+    let ambiguous = serde_json::json!({
+        "symbol": PACKAGE,
+        "anchor": {"file": "a.go", "line": 0, "name": "pkg"}
+    });
+    let unique = serde_json::json!({
+        "symbol": PACKAGE,
+        "anchor": {"file": "b.go", "line": 0, "name": "pkg"}
+    });
+    spec.build = vec![
+        target("unique", Some(unique)),
+        target("ambiguous", Some(ambiguous)),
+        target("exact", Some(root(PACKAGE, Some(("a.go", 0, 21))))),
+    ];
+
+    let out = run(&spec).unwrap();
+    assert_eq!(out.entity("m:p:pkg/")["decls"].as_array().unwrap().len(), 3);
+    assert_eq!(out.target("exact")["entity"], "m:p:pkg/");
+    assert_eq!(out.target("unique")["entity"], "m:p:pkg/");
+    let unresolved = out.target("ambiguous");
+    assert!(unresolved.get("entity").is_none(), "{unresolved}");
+    let gaps = out.gaps("unresolved-root");
+    assert_eq!(gaps.len(), 1, "{gaps:?}");
+    assert_eq!(gaps[0]["target"], "ambiguous");
+    assert_eq!(gaps[0]["anchor"], unresolved["root"]["anchor"]);
+    assert_eq!(out.validation(), Vec::<String>::new());
+}
+
+#[test]
 fn build_layer_unresolved_roots() {
     use support::{DEF, doc, occ};
     use build_run::{ALPHA, CRATE, LIB, root, run, standard, target};

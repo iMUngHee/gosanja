@@ -570,6 +570,33 @@ fn build_rejects_root_gap_anchor_mismatch() {
 }
 
 #[test]
+fn build_rejects_unresolvable_root_anchor_positions() {
+    use build_check::{accepts, edit_row, rejects};
+    use build_run::{root, run, standard, target};
+    use serde_json::json;
+
+    let mut spec = standard();
+    spec.build = vec![target(
+        "t",
+        Some(root("s m p 1 nobody/", Some(("src/lib.rs", 1, 7)))),
+    )];
+    let out = run(&spec).unwrap();
+    accepts(&out, "unresolved symbol at a valid location");
+    for (field, value, diagnostic) in [
+        ("file", json!("missing.rs"), "unknown-file"),
+        ("line", json!(999), "position-outside-file"),
+    ] {
+        let changed = edit_row(&out, "targets.jsonl", "key", "t", |row| {
+            row["root"]["anchor"][field] = value.clone();
+        });
+        let changed = edit_row(&changed, "gaps.jsonl", "target", "t", |gap| {
+            gap["anchor"][field] = value;
+        });
+        rejects(&changed, diagnostic, field);
+    }
+}
+
+#[test]
 fn build_rejects_absent_build_gap_mismatch() {
     use build_check::{accepts, add_gap, rejects, with, with_manifest, without_build};
     let absent = without_build("absent");

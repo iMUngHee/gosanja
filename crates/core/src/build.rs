@@ -251,26 +251,30 @@ pub(crate) fn resolve(
     let of_symbol = entities
         .iter()
         .filter(|e| e.symbol.as_deref() == Some(symbol) && !e.group && !e.r#virtual);
-    let mut found = match anchor {
+    let found: Vec<_> = match anchor {
         None => of_symbol
             .filter(|e| e.member_of.is_none())
-            .map(|e| e.key.clone())
-            .collect::<Vec<_>>(),
+            .map(|e| e.key.as_str())
+            .collect(),
         Some(anchor) => of_symbol
-            .filter(|e| {
-                sites(e).any(|(file, line, col)| {
-                    file == anchor.file
-                        && line == anchor.line
-                        && anchor.col.map_or_else(
-                            || anchor.name.as_deref() == Some(e.name.as_str()),
-                            |c| c == col,
-                        )
-                })
+            .flat_map(|e| {
+                sites(e)
+                    .filter(move |&(file, line, col)| {
+                        file == anchor.file
+                            && line == anchor.line
+                            && anchor.col.map_or_else(
+                                || anchor.name.as_deref() == Some(e.name.as_str()),
+                                |c| c == col,
+                            )
+                    })
+                    .map(|_| e.key.as_str())
             })
-            .map(|e| e.key.clone())
             .collect(),
     };
-    (found.len() == 1).then(|| found.remove(0))
+    match found.as_slice() {
+        [key] => Some((*key).to_owned()),
+        _ => None,
+    }
 }
 
 /// Each kept declaration site of an entity: its `def`, or every site of `decls`.

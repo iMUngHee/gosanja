@@ -423,7 +423,7 @@ pub(crate) fn checked(
     v.relations(&snap, &lines);
     v.gaps(&snap, &lines);
     token_sites::check(&mut v, &snap);
-    v.build(&snap, files);
+    v.build(&snap, files, &lines);
     let entity_keys: BTreeSet<&str> = snap.entities.iter().map(|(_, e)| e.key.as_str()).collect();
     let declared: BTreeSet<&str> = snap
         .entities
@@ -936,7 +936,7 @@ impl Checks {
 
     /// The facts of the build layer, per scope, as `spec/snapshot.md` ("Build facts in a valid
     /// snapshot") requires: every state a writer cannot emit is rejected.
-    fn build(&mut self, snap: &ReadSnapshot, files: &SnapshotFiles) {
+    fn build(&mut self, snap: &ReadSnapshot, files: &SnapshotFiles, lines: &FileLines) {
         let Some(manifest) = &snap.manifest else {
             return;
         };
@@ -952,7 +952,7 @@ impl Checks {
                 .map(|(line, t)| (t.key.as_str(), (*line, t)))
                 .collect(),
         };
-        self.build_targets(snap, &view);
+        self.build_targets(snap, &view, lines);
         self.build_files(snap, &view);
         self.build_gaps(snap, &view);
         self.entity_marks(snap);
@@ -960,7 +960,7 @@ impl Checks {
     }
 
     /// Targets: scope, key grammar, layer state, entity and root link.
-    fn build_targets(&mut self, snap: &ReadSnapshot, view: &BuildView<'_>) {
+    fn build_targets(&mut self, snap: &ReadSnapshot, view: &BuildView<'_>, lines: &FileLines) {
         let entities: Vec<EntityRow> = snap.entities.iter().map(|(_, e)| e.clone()).collect();
         let by_key: BTreeMap<&str, &EntityRow> =
             entities.iter().map(|e| (e.key.as_str(), e)).collect();
@@ -1008,6 +1008,16 @@ impl Checks {
                     ),
                 ),
                 Some(_) => {}
+            }
+            if let Some(anchor) = t.root.as_ref().and_then(|root| root.anchor.as_ref()) {
+                let col = anchor.col.unwrap_or_default();
+                self.position(
+                    "targets.jsonl",
+                    line,
+                    lines,
+                    &anchor.file,
+                    Range::new(anchor.line, col, anchor.line, col),
+                );
             }
             let gaps = root_gaps.get(t.key.as_str()).map_or(&[][..], Vec::as_slice);
             self.root_link(line, t, gaps, &entities, &by_key);
