@@ -1,4 +1,4 @@
-# Diff, schema 0.4
+# Diff, schema 0.5
 
 A row of a diff says that one snapshot holds a statement and the other does not. It never says
 that the code changed. A snapshot that observed less, because a file was skipped, an anchor did
@@ -7,7 +7,7 @@ say so; the diff shows the same absence a reader of the two snapshots would see.
 gives each side's gap counts per kind and its layer states, so that a reader can weigh a row.
 
 A diff is what `gosanja diff <old> <new>` writes: the differences between two snapshots of one
-project, schema 0.5 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
+project, schema 0.6 (see [snapshot.md](snapshot.md)). It is a directory of five files. The same
 two inputs always produce the same bytes.
 
 | File | Holds | Schema |
@@ -50,7 +50,7 @@ Each input is a snapshot directory. It is read under the reader rules of
 [README.md](README.md) and checked with the validator without sources. A snapshot of another
 schema version, one with no scope or several, or one with any diagnostic is refused before
 anything is written. That includes the snapshots kept frozen in `fixtures/diff-public`, which
-stay at schema 0.2, the schema they were measured at. A snapshot reader of 0.4 refuses them. Only
+stay at schema 0.2, the schema they were measured at. A snapshot reader of 0.6 refuses them. Only
 scratch copies whose `schema` is re-stamped are compared in the repository's tests.
 
 A diff reader of schema 0.3 refuses a diff written with schema 0.2.
@@ -99,7 +99,7 @@ An unpaired row never equals a row of the other side that has the same key text.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-diff"` | marks the directory as a diff; see Publication |
-| `schema` | version | diff schema version, `0.4` |
+| `schema` | version | diff schema version, `0.5` |
 | `tool` | `{name, version}` | the engine that wrote the diff |
 | `weights` | object | the weights and the threshold of candidates, below |
 | `old` | side | the old snapshot |
@@ -116,7 +116,7 @@ A side:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `schema` | version | the snapshot's `schema`, `0.5` |
+| `schema` | version | the snapshot's `schema`, `0.6` |
 | `project` | `{name}` | the snapshot's `project` |
 | `adapter` | `{name, version, contract}`, optional | the scope's `adapter`, absent when the snapshot's scope has none |
 | `layers` | `{base, syntax, calls, build}` | the scope's `layers` |
@@ -212,8 +212,8 @@ the set of their identities, and a row is written for each identity that is in o
 | `from` | `{old?, new?}` | the mapped key of the source entity |
 | `to` | `{old?, new?}` | the mapped key of the target: an entity, a group or an external |
 | `endpoint` | enum, optional | `from`, `to` or `both`: which ends are unpaired; absent when both ends are paired |
-| `rel` | enum | `ref`, `call` or `implements` |
-| `roles` | array, `ref` only | the snapshot row's `roles` |
+| `rel` | enum | `ref`, `call`, `implements`, `impl-self-type` or `impl-trait` |
+| `roles` | array, `ref` only | the roles after the comparison rules for excluded syntax |
 | `mechanism` | enum, `call` only | the snapshot row's `mechanism` |
 | `resolution` | enum, `call` only | the snapshot row's `resolution` |
 | `src` | provenance, `call` only | the snapshot row's `src`: the layer that recorded the call |
@@ -262,12 +262,16 @@ denominator):
 | `file` | 18 | 1 000 000 when `def.file` is equal, else 0 |
 | `parents` | 18 | (L − d) / L over the two sequences of the names of the `parent` chain, from the outermost down, one name being one element; an entity without `parent` has the empty sequence; 1 000 000 when both are empty |
 | `size` | 12 | the `lines` of the shorter body / those of the longer; 0 when either has no body or the two bodies have different `body_src` |
-| `outgoing` | 13 | Σ min / Σ max over the two multisets of the relations leaving the entity, an element being (`rel`, mapped target) with paired targets only, counted once per relation row; 0 when Σ max is 0 |
+| `outgoing` | 13 | Σ min / Σ max over the two multisets of the relations leaving the entity, an element being (`rel`, mapped target) with paired targets only; 0 when Σ max is 0 |
 | `incoming` | 9 | the same over the relations arriving at the entity, an element being (`rel`, mapped source) |
 
 `score` = floor(Σ weight × feature / 100). The weights are those of `weights` in the manifest.
 Every quantity is an integer, so every platform writes the same bytes. Nothing else in a diff
 depends on candidates.
+
+Each distinct effective reference or impl header link identity counts once in the multiset.
+Each eligible raw call or definition-site `implements` row counts once. Distinct role
+buckets therefore contribute separately even when they have the same paired neighbor.
 
 A candidate is a suggestion. Two short definitions in one file can pass the threshold on
 `file`, `parents` and `size` alone, so a removed entity with no counterpart may still have
@@ -295,10 +299,14 @@ contexts; in every other pair the build contexts are not looked at. A reader can
 
 What a comparison left out covers:
 
-- `syntax`: syntax properties, and relations whose `src` is the syntax layer;
+- `syntax`: syntax properties, syntax calls and both impl header link kinds. For references
+  carrying `syntax_import_sites`, those sites contribute a role bucket with `import` removed.
+  Complementary sites contribute the original roles. A reference without syntax-derived
+  role evidence keeps its roles. Projected identities are deduplicated.
 - `calls`: relations whose `src` is the calls layer.
 
-The same relations are left out of the candidates' relation features and of the packages.
+Relation deltas, candidate relation features and package reachability use the same
+resulting identities.
 Gaps themselves are not diffed. Their counts per kind are in the manifest.
 
 One effect of the syntax layer lies outside this rule. Where the index gives a definition no

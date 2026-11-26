@@ -215,10 +215,12 @@ fn compare_rows(
     );
     let externals =
         externals::changes(old_snapshot, new_snapshot, &pairs, old_symbols, new_symbols);
+    let old_effective = relations::effective(old_snapshot, &excluded);
+    let new_effective = relations::effective(new_snapshot, &excluded);
     let old_relations =
-        relations::SideRelations::new(old_snapshot, &pairs, true, &excluded, old_symbols);
+        relations::SideRelations::new(old_snapshot, &pairs, true, &old_effective, old_symbols);
     let new_relations =
-        relations::SideRelations::new(new_snapshot, &reverse, false, &excluded, new_symbols);
+        relations::SideRelations::new(new_snapshot, &reverse, false, &new_effective, new_symbols);
     let mut relations: Vec<_> = old_relations
         .differences(&new_relations, Change::Removed)
         .chain(new_relations.differences(&old_relations, Change::Added))
@@ -230,7 +232,7 @@ fn compare_rows(
         new_snapshot,
         &pairs,
         &reverse,
-        &excluded,
+        (&old_effective, &new_effective),
         weights,
     );
     let counts = Counts {

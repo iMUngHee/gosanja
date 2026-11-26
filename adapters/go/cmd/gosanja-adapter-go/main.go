@@ -1,5 +1,5 @@
 // Command gosanja-adapter-go is the Go adapter of gosanja: it answers `describe` and `index`
-// as spec/adapter-contract.md (version 0.5) defines them.
+// as spec/adapter-contract.md (version 0.6) defines them.
 package main
 
 import (

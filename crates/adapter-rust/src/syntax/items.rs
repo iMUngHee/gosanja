@@ -1,6 +1,8 @@
 //! The definitions of one file that get a row, with their anchors, visibility, qualifiers,
 //! attributes and outlines.
 
+use gosanja_schema::contract::{ImplFact, ImportFact, SyntaxLine};
+use gosanja_schema::position::Range;
 use gosanja_schema::snapshot::OutlineNode;
 use proc_macro2::Span;
 use quote::ToTokens;
@@ -9,7 +11,7 @@ use syn::visit::{self, Visit};
 use syn::{Attribute, Visibility};
 
 use super::outline::{self, macro_node};
-use super::position::range;
+use super::position::{between, range};
 
 /// One row before it is written: the anchor and what the row carries.
 #[derive(Debug)]
@@ -25,12 +27,17 @@ pub struct Item {
 }
 
 /// The rows of a parsed file, the file's module last when a node gives it one.
-pub fn of_file(file: &syn::File) -> Vec<Item> {
-    let mut items = Items::default();
-    items.visit_file(file);
+pub fn of_file(file: &str, syntax: &syn::File) -> (Vec<Item>, Vec<SyntaxLine>) {
+    let mut items = Items {
+        file,
+        ..Items::default()
+    };
+    items.visit_file(syntax);
     let Items {
         mut rows,
         file_module,
+        mut import_sites,
+        mut impls,
         ..
     } = items;
     if !file_module.is_empty() {
@@ -44,7 +51,19 @@ pub fn of_file(file: &syn::File) -> Vec<Item> {
             name: "the file's module".into(),
         });
     }
-    rows
+    let mut tokens = Vec::new();
+    if !import_sites.is_empty() {
+        import_sites.sort_unstable();
+        import_sites.dedup();
+        tokens.push(SyntaxLine::Imports(ImportFact {
+            row: "imports".into(),
+            file: file.into(),
+            sites: import_sites,
+        }));
+    }
+    impls.sort_unstable_by_key(|block| block.extent);
+    tokens.extend(impls.into_iter().map(SyntaxLine::Impl));
+    (rows, tokens)
 }
 
 fn source(span: Span, tokens: &impl ToTokens) -> String {
@@ -118,14 +137,17 @@ enum Owner {
 }
 
 #[derive(Default)]
-struct Items {
+struct Items<'file> {
+    file: &'file str,
     rows: Vec<Item>,
+    import_sites: Vec<Range>,
+    impls: Vec<ImplFact>,
     /// Innermost last; empty means the file's module.
     owners: Vec<Owner>,
     file_module: Vec<OutlineNode>,
 }
 
-impl Items {
+impl Items<'_> {
     fn row(
         &mut self,
         ident: &syn::Ident,
@@ -163,7 +185,30 @@ impl Items {
     }
 }
 
-impl<'a> Visit<'a> for Items {
+impl<'a> Visit<'a> for Items<'_> {
+    fn visit_use_path(&mut self, i: &'a syn::UsePath) {
+        self.import_sites.push(range(i.ident.span()));
+        visit::visit_use_path(self, i);
+    }
+
+    fn visit_use_name(&mut self, i: &'a syn::UseName) {
+        self.import_sites.push(range(i.ident.span()));
+    }
+
+    fn visit_use_rename(&mut self, i: &'a syn::UseRename) {
+        self.import_sites.push(range(i.ident.span()));
+        if i.rename != "_" {
+            self.import_sites.push(range(i.rename.span()));
+        }
+    }
+
+    fn visit_item_impl(&mut self, i: &'a syn::ItemImpl) {
+        if let Some(block) = impl_fact(self.file, i) {
+            self.impls.push(block);
+        }
+        visit::visit_item_impl(self, i);
+    }
+
     fn visit_item_fn(&mut self, i: &'a syn::ItemFn) {
         let body = outline::of_block(&i.block);
         let row = self.row(
@@ -304,4 +349,45 @@ impl<'a> Visit<'a> for Items {
 
     // Statement and expression macros belong to the outline of the body they are in.
     fn visit_macro(&mut self, _: &'a syn::Macro) {}
+}
+
+fn impl_fact(file: &str, item: &syn::ItemImpl) -> Option<ImplFact> {
+    let last = |path: &syn::Path| {
+        path.segments
+            .last()
+            .map(|segment| range(segment.ident.span()))
+    };
+    let trait_type = match &item.trait_ {
+        Some((Some(_), _, _)) => return None,
+        Some((None, path, _)) => last(path),
+        None => None,
+    };
+    let self_type = match &*item.self_ty {
+        syn::Type::Path(path) if path.qself.is_none() => last(&path.path),
+        _ => None,
+    };
+    if self_type.is_none() && trait_type.is_none() {
+        return None;
+    }
+    let members: Vec<_> = item
+        .items
+        .iter()
+        .filter_map(|member| {
+            let name = match member {
+                syn::ImplItem::Fn(i) => &i.sig.ident,
+                syn::ImplItem::Const(i) => &i.ident,
+                syn::ImplItem::Type(i) => &i.ident,
+                _ => return None,
+            };
+            Some(range(name.span()))
+        })
+        .collect();
+    (!members.is_empty()).then(|| ImplFact {
+        row: "impl".into(),
+        file: file.into(),
+        extent: between(item.impl_token.span, item.brace_token.span.close()),
+        members,
+        self_type,
+        trait_type,
+    })
 }

@@ -72,7 +72,7 @@
       }
     },
     {
-      "if": {"properties": {"rel": {"const": "implements"}}, "required": ["rel"]},
+      "if": {"properties": {"rel": {"enum": ["implements", "impl-self-type", "impl-trait"]}}, "required": ["rel"]},
       "then": {
         "properties": {"roles": false, "mechanism": false, "resolution": false, "src": false}
       }

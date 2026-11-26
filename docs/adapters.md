@@ -41,8 +41,8 @@ gosanja adapter list
 ```
 
 ```text
-old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.4, this reader implements 0.5; 0.x versions are only compatible with themselves
-rust 1.2.3 contract=0.5 languages=rust layers=base,syntax,calls,build markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
+old path=/usr/local/bin/gosanja-adapter-old unusable: written with version 0.5, this reader implements 0.6; 0.x versions are only compatible with themselves
+rust 1.2.3 contract=0.6 languages=rust layers=base,syntax,calls,build markers=Cargo.toml path=/usr/local/bin/gosanja-adapter-rust
   requires rust-analyzer: found /usr/bin/rust-analyzer
   requires cargo: missing
 ```
@@ -151,6 +151,12 @@ An engine of contract 0.5 requires `0.5` in the manifest and in `result.json`.
 An adapter can offer the optional `build` layer to report targets and file membership in
 `build.jsonl`. Syntax adapters can also write test evidence as separate test rows in
 `syntax.jsonl`. The adapter contract specifies the row shapes and how each layer is read.
+
+### Upgrading to adapter contract 0.6
+
+A 0.6 engine requires `0.6` in the manifest and in `result.json`. In the syntax layer
+an adapter can write tagged import and impl rows containing token ranges. An adapter
+without those facts can keep writing the existing definition and test rows.
 
 ## Trying it without a real adapter
 

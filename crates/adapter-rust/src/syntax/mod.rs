@@ -12,7 +12,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use gosanja_schema::contract::{
-    Anchor, ItemTest, LayerResult, LayerStatus, SkippedFile, SyntaxFact, TestRow,
+    Anchor, ItemTest, LayerResult, LayerStatus, SkippedFile, SyntaxFact, SyntaxLine, TestRow,
 };
 use gosanja_schema::position::Range;
 use gosanja_schema::snapshot::OutlineNode;
@@ -33,6 +33,8 @@ pub struct Layer {
     pub notes: Vec<String>,
     /// Test gates at SCIP definitions, pending compilation evidence.
     pub tests: Vec<TestRow>,
+    /// Written import and impl token ranges.
+    pub tokens: Vec<SyntaxLine>,
     /// Content hashes of the source read for the syntax layer.
     pub hashes: BTreeMap<String, [u8; 32]>,
 }
@@ -65,28 +67,39 @@ impl Skip {
 /// # Errors
 /// Why the file gives no rows.
 pub fn rows(file: &str, text: &str) -> Result<Vec<SyntaxFact>, Skip> {
-    Ok(items(text)?.into_iter().map(|i| fact(file, i)).collect())
+    Ok(parsed(file, text)?
+        .items
+        .into_iter()
+        .map(|i| fact(file, i))
+        .collect())
 }
 
-fn items(text: &str) -> Result<Vec<items::Item>, Skip> {
-    parsed(text).map(|(items, _)| items)
+struct Parsed {
+    items: Vec<items::Item>,
+    tokens: Vec<SyntaxLine>,
+    gates: Vec<(u32, u32)>,
 }
 
-type Parsed = (Vec<items::Item>, Vec<(u32, u32)>);
-
-fn parsed(text: &str) -> Result<Parsed, Skip> {
+fn parsed(file: &str, text: &str) -> Result<Parsed, Skip> {
     if text.starts_with('\u{feff}') {
         return Err(Skip::ByteOrderMark);
     }
     let result = syn::parse_file(text)
         .ok()
-        .map(|f| (items::of_file(&f), test_gate::positions(&f)))
+        .map(|f| {
+            let (items, tokens) = items::of_file(file, &f);
+            Parsed {
+                items,
+                tokens,
+                gates: test_gate::positions(&f),
+            }
+        })
         .ok_or(Skip::ParseFailed);
     // Every position has been taken out of the spans; the per-thread table can go.
     proc_macro2::extra::invalidate_current_thread_spans();
-    let (mut items, gates) = result?;
-    items.sort_by_key(|i| (i.line, i.col));
-    Ok((items, gates))
+    let mut parsed = result?;
+    parsed.items.sort_by_key(|i| (i.line, i.col));
+    Ok(parsed)
 }
 
 fn fact(file: &str, item: items::Item) -> SyntaxFact {
@@ -128,7 +141,11 @@ pub fn layer(root: &Path, index: &scip::types::Index) -> Layer {
         layer
             .hashes
             .insert(file.into(), Sha256::digest(text.as_bytes()).into());
-        let (items, gates) = match parsed(&text) {
+        let Parsed {
+            items,
+            tokens,
+            gates,
+        } = match parsed(file, &text) {
             Ok(parsed) => parsed,
             Err(skip) => {
                 skipped.insert((file.to_owned(), skip.code()));
@@ -138,6 +155,7 @@ pub fn layer(root: &Path, index: &scip::types::Index) -> Layer {
         let lines = Lines::new(&text);
         let extents = Extents::of(index, file, &lines);
         layer.tests.extend(test_rows(file, index, &lines, gates));
+        layer.tokens.extend(tokens);
         for mut item in items {
             if let Some(outline) = &item.outline
                 && let Some(code) = check(outline, extents.at(item.line, item.col))
@@ -229,17 +247,21 @@ fn test_rows(
         .collect()
 }
 
-/// Write the syntax rows, followed by the optional item test evidence.
+/// Write the syntax rows and token and item test evidence.
 ///
 /// # Errors
 /// When the file cannot be written.
 pub fn publish(layer: Layer, out: &Path) -> io::Result<LayerResult> {
     let path = out.join("syntax.jsonl");
     write(&layer.rows, &path)?;
-    if !layer.tests.is_empty() {
+    if !layer.tests.is_empty() || !layer.tokens.is_empty() {
         let mut file = io::BufWriter::new(fs::OpenOptions::new().append(true).open(path)?);
         for test in &layer.tests {
             serde_json::to_writer(&mut file, test)?;
+            file.write_all(b"\n")?;
+        }
+        for token in &layer.tokens {
+            serde_json::to_writer(&mut file, token)?;
             file.write_all(b"\n")?;
         }
         file.flush()?;

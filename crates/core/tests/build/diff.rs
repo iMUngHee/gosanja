@@ -117,11 +117,11 @@ fn build_syntax_only_mark_lists_test() {
 }
 
 #[test]
-fn build_diff_schema_is_0_4() {
+fn build_diff_schema_is_0_5() {
     use build_diff::{diff, pair};
     let (old, new) = pair(vec![], vec![], false);
     let (manifest, _) = diff(&old, &new);
-    assert_eq!(manifest["schema"], "0.4");
+    assert_eq!(manifest["schema"], "0.5");
     assert_eq!(manifest["old"]["schema"], old.manifest()["schema"]);
 }
 

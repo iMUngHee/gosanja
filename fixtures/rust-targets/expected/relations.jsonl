@@ -4,8 +4,8 @@
 {"from":"cargo:pm:Gen:","to":"cargo:core:result/impl#[`Result<T, E>`]unwrap().","rel":"ref","roles":[],"sites":[["pm/src/lib.rs",4,64,4,70]],"src":"core:reference-in-body"}
 {"from":"cargo:pm:Gen:","to":"cargo:core:str/impl#[str]parse().","rel":"ref","roles":[],"sites":[["pm/src/lib.rs",4,56,4,61]],"src":"core:reference-in-body"}
 {"from":"cargo:pm:Gen:","to":"cargo:proc_macro:TokenStream#","rel":"ref","roles":[],"sites":[["pm/src/lib.rs",3,19,3,30],["pm/src/lib.rs",3,35,3,46]],"src":"core:reference-in-body"}
-{"from":"cargo:pm:crate/","to":"cargo:proc_macro:TokenStream#","rel":"ref","roles":[],"sites":[["pm/src/lib.rs",1,16,1,27]],"src":"core:reference-in-body"}
-{"from":"cargo:pm:crate/","to":"cargo:proc_macro:crate/","rel":"ref","roles":[],"sites":[["pm/src/lib.rs",1,4,1,14]],"src":"core:reference-in-body"}
+{"from":"cargo:pm:crate/","to":"cargo:proc_macro:TokenStream#","rel":"ref","roles":["import"],"sites":[["pm/src/lib.rs",1,16,1,27]],"syntax_import_sites":[["pm/src/lib.rs",1,16,1,27]],"src":"core:reference-in-body"}
+{"from":"cargo:pm:crate/","to":"cargo:proc_macro:crate/","rel":"ref","roles":["import"],"sites":[["pm/src/lib.rs",1,4,1,14]],"syntax_import_sites":[["pm/src/lib.rs",1,4,1,14]],"src":"core:reference-in-body"}
 {"from":"cargo:rust-targets:FEATURE_SRC.","to":"cargo:core:macros/builtin/include_str!","rel":"ref","roles":[],"sites":[["tests/it.rs",7,26,7,37]],"src":"core:reference-in-body"}
 {"from":"cargo:rust-targets:PROD_SRC.","to":"cargo:core:macros/builtin/include_str!","rel":"ref","roles":[],"sites":[["tests/it.rs",0,23,0,34]],"src":"core:reference-in-body"}
 {"from":"cargo:rust-targets:S#","to":"cargo:core:macros/builtin/derive:","rel":"ref","roles":[],"sites":[["src/lib.rs",18,22,18,28]],"src":"core:reference-in-body"}

@@ -10,9 +10,9 @@ use std::{
 use gosanja_schema::{
     compat::{self, Acceptance, RowVerdict, Version},
     contract::{
-        AdapterManifest, AdapterResult, BuildRow, CONTRACT_VERSION, CallEvidence, LayerName,
-        LayerRequest, LayerResult, LayerStatus, RESULT_FILE, SkippedFile, SyntaxFact, SyntaxLine,
-        TestRow,
+        AdapterManifest, AdapterResult, BuildRow, CONTRACT_VERSION, CallEvidence, ImplFact,
+        ImportFact, LayerName, LayerRequest, LayerResult, LayerStatus, RESULT_FILE, SkippedFile,
+        SyntaxFact, SyntaxLine, TestRow,
     },
     snapshot::{BuildContext, FailedDetail, GapKind, GapRow, Layer, LayerState, Layers},
 };
@@ -33,6 +33,8 @@ pub struct AdapterOutput {
     pub syntax: Vec<SyntaxFact>,
     /// Test rows of the syntax layer, apart from its syntax rows.
     pub tests: Vec<TestRow>,
+    pub(crate) imports: Vec<ImportFact>,
+    pub(crate) impls: Vec<ImplFact>,
     pub calls: Vec<CallEvidence>,
     /// Rows of the build layer, read and shape-checked, not yet joined.
     pub build: Vec<BuildRow>,
@@ -191,7 +193,7 @@ fn read_rows<T: DeserializeOwned>(
     }
 }
 
-/// Reads the syntax and test rows of `syntax.jsonl` and returns the count skipped under the
+/// Reads `syntax.jsonl` and returns the count skipped under the
 /// compatibility policy.
 ///
 /// # Errors
@@ -200,10 +202,16 @@ pub fn read_syntax(
     reader: impl BufRead,
     acceptance: Acceptance,
 ) -> io::Result<(Vec<SyntaxLine>, u64)> {
-    read_rows(reader, Schema::SyntaxFact, acceptance, |line| match line {
+    let (lines, skipped) = read_rows(reader, Schema::SyntaxFact, acceptance, |line| match line {
         SyntaxLine::Fact(fact) => crate::sidecar::valid_ranges(fact),
         SyntaxLine::Test(_) => true,
-    })
+        SyntaxLine::Imports(fact) => crate::token_sites::valid_import(fact),
+        SyntaxLine::Impl(fact) => crate::token_sites::valid_impl(fact),
+    })?;
+    if !crate::token_sites::unique_rows(&lines) {
+        return Err(io::Error::other("duplicate syntax token row"));
+    }
+    Ok((lines, skipped))
 }
 
 /// Reads the rows of `build.jsonl` and returns the count skipped under the compatibility
@@ -320,6 +328,8 @@ struct Optional {
     layers: Layers,
     syntax: Vec<SyntaxFact>,
     tests: Vec<TestRow>,
+    imports: Vec<ImportFact>,
+    impls: Vec<ImplFact>,
     calls: Vec<CallEvidence>,
     build: Vec<BuildRow>,
     build_skipped: Vec<SkippedFile>,
@@ -361,10 +371,14 @@ fn read_optional(
     .read(dir, result, gaps, regular, read_build);
     let mut syntax = Vec::new();
     let mut tests = Vec::new();
+    let mut imports = Vec::new();
+    let mut impls = Vec::new();
     for line in lines {
         match line {
             SyntaxLine::Fact(fact) => syntax.push(fact),
             SyntaxLine::Test(test) => tests.push(test),
+            SyntaxLine::Imports(fact) => imports.push(fact),
+            SyntaxLine::Impl(fact) => impls.push(fact),
         }
     }
     Optional {
@@ -376,6 +390,8 @@ fn read_optional(
         },
         syntax,
         tests,
+        imports,
+        impls,
         calls,
         build,
         build_skipped,
@@ -556,6 +572,8 @@ impl Described {
             },
             syntax: optional.syntax,
             tests: optional.tests,
+            imports: optional.imports,
+            impls: optional.impls,
             calls: optional.calls,
             build: optional.build,
             build_skipped: optional.build_skipped,

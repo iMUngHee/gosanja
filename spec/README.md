@@ -4,9 +4,9 @@ Three interfaces of gosanja are specified here and are normative:
 
 | Document | Interface | Version |
 | --- | --- | --- |
-| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.5 |
-| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.5 |
-| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.4 |
+| [snapshot.md](snapshot.md) | the snapshot the engine writes | schema 0.6 |
+| [adapter-contract.md](adapter-contract.md) | what an adapter program is given and must produce | contract 0.6 |
+| [diff.md](diff.md) | the differences between two snapshots that `gosanja diff` writes | diff schema 0.5 |
 
 The JSON Schemas under [schema/](schema/) define the shape of every file. Where a document and
 a schema disagree, that is a defect in both: report it, and until it is fixed the schema decides
@@ -50,6 +50,15 @@ While the major version is 0, a minor change may also break compatibility. The c
 for each such change.
 
 The current versions were classified this way:
+
+- **Adapter contract 0.6.** `syntax.jsonl` gains two optional tagged forms for import and
+  impl tokens. A 0.6 engine requires a 0.6 adapter manifest and result.
+- **Snapshot schema 0.6.** Adds `syntax_import_sites` on references, two impl relation
+  kinds and the `ambiguous-impl` gap. A 0.6 reader requires a 0.6 snapshot.
+- **Diff schema 0.5.** Adds the two impl relation kinds and projects base reference roles
+  when syntax is excluded. It reads snapshot 0.6 inputs and writes 0.5 diffs.
+
+Previous changes:
 
 - **Adapter contract 0.5.** A fourth optional layer, `build`, with its own file `build.jsonl`,
   its `result.json` entry and its `--layers` name, and test rows in `syntax.jsonl`

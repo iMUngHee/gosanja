@@ -55,7 +55,9 @@ chooses by marker files in the project root; see [adapters.md](adapters.md).
 
 **Side-cars join by position.** An adapter points at a definition by the position of its name,
 not by a symbol string, so it does not have to reproduce an indexer's symbol grammar. An anchor
-that matches nothing becomes a gap.
+that matches nothing becomes a gap. Exact syntax token ranges can also join to base
+references and declarations. The adapter identifies the written import or impl tokens,
+and the core uses indexed occurrences and containment to establish the endpoints.
 
 **Uncertainty is data.** A reference is recorded as a reference. A call exists only with
 evidence, and carries how far its target was established, from `declared` to `direct`. What
@@ -99,6 +101,7 @@ Core modules:
 | `graph` | Entities, containment, ownership of references, relations. |
 | `anchor` | Matches adapter anchors against definitions. |
 | `sidecar` | Reads the syntax and calls layers and joins them to the graph. |
+| `token_sites` | Checks exact token ranges and joins impl headers and direct members. |
 | `build` | Validates and joins the build layer and applies item and file test evidence. |
 | `adapter` | Runs one given adapter program and classifies what it produced. The program that was described is the one that is run. |
 | `write` | Serialises a snapshot or a diff deterministically, and reads sources and snapshots from disk. |

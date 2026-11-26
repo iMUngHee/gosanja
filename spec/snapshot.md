@@ -1,4 +1,4 @@
-# Snapshot, schema 0.5
+# Snapshot, schema 0.6
 
 A snapshot is what `gosanja index` writes: the facts established about one source tree at one
 moment. It is a directory of eight files. The same input always produces the same bytes.
@@ -142,7 +142,7 @@ manager, package and version as what it contains and is qualified by the same ru
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `format` | `"gosanja-snapshot"` | marks the directory as a snapshot; see Publication |
-| `schema` | version | snapshot schema version, `0.5` |
+| `schema` | version | snapshot schema version, `0.6` |
 | `tool` | `{name, version}` | the engine that wrote the snapshot |
 | `project` | `{name}` | a display name; it carries no identity |
 | `scopes` | array | one entry per indexed scope, in path order |
@@ -330,11 +330,12 @@ Only forward relations are stored. Sorted by (`from`, `rel`, `to`, `mechanism`, 
 | --- | --- | --- |
 | `from` | key | an entity |
 | `to` | key | an entity, a group or an external |
-| `rel` | enum | `ref`, `call` or `implements` |
+| `rel` | enum | `ref`, `call`, `implements`, `impl-self-type` or `impl-trait` |
 | `roles` | array, `ref` only | subset of `import`, `write`, `read`, `generated`, `test`, `forward-definition`, sorted by name |
 | `mechanism` | enum, `call` only | see below |
 | `resolution` | enum, `call` only | see below |
-| `sites` | array, `ref` and `implements` | `[file, startLine, startCol, endLine, endCol]`, sorted, each once |
+| `sites` | array, required except on `call` | `[file, startLine, startCol, endLine, endCol]`, sorted, each once |
+| `syntax_import_sites` | array, optional on `ref` | nonempty, sorted subset of `sites` where syntax supplied the `import` role |
 | `evidence` | array, `call` only | one entry per observation, sorted |
 | `src` | provenance | |
 
@@ -348,8 +349,37 @@ included, are both left out of this decision and reported once as `overlapping-b
 reference inside them then belongs to the innermost remaining body. A reference that no
 remaining body contains produces no row (see `unattributed-references`).
 
-There is one `ref` row per (`from`, `to`, `roles`). A reference is not a call: taking the
-address of a function is a `ref` and nothing more.
+There is one `ref` row per (`from`, `to`, `roles`). Taking the address of a function is
+one example of a reference. A present syntax layer can add the `import` role when an
+eligible non-definition occurrence exactly matches a written import token. The row retains
+`core:reference-in-body` provenance, and its `syntax_import_sites` records only the sites
+where syntax supplied that role. Each such site is a nonempty single-line range.
+Base import evidence at the same file, range, target and otherwise identical roles
+preserves both the native import and any corresponding ordinary base occurrence.
+
+### Impl header links
+
+`impl-self-type` and `impl-trait` link a virtual non-group source entity to the entity,
+group or external resolved at the corresponding header token. Their provenance is
+`adapter:<name>/syntax` and their sites are nonempty single-line token ranges. Syntax
+establishes the block's source when the resolved definition sites of direct members each
+identify one declaration with the same virtual non-group parent. Each header resolves
+independently from exact base non-definition occurrences. Repeat observations of one
+endpoint contribute their distinct sites to one row per (`from`, `rel`).
+
+A conflict in the parent of a block's members gives an `ambiguous-impl` gap for that
+block. Conflicting targets for an impl container and relation kind suppress that relation
+and give an `ambiguous-impl` gap for each block contributing a target for that kind.
+There is at most one such gap per file and block extent. An unresolved token gives no
+relation. The parent chain and base `implements` relations still describe their own
+containment and definition-site relationships.
+
+Every impl site and every site of a reference carrying `syntax_import_sites` names a
+snapshot file and resolves to the same scope with present syntax. The scope is the
+deepest matching component prefix of the path, with `.` matching the whole root. A missing
+or tied match is invalid. Impl relations and impl gaps name that scope's syntax adapter.
+The syntax `unknown-file` gap uses the same scope lookup and can name a path admitted to
+the snapshot later by calls.
 
 ### call
 
@@ -477,13 +507,14 @@ Sorted by (`gap`, `file`, `range`), absent fields first.
 | `unknown-build-context` | call evidence names a build context the adapter did not report | `layer`, `count` |
 | `unknown-value` | rows were skipped under the compatibility rules | `layer`, `count` |
 | `unresolved-root` | a target's root did not resolve to an entity | `layer`, `target`, and `anchor` in snapshot coordinates when the root kept one |
-| `unknown-file` | the build layer gave facts or a skip for a file that is not an admitted document; they were dropped | `layer`, `file`; one row per file |
+| `unknown-file` | build facts, a build skip or syntax token facts named a file omitted from the base index | `layer`, `file`; one row per file and layer |
+| `ambiguous-impl` | impl member sites disagreed on the virtual source or a header kind had conflicting target evidence | `layer: "syntax"`, `file`, nonempty `range` of the block |
 
 The `src` of a gap names what the gap is about:
 
 | `src` | Gaps |
 | --- | --- |
-| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `skipped-file`, `unknown-build-context`, `unknown-value`, `unresolved-root`, `unknown-file`, and `position-out-of-range` for a side-car row |
+| `adapter:<name>/<layer>` | `missing-layer`, `failed-layer`, `unanchored`, `open-call`, `opaque-region`, `skipped-file`, `unknown-build-context`, `unknown-value`, `unresolved-root`, `unknown-file`, `ambiguous-impl`, and `position-out-of-range` for a side-car row |
 | `scip:<tool>` | `undecodable-document`, `document-outside-root`, `source-unavailable`, and `position-out-of-range` for an occurrence |
 | `core:identity` | `symbol-collision` |
 | `core:reference-in-body` | `unattributed-references`, `overlapping-bodies` |

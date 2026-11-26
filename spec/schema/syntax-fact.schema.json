@@ -1,31 +1,68 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "syntax-fact.schema.json",
-  "type": "object",
-  "properties": {
-    "anchor": {"$ref": "syntax-fact.schema.json#/$defs/anchor"},
-    "body": {"$ref": "file.schema.json#/$defs/range"},
-    "visibility": {"type": "string"},
-    "qualifiers": {"type": "array", "items": {"type": "string"}},
-    "attributes": {"type": "array", "items": {"type": "string"}},
-    "outline": {"type": "array", "items": {"$ref": "syntax.schema.json#/$defs/node"}}
+  "if": {"properties": {"row": {"const": "imports"}}, "required": ["row"]},
+  "then": {"$ref": "#/$defs/imports"},
+  "else": {
+    "if": {"properties": {"row": {"const": "impl"}}, "required": ["row"]},
+    "then": {"$ref": "#/$defs/impl"},
+    "else": {"$ref": "#/$defs/definition"}
   },
-  "required": ["anchor"],
-  "if": {"required": ["row"]},
-  "then": {
-    "properties": {
-      "row": {"const": "test"},
-      "test": {"enum": ["attribute", "cfg"]},
-      "body": false,
-      "visibility": false,
-      "qualifiers": false,
-      "attributes": false,
-      "outline": false
-    },
-    "required": ["row", "anchor", "test"]
-  },
-  "else": {"properties": {"test": false}},
   "$defs": {
+    "imports": {
+      "type": "object",
+      "properties": {
+        "row": {"const": "imports"},
+        "file": {"$ref": "file.schema.json#/$defs/path"},
+        "sites": {"$ref": "#/$defs/ranges"}
+      },
+      "required": ["row", "file", "sites"]
+    },
+    "impl": {
+      "type": "object",
+      "properties": {
+        "row": {"const": "impl"},
+        "file": {"$ref": "file.schema.json#/$defs/path"},
+        "extent": {"$ref": "file.schema.json#/$defs/range"},
+        "members": {"$ref": "#/$defs/ranges"},
+        "self_type": {"$ref": "file.schema.json#/$defs/range"},
+        "trait_type": {"$ref": "file.schema.json#/$defs/range"}
+      },
+      "required": ["row", "file", "extent", "members"],
+      "anyOf": [{"required": ["self_type"]}, {"required": ["trait_type"]}]
+    },
+    "definition": {
+      "type": "object",
+      "properties": {
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "body": {"$ref": "file.schema.json#/$defs/range"},
+        "visibility": {"type": "string"},
+        "qualifiers": {"type": "array", "items": {"type": "string"}},
+        "attributes": {"type": "array", "items": {"type": "string"}},
+        "outline": {"type": "array", "items": {"$ref": "syntax.schema.json#/$defs/node"}}
+      },
+      "required": ["anchor"],
+      "if": {"required": ["row"]},
+      "then": {
+        "properties": {
+          "row": {"const": "test"},
+          "test": {"enum": ["attribute", "cfg"]},
+          "body": false,
+          "visibility": false,
+          "qualifiers": false,
+          "attributes": false,
+          "outline": false
+        },
+        "required": ["row", "test"]
+      },
+      "else": {"properties": {"test": false}}
+    },
+    "ranges": {
+      "type": "array",
+      "items": {"$ref": "file.schema.json#/$defs/range"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
     "anchor": {
       "type": "object",
       "properties": {

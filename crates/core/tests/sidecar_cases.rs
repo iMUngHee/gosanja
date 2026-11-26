@@ -1,5 +1,6 @@
 //! Adapter side-car conformance against concrete definitions and reference sites.
 mod support;
+include!("tokens/sidecar.rs");
 use gosanja_core::adapter::{read_calls, read_syntax};
 use gosanja_schema::compat::{Acceptance, Version, accept};
 use std::io::Cursor;

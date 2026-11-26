@@ -1,4 +1,4 @@
-# Adapter contract, version 0.5
+# Adapter contract, version 0.6
 
 An adapter is a program that knows one language ecosystem. The engine knows none: it runs an
 adapter, reads the files the adapter wrote, and builds a [snapshot](snapshot.md) from them. An
@@ -276,9 +276,9 @@ is `unanchored`.
 
 ## syntax.jsonl
 
-One row per definition the adapter describes, and at most one row for any definition. Besides
-these *syntax rows*, the file may hold *test rows* (see [Test rows](#test-rows)), told apart by
-`"row": "test"`; a syntax row never carries `row` or `test`.
+One row per definition the adapter describes, and at most one row for any definition. The
+file may also hold rows tagged `"row": "test"`, `"row": "imports"` or `"row": "impl"`.
+An ordinary syntax row has no tag.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -349,6 +349,22 @@ every published syntax row, every fold and every entity identity as they are. Th
 - An adapter sends no test row at a site of a symbol it lists in `merged`; the engine discards
   such a row when it folds the symbol.
 - A malformed or repeated test row discards the syntax layer like any bad row.
+
+### Import and impl tokens
+
+These rows carry exact written token ranges in the declared position encoding. A token
+range has positive length and occupies one line. Coordinates precede any conversion.
+
+| `row` | Other fields | Shape |
+| --- | --- | --- |
+| `imports` | `file`, `sites` | Unique per normalized relative file path. `sites` is a nonempty list of distinct token ranges in ascending order. |
+| `impl` | `file`, `extent`, `members`, `self_type?`, `trait_type?` | Unique per (`file`, `extent`). The extent runs from the impl keyword through the closing delimiter. `members` lists the exact name tokens of directly declared members, with at least one token, sorted and unique. At least one of the two optional header tokens is present. |
+
+All impl token ranges lie within the extent. Member ranges are strictly inside it. Header
+tokens end before the first member starts and, when both are present, are disjoint.
+Overlapping or nested block extents are allowed. The adapter emits these rows for written
+syntax, including inactive code it can parse. The engine corroborates them against
+the index before publishing a role or relation. See [snapshot.md](snapshot.md#relationsjsonl).
 
 ## calls.jsonl
 
@@ -443,6 +459,14 @@ depend on the order of the rows.
    and the row's own `body` only when the base layer gives none. A row with a node outside it
    would attach facts to the wrong definition, so the layer is discarded (`row-invalid`). A
    definition with no body from either source is not checked.
+
+Import and impl rows take part in phase 1, including geometry and duplicate wire key checks
+even for files omitted from the base layer. They participate in no anchor or body check.
+After ordinary syntax validation succeeds, the engine drops token rows for files the base
+layer did not admit, with one syntax `unknown-file` gap per path. It converts every range
+in each remaining row and drops a row with any nonconvertible position, counting the row
+once in `position-out-of-range`. They add no files and are absent from snapshot
+`syntax.jsonl` and its count. The engine joins valid tokens after definition folding.
 
 A discarded layer contributes nothing but its one `failed-layer` gap: no rows, no bodies, no
 file rows, none of the gaps that an earlier phase recorded for it, and no `skipped-file` gap.

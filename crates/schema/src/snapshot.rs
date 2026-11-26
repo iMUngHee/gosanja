@@ -10,7 +10,7 @@ use crate::position::{Range, Site};
 pub const FORMAT: &str = "gosanja-snapshot";
 
 /// Snapshot schema version this crate reads and writes.
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 5);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 6);
 
 /// `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -379,6 +379,10 @@ pub enum Rel {
     Call,
     /// `from` implements or overrides `to`.
     Implements,
+    /// A virtual impl container's self type.
+    ImplSelfType,
+    /// A virtual impl container's implemented trait.
+    ImplTrait,
     /// A value from a newer minor.
     #[serde(other)]
     Unknown,
@@ -471,9 +475,12 @@ pub struct RelationRow {
     /// How far the target was established; `call` only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
-    /// Where the relation was seen; `ref` and `implements`.
+    /// Where the relation was seen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sites: Option<Vec<Site>>,
+    /// Reference sites where syntax supplied the import role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syntax_import_sites: Option<Vec<Site>>,
     /// One entry per observation; `call` only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Vec<Evidence>>,
@@ -622,6 +629,8 @@ pub enum GapKind {
     UnresolvedRoot,
     /// The build layer named a file that is not an admitted document.
     UnknownFile,
+    /// Written impl tokens gave conflicting evidence about a container or target.
+    AmbiguousImpl,
     /// A value from a newer minor.
     #[serde(other)]
     Unrecognised,

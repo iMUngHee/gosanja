@@ -27,6 +27,60 @@ fn flow_layer() -> syntax::Layer {
     syntax::layer(&root, &index(&root.join("index.scip")))
 }
 
+#[test]
+fn token_sites_follow_use_trees_and_direct_impl_members() {
+    let text = concat!(
+        "pub use crate::outer::{self, first as named, second as _, nested::*};\n",
+        "mod inner { use super::Trait; }\n",
+        "fn local() { use crate::other; }\n",
+        "opaque! { use crate::hidden; impl Hidden { fn hidden() {} } }\n",
+        "impl crate::Generic<u8> { fn method() { fn nested() {} } const VALUE: u8 = 0; }\n",
+        "impl path::Trait for Generic<u8> { type Item = u8; }\n",
+        "impl Trait for &Generic<u8> { fn borrowed() {} }\n",
+        "impl !Trait for Generic<u8> { fn negative() {} }\n",
+        "impl Generic<u8> {}\n",
+        "impl Trait for <Generic<u8> as Path>::Assoc { fn qualified() {} }\n",
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("lib.rs"), text).unwrap();
+    let index = index_of(vec![document("lib.rs", vec![])]);
+    syntax::publish(syntax::layer(&root, &index), &root).unwrap();
+    let output = std::fs::read_to_string(root.join("syntax.jsonl")).unwrap();
+    let rows: Vec<Value> = output
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|row: &Value| matches!(row["row"].as_str(), Some("impl" | "imports")))
+        .collect();
+    let token = |line: usize, name: &str| {
+        let col = text.lines().nth(line).unwrap().find(name).unwrap();
+        json!([line, col, line, col + name.len()])
+    };
+    let extent = |line: usize| json!([line, 0, line, text.lines().nth(line).unwrap().len()]);
+    assert_eq!(
+        rows,
+        vec![
+            json!({"row":"imports","file":"lib.rs","sites":[
+                token(0,"crate"), token(0,"outer"), token(0,"self"), token(0,"first"),
+                token(0,"named"), token(0,"second"), token(0,"nested"),
+                token(1,"super"), token(1,"Trait"), token(2,"crate"), token(2,"other")
+            ]}),
+            json!({"row":"impl","file":"lib.rs","extent":extent(4),"members":[
+                token(4,"method"),token(4,"VALUE")
+            ],"self_type":token(4,"Generic")}),
+            json!({"row":"impl","file":"lib.rs","extent":extent(5),"members":[
+                token(5,"Item")
+            ],"self_type":token(5,"Generic"),"trait_type":token(5,"Trait")}),
+            json!({"row":"impl","file":"lib.rs","extent":extent(6),"members":[
+                token(6,"borrowed")
+            ],"trait_type":token(6,"Trait")}),
+            json!({"row":"impl","file":"lib.rs","extent":extent(9),"members":[
+                token(9,"qualified")
+            ],"trait_type":token(9,"Trait")}),
+        ]
+    );
+}
+
 fn at<'a>(rows: &'a [SyntaxFact], file: &str, line: u32, col: u32) -> &'a SyntaxFact {
     rows.iter()
         .find(|r| r.anchor.file == file && r.anchor.line == line && r.anchor.col == Some(col))
@@ -731,7 +785,7 @@ fn item_position_macros_in_source_strings_go_to_the_innermost_owner() {
 
 #[test]
 fn extract_writes_the_rows_and_gives_the_result_entry() {
-    use gosanja_schema::contract::LayerStatus;
+    use gosanja_schema::contract::{LayerStatus, SyntaxLine};
     let root = fixture();
     let out = tempfile::tempdir().expect("a directory");
     let entry =
@@ -740,12 +794,19 @@ fn extract_writes_the_rows_and_gives_the_result_entry() {
         (entry.status, entry.diagnostics, entry.skipped),
         (LayerStatus::Ok, None, None)
     );
-    let written: Vec<SyntaxFact> = std::fs::read_to_string(out.path().join("syntax.jsonl"))
+    let written: Vec<SyntaxLine> = std::fs::read_to_string(out.path().join("syntax.jsonl"))
         .expect("syntax.jsonl")
         .lines()
         .map(|l| serde_json::from_str(l).expect("a row"))
         .collect();
-    assert_eq!(written, flow_layer().rows);
+    let layer = flow_layer();
+    let expected: Vec<_> = layer
+        .rows
+        .into_iter()
+        .map(SyntaxLine::Fact)
+        .chain(layer.tokens)
+        .collect();
+    assert_eq!(written, expected);
 }
 
 #[test]

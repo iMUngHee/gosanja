@@ -17,7 +17,7 @@ gosanja diff <old> <new> --out <dir>
 ```
 
 `<old>` and `<new>` are snapshot directories, as `gosanja index` writes them. Both must be of
-the engine's snapshot schema (0.5), each with exactly one scope, and each must pass
+the engine's snapshot schema (0.6), each with exactly one scope, and each must pass
 `gosanja validate`; the diff checks this itself, without the sources, before it writes
 anything.
 
@@ -105,8 +105,9 @@ A layer that one side did not ask for (`gosanja index --layers`, see
 [adapters.md](adapters.md#choosing-layers)) is therefore left out even when the other side has
 it. What a comparison left out covers:
 
-- `syntax`: syntax properties (visibility, qualifiers, attributes, outline) and the calls the
-  syntax layer declared;
+- `syntax`: syntax properties (visibility, qualifiers, attributes, outline), syntax calls,
+  and impl header links. Syntax-derived import sites are compared under their base
+  reference roles. Import roles supplied by an indexer still participate in the diff;
 - `calls`: the calls from that layer.
 - `build`: targets and file build facts, when either side has the build layer present.
 - `test`: entity and file test marks, when either side has any.

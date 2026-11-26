@@ -335,7 +335,7 @@ fn the_engine_finds_and_runs_the_adapter_and_gives_the_golden_snapshot() {
             .expect("JSON");
     let scope = &manifest["scopes"][0];
     assert_eq!(scope["adapter"]["name"], "rust");
-    assert_eq!(scope["adapter"]["contract"], "0.5");
+    assert_eq!(scope["adapter"]["contract"], "0.6");
     assert_eq!(
         scope["layers"],
         json!({"base": "present", "syntax": "present", "calls": "present", "build": "present"})
@@ -745,6 +745,421 @@ fn rust_calls() -> (Case, PathBuf) {
     )
     .expect("install the adapter");
     (case, root)
+}
+
+struct TokenBinaries {
+    engine: PathBuf,
+    adapter: PathBuf,
+    baseline: bool,
+}
+
+impl TokenBinaries {
+    fn selected() -> Self {
+        match (
+            std::env::var_os("GOSANJA_TOKEN_BASELINE_BIN"),
+            std::env::var_os("GOSANJA_TOKEN_BASELINE_RUST_ADAPTER"),
+        ) {
+            (None, None) => Self {
+                engine: engine().into(),
+                adapter: support::adapter_binary().into(),
+                baseline: false,
+            },
+            (Some(engine), Some(adapter)) => {
+                let (engine, adapter) = (PathBuf::from(engine), PathBuf::from(adapter));
+                assert!(engine.is_absolute() && adapter.is_absolute());
+                Self {
+                    engine,
+                    adapter,
+                    baseline: true,
+                }
+            }
+            _ => panic!("select the matching baseline engine and adapter together"),
+        }
+    }
+
+    fn snapshot(&self, case: &Case, root: &Path, name: &str, layers: &str) -> PathBuf {
+        let out = case.temp.path().join(name);
+        ok(&case
+            .command(&self.engine)
+            .arg("index")
+            .arg("--adapter")
+            .arg(&self.adapter)
+            .arg("--root")
+            .arg(root)
+            .arg("--layers")
+            .arg(layers)
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .unwrap());
+        ok(&case
+            .command(&self.engine)
+            .arg("validate")
+            .arg(&out)
+            .arg("--root")
+            .arg(root)
+            .output()
+            .unwrap());
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest["schema"],
+            if self.baseline { "0.5" } else { "0.6" }
+        );
+        out
+    }
+}
+
+fn has_site(row: &Value, field: &str, site: &Value) -> bool {
+    row[field]
+        .as_array()
+        .is_some_and(|sites| sites.contains(site))
+}
+
+#[test]
+fn token_sites_join_rust_basic_index() {
+    let case = Case::new();
+    let root = case.temp.path().join("rust-basic");
+    support::copy_tree(&fixture().with_file_name("rust-basic"), &root);
+    ok(&case
+        .command(&case.bin.join("cargo"))
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(root.join("Cargo.toml"))
+        .output()
+        .unwrap());
+    let binaries = TokenBinaries::selected();
+    let out = binaries.snapshot(&case, &root, "syntax", "base,syntax");
+    let base = binaries.snapshot(&case, &root, "base", "base");
+    let base = table(&base, "relations.jsonl");
+    let rows = table(&out, "relations.jsonl");
+    assert_eq!(syntax_state(&out), "present");
+    for site in [
+        json!(["src/lib.rs", 4, 8, 4, 13]),
+        json!(["src/lib.rs", 4, 15, 4, 21]),
+    ] {
+        let reference = |rows: &[Value], marked| {
+            rows.iter().any(|row| {
+                row["rel"] == "ref"
+                    && has_site(row, "sites", &site)
+                    && has_site(row, "syntax_import_sites", &site) == marked
+                    && row["roles"].as_array().unwrap().contains(&json!("import")) == marked
+            })
+        };
+        assert!(reference(&base, false));
+        assert!(reference(&rows, !binaries.baseline));
+    }
+    let entities = table(&out, "entities.jsonl");
+    for (method, target, kind, site) in [
+        (
+            "new",
+            "views/Joined#",
+            "impl-self-type",
+            json!(["src/views.rs", 22, 9, 22, 15]),
+        ),
+        (
+            "fmt",
+            "views/Joined#",
+            "impl-self-type",
+            json!(["src/views.rs", 28, 27, 28, 33]),
+        ),
+        (
+            "fmt",
+            "fmt/Display#",
+            "impl-trait",
+            json!(["src/views.rs", 28, 15, 28, 22]),
+        ),
+    ] {
+        let def = entities
+            .iter()
+            .find(|row| row["name"] == method && row["def"].is_object())
+            .unwrap();
+        let parent = &def["parent"];
+        assert!(
+            entities
+                .iter()
+                .any(|row| &row["key"] == parent && row["virtual"] == true)
+        );
+        assert_eq!(
+            rows.iter().any(|row| row["rel"] == kind
+                && &row["from"] == parent
+                && row["to"].as_str().unwrap().ends_with(target)
+                && has_site(row, "sites", &site)),
+            !binaries.baseline,
+            "{kind} {site}"
+        );
+        assert!(
+            base.iter()
+                .any(|row| row["rel"] == "ref" && has_site(row, "sites", &site))
+        );
+    }
+}
+
+#[test]
+fn token_sites_join_rust_calls_index() {
+    let (case, root) = rust_calls();
+    let binaries = TokenBinaries::selected();
+    let out = binaries.snapshot(&case, &root, "syntax", "base,syntax");
+    let base = binaries.snapshot(&case, &root, "base", "base");
+    let base = table(&base, "relations.jsonl");
+    let rows = table(&out, "relations.jsonl");
+    let entities = table(&out, "entities.jsonl");
+    for (kind, end, site) in [
+        (
+            "impl-self-type",
+            "drops/Token#",
+            json!(["calls-lib/src/drops.rs", 62, 18, 62, 23]),
+        ),
+        (
+            "impl-trait",
+            "ops/drop/Drop#",
+            json!(["calls-lib/src/drops.rs", 62, 9, 62, 13]),
+        ),
+        (
+            "impl-self-type",
+            "Wrapper#",
+            json!(["calls-lib/src/lib.rs", 125, 8, 125, 15]),
+        ),
+        (
+            "impl-trait",
+            "a/Task#",
+            json!(["calls-lib/src/lib.rs", 387, 8, 387, 12]),
+        ),
+        (
+            "impl-trait",
+            "Tagged#",
+            json!(["calls-lib/src/lib.rs", 253, 8, 253, 14]),
+        ),
+        (
+            "impl-self-type",
+            "Kept#",
+            json!(["calls-lib/src/lib.rs", 430, 5, 430, 9]),
+        ),
+    ] {
+        let link = rows
+            .iter()
+            .find(|row| row["rel"] == kind && has_site(row, "sites", &site));
+        assert_eq!(link.is_some(), !binaries.baseline, "{kind} {site}");
+        if let Some(link) = link {
+            assert!(link["to"].as_str().unwrap().ends_with(end), "{link}");
+            assert!(
+                entities
+                    .iter()
+                    .any(|row| row["parent"] == link["from"] && row["def"].is_object()),
+                "{link}"
+            );
+        }
+    }
+    let file = "calls-lib/src/lib.rs";
+    for (line, start, end) in [(462, 12, 24), (462, 26, 30), (462, 34, 38), (288, 8, 18)] {
+        let site = json!([file, line, start, line, end]);
+        assert!(base.iter().any(|row| has_site(row, "sites", &site)));
+        assert_eq!(
+            rows.iter()
+                .any(|row| has_site(row, "syntax_import_sites", &site)),
+            !binaries.baseline,
+            "{site}"
+        );
+    }
+    let gaps = table(&out, "gaps.jsonl");
+    assert!(gaps.iter().any(|row| row["gap"] == "opaque-region"
+        && row["file"] == file
+        && row["range"] == json!([109, 80, 109, 94])));
+    assert!(
+        !rows
+            .iter()
+            .flat_map(|row| row["syntax_import_sites"].as_array().into_iter().flatten())
+            .any(|site| site[0] == file && (site[1] == 291 || site[1] == 109))
+    );
+    assert!(!rows.iter().any(|row| {
+        (row["rel"] == "impl-self-type" && row["from"] == "cargo:calls-lib:impl#[T][Tagged]")
+            || (row["rel"] == "impl-trait"
+                && row["from"] == "cargo:calls-lib:impl#[Local][Task]"
+                && row["to"] == "cargo:calls-lib:b/Task#")
+    }));
+    let implementations = |relations: &[Value]| {
+        relations
+            .iter()
+            .filter(|row| row["rel"] == "implements")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(implementations(&rows), implementations(&base));
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture and both runs of the Cargo evidence check"
+)]
+fn token_sites_survive_unavailable_test_evidence() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let case = Case::new();
+    let root = case.temp.path().join("probe");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = 'probe'\nversion = '0.1.0'\nedition = '2021'\n",
+    )
+    .unwrap();
+    let text = concat!(
+        "pub mod model { pub struct Token; }\n",
+        "pub use model::Token;\n",
+        "impl Token { pub fn method() {} }\n",
+        "#[cfg(test)] #[test]\n",
+        "fn probe_harness_test() {}\n",
+    );
+    let file = "src/lib.rs";
+    fs::write(root.join(file), text).unwrap();
+    let name = |line: usize, token: &str| {
+        let col = text.lines().nth(line).unwrap().find(token).unwrap();
+        [
+            i32::try_from(line).unwrap(),
+            i32::try_from(col).unwrap(),
+            i32::try_from(col + token.len()).unwrap(),
+        ]
+    };
+    let body = |line: usize| {
+        [
+            i32::try_from(line).unwrap(),
+            0,
+            i32::try_from(text.lines().nth(line).unwrap().len()).unwrap(),
+        ]
+    };
+    let model = "rust-analyzer cargo probe 0.1.0 model/";
+    let token = "rust-analyzer cargo probe 0.1.0 model/Token#";
+    let reference = |symbol: &str, range: [i32; 3]| Occurrence {
+        symbol: symbol.into(),
+        range: range.to_vec(),
+        ..Occurrence::default()
+    };
+    let mut module = definition(
+        "rust-analyzer cargo probe 0.1.0 crate/",
+        [0, 0, 0],
+        [0, 0, 0],
+    );
+    module.enclosing_range = vec![0, 0, 5, 0];
+    let mut index =
+        Index::parse_from_bytes(&fs::read(fixture().join("index.scip")).unwrap()).unwrap();
+    index.documents = vec![Document {
+        relative_path: file.into(),
+        language: "rust".into(),
+        position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
+        occurrences: vec![
+            module,
+            definition(model, name(0, "model"), body(0)),
+            definition(token, name(0, "Token"), body(0)),
+            reference(model, name(1, "model")),
+            reference(token, name(1, "Token")),
+            reference(token, name(2, "Token")),
+            definition(
+                "rust-analyzer cargo probe 0.1.0 impl#[Token]method().",
+                name(2, "method"),
+                body(2),
+            ),
+            definition(
+                "rust-analyzer cargo probe 0.1.0 probe_harness_test().",
+                name(4, "probe_harness_test"),
+                body(4),
+            ),
+        ],
+        ..Document::default()
+    }];
+    fs::write(root.join("index.scip"), index.write_to_bytes().unwrap()).unwrap();
+    let cargo = case.bin.join("cargo");
+    ok(&case
+        .command(&cargo)
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(root.join("Cargo.toml"))
+        .output()
+        .unwrap());
+    assert!(root.join("Cargo.lock").exists());
+    let binaries = TokenBinaries::selected();
+    let successful = binaries.snapshot(&case, &root, "success", "base,syntax");
+
+    let real = case.bin.join("real-cargo");
+    fs::rename(&cargo, &real).unwrap();
+    let intercepted = case.temp.path().join("intercepted");
+    fs::write(
+        &cargo,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = check ]; then
+    lib=
+    bins=
+    for arg do
+        case "$arg" in
+            --lib) lib=1 ;;
+            --bins) bins=1 ;;
+        esac
+    done
+    if [ "$lib$bins" = 11 ]; then
+        echo intercepted >> '{}'
+        exit 1
+    fi
+fi
+exec '{}' "$@"
+"#,
+            intercepted.display(),
+            real.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
+    let failed = binaries.snapshot(&case, &root, "failed", "base,syntax");
+    assert_eq!(fs::read_to_string(intercepted).unwrap(), "intercepted\n");
+    let entities = |out: &Path, expected_mark| {
+        let mut rows = table(out, "entities.jsonl");
+        let marked_entity = rows
+            .iter_mut()
+            .find(|row| row["name"] == "probe_harness_test")
+            .unwrap();
+        assert_eq!(
+            marked_entity.as_object_mut().unwrap().remove("test"),
+            expected_mark
+        );
+        rows
+    };
+    assert_eq!(
+        entities(&successful, Some(json!("cfg"))),
+        entities(&failed, None)
+    );
+    assert_eq!(
+        table(&successful, "syntax.jsonl"),
+        table(&failed, "syntax.jsonl")
+    );
+    for (out, unknown) in [(&successful, false), (&failed, true)] {
+        assert_eq!(
+            table(out, "gaps.jsonl")
+                .iter()
+                .any(|row| row["gap"] == "skipped-file"
+                    && row["file"] == file
+                    && row["layer"] == "syntax"
+                    && row["code"] == "test-unknown"),
+            unknown
+        );
+    }
+    let rows = table(&successful, "relations.jsonl");
+    assert_eq!(rows, table(&failed, "relations.jsonl"));
+    let site = |[line, start, end]: [i32; 3]| json!([file, line, start, line, end]);
+    for mark in [site(name(1, "model")), site(name(1, "Token"))] {
+        assert!(
+            rows.iter()
+                .any(|row| row["rel"] == "ref" && has_site(row, "sites", &mark))
+        );
+        assert_eq!(
+            rows.iter()
+                .any(|row| has_site(row, "syntax_import_sites", &mark)),
+            !binaries.baseline
+        );
+    }
+    let mark = site(name(2, "Token"));
+    assert_eq!(
+        rows.iter().any(|row| row["rel"] == "impl-self-type"
+            && row["to"] == "cargo:probe:model/Token#"
+            && has_site(row, "sites", &mark)),
+        !binaries.baseline
+    );
 }
 
 // The fixture of the calls layer: the snapshot is the golden, and every case of the

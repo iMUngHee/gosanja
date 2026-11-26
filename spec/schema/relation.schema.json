@@ -5,7 +5,7 @@
   "properties": {
     "from": {"$ref": "entity.schema.json#/$defs/key"},
     "to": {"$ref": "entity.schema.json#/$defs/key"},
-    "rel": {"enum": ["ref", "call", "implements"]},
+    "rel": {"enum": ["ref", "call", "implements", "impl-self-type", "impl-trait"]},
     "roles": {
       "type": "array",
       "items": {"enum": ["import", "write", "read", "generated", "test", "forward-definition"]},
@@ -13,22 +13,8 @@
     },
     "mechanism": {"$ref": "relation.schema.json#/$defs/mechanism"},
     "resolution": {"$ref": "relation.schema.json#/$defs/resolution"},
-    "sites": {
-      "type": "array",
-      "items": {
-        "type": "array",
-        "prefixItems": [
-          {"$ref": "file.schema.json#/$defs/path"},
-          {"type": "integer", "minimum": 0},
-          {"type": "integer", "minimum": 0},
-          {"type": "integer", "minimum": 0},
-          {"type": "integer", "minimum": 0}
-        ],
-        "minItems": 5,
-        "items": false
-      },
-      "uniqueItems": true
-    },
+    "sites": {"$ref": "#/$defs/sites"},
+    "syntax_import_sites": {"$ref": "#/$defs/sites", "minItems": 1},
     "evidence": {
       "type": "array",
       "items": {
@@ -79,6 +65,25 @@
       }
     },
     {
+      "if": {"required": ["syntax_import_sites"]},
+      "then": {
+        "properties": {
+          "rel": {"const": "ref"},
+          "roles": {"contains": {"const": "import"}},
+          "src": {"const": "core:reference-in-body"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"rel": {"enum": ["impl-self-type", "impl-trait"]}}},
+      "then": {
+        "properties": {
+          "sites": {"minItems": 1},
+          "src": {"pattern": "^adapter:[a-z0-9-]+/syntax$"}
+        }
+      }
+    },
+    {
       "if": {
         "properties": {"src": {"pattern": "^adapter:.+/calls$"}}
       },
@@ -99,6 +104,22 @@
     }
   ],
   "$defs": {
+    "sites": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {"$ref": "file.schema.json#/$defs/path"},
+          {"type": "integer", "minimum": 0},
+          {"type": "integer", "minimum": 0},
+          {"type": "integer", "minimum": 0},
+          {"type": "integer", "minimum": 0}
+        ],
+        "minItems": 5,
+        "items": false
+      },
+      "uniqueItems": true
+    },
     "mechanism": {
       "enum": [
         "unknown",

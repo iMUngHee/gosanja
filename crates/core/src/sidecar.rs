@@ -2,14 +2,15 @@
 use crate::{
     anchor::{Anchors, Column},
     graph::{self, LineIndex, Snapshot},
+    token_sites::Tokens,
     write::{Location, SourceReader},
 };
 use gosanja_schema::{
-    contract::{Anchor, CallEvidence, ItemTest, SyntaxFact, TestRow},
+    contract::{Anchor, CallEvidence, ImplFact, ImportFact, ItemTest, SyntaxFact, TestRow},
     position::{PositionEncoding, Range, Site},
     snapshot::{
-        EntityRow, Evidence, FailedDetail, GapKind, GapRow, Layer, LayerState, Mechanism,
-        OutlineKind, OutlineNode, Rel, RelationRow, Resolution, SyntaxRow,
+        AdapterInfo, EntityRow, Evidence, FailedDetail, GapKind, GapRow, Layer, LayerState,
+        Mechanism, OutlineKind, OutlineNode, Rel, RelationRow, Resolution, SyntaxRow,
     },
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -186,6 +187,89 @@ pub fn apply_syntax_and_tests(
     (rows, evidence)
 }
 
+fn convert_block(block: &ImplFact, column: &Column<'_>) -> Option<ImplFact> {
+    let convert_range = |range| convert(range, &block.file, column);
+    let extent = convert_range(block.extent)?;
+    let members = block
+        .members
+        .iter()
+        .copied()
+        .map(convert_range)
+        .collect::<Option<Vec<_>>>()?;
+    let mut block = block.clone();
+    block.extent = extent;
+    block.members = members;
+    for token in [&mut block.self_type, &mut block.trait_type]
+        .into_iter()
+        .flatten()
+    {
+        *token = convert(*token, &block.file, column)?;
+    }
+    Some(block)
+}
+
+fn admit_tokens(
+    snapshot: &mut Snapshot,
+    imports: &[ImportFact],
+    blocks: &[ImplFact],
+    adapter: &str,
+    column: &Column<'_>,
+) -> Tokens {
+    if imports.is_empty() && blocks.is_empty() {
+        return Tokens::default();
+    }
+    let admitted: BTreeSet<_> = snapshot.files.iter().map(|row| row.path.as_str()).collect();
+    let mut unknown = BTreeSet::new();
+    let mut bad = BTreeMap::new();
+    let mut tokens = Tokens {
+        provenance: format!("adapter:{adapter}/syntax"),
+        ..Tokens::default()
+    };
+    for fact in imports {
+        if !admitted.contains(fact.file.as_str()) {
+            unknown.insert(&fact.file);
+            continue;
+        }
+        let sites = fact
+            .sites
+            .iter()
+            .map(|&r| Some(Site::new(&fact.file, convert(r, &fact.file, column)?)))
+            .collect::<Option<Vec<_>>>();
+        if let Some(sites) = sites {
+            tokens.imports.extend(sites);
+        } else {
+            *bad.entry(fact.file.clone()).or_default() += 1;
+        }
+    }
+    for block in blocks {
+        if !admitted.contains(block.file.as_str()) {
+            unknown.insert(&block.file);
+        } else if let Some(block) = convert_block(block, column) {
+            tokens.blocks.push(block);
+        } else {
+            *bad.entry(block.file.clone()).or_default() += 1;
+        }
+    }
+    for file in unknown {
+        let mut gap = GapRow::new(GapKind::UnknownFile, &tokens.provenance);
+        gap.file = Some(file.clone());
+        gap.layer = Some(Layer::Syntax);
+        snapshot.gaps.push(gap);
+    }
+    for gap in &mut snapshot.gaps {
+        if gap.gap == GapKind::PositionOutOfRange
+            && gap.layer == Some(Layer::Syntax)
+            && let Some(extra) = gap.file.as_ref().and_then(|file| bad.remove(file))
+        {
+            gap.count = Some(gap.count.unwrap_or_default() + extra);
+        }
+    }
+    snapshot
+        .gaps
+        .extend(position_gaps(bad, Layer::Syntax, &tokens.provenance));
+    tokens
+}
+
 type Calls = BTreeMap<(String, String, Mechanism, Resolution, String), Vec<Evidence>>;
 
 /// Adds syntax- and compiler-supported calls after reference ownership is known.
@@ -220,6 +304,7 @@ fn derive_with_sources(
                 mechanism: Some(mechanism),
                 resolution: Some(resolution),
                 sites: None,
+                syntax_import_sites: None,
                 evidence: Some(evidence),
                 src,
             }
@@ -404,7 +489,6 @@ pub fn build(
     sources: &dyn crate::write::SourceReader,
     project_name: &str,
 ) -> Result<Snapshot, crate::graph::BuildError> {
-    use gosanja_schema::snapshot::AdapterInfo;
     let crate::adapter::AdapterOutput {
         mut index,
         manifest,
@@ -412,6 +496,8 @@ pub fn build(
         mut layers,
         syntax,
         tests,
+        imports,
+        impls,
         calls,
         build,
         build_skipped,
@@ -419,13 +505,13 @@ pub fn build(
         mut gaps,
         ..
     } = output;
-    let mut needed = BTreeSet::new();
-    for fact in &syntax {
-        needed.insert(fact.anchor.file.as_str());
-    }
-    for test in &tests {
-        needed.insert(test.anchor.file.as_str());
-    }
+    let mut needed: BTreeSet<&str> = syntax
+        .iter()
+        .map(|fact| fact.anchor.file.as_str())
+        .chain(tests.iter().map(|test| test.anchor.file.as_str()))
+        .chain(imports.iter().map(|fact| fact.file.as_str()))
+        .chain(impls.iter().map(|fact| fact.file.as_str()))
+        .collect();
     let root_files: Vec<String> = build
         .iter()
         .filter_map(|row| match row {
@@ -451,7 +537,8 @@ pub fn build(
     let merged: BTreeSet<String> = merged.into_iter().collect();
     let mut evidence = BTreeMap::new();
     let mut snapshot =
-        crate::graph::build_with(&mut index, &reader, project_name, &merged, |snapshot| {
+        crate::graph::build_with_tokens(&mut index, &reader, project_name, &merged, |snapshot| {
+            let mut tokens = Tokens::default();
             reader.with_columns(manifest.position_encoding, |column| {
                 (snapshot.syntax, evidence) = apply_syntax_and_tests(
                     &mut snapshot.entities,
@@ -461,13 +548,13 @@ pub fn build(
                     column,
                     &mut snapshot.gaps,
                 );
+                if !syntax_discarded(snapshot) {
+                    tokens = admit_tokens(snapshot, &imports, &impls, &manifest.name, column);
+                }
             });
+            tokens
         })?;
-    if snapshot
-        .gaps
-        .iter()
-        .any(|g| g.gap == GapKind::FailedLayer && g.layer == Some(Layer::Syntax))
-    {
+    if syntax_discarded(&snapshot) {
         layers.syntax = LayerState::Failed;
         gaps.retain(|g| g.layer != Some(Layer::Syntax));
     }
@@ -502,6 +589,13 @@ pub fn build(
         contract: manifest.contract,
     });
     Ok(snapshot)
+}
+
+fn syntax_discarded(snapshot: &Snapshot) -> bool {
+    snapshot
+        .gaps
+        .iter()
+        .any(|g| g.gap == GapKind::FailedLayer && g.layer == Some(Layer::Syntax))
 }
 
 // Use exactly the bytes the graph indexed. Only retain files named by adapter positions.

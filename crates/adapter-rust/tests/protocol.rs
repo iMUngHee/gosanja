@@ -61,7 +61,7 @@ fn manifest() {
     assert!(validator(Schema::AdapterManifest).is_valid(&r), "{r}");
     assert_eq!(
         r,
-        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.5","languages":["rust"],"layers":["base","syntax","calls","build"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
+        json!({"name":"rust","version":env!("CARGO_PKG_VERSION"),"contract":"0.6","languages":["rust"],"layers":["base","syntax","calls","build"],"position_encoding":"utf-32","markers":["Cargo.toml"],"requires":[{"tool":"rust-analyzer"},{"tool":"cargo"}]})
     );
 }
 #[test]

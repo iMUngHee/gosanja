@@ -835,3 +835,4 @@ mod merged {
 }
 
 include!("build/protocol.rs");
+include!("tokens/protocol.rs");

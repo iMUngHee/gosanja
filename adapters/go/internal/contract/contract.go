@@ -1,4 +1,4 @@
-// Package contract holds the adapter contract's types (spec/adapter-contract.md, version 0.5)
+// Package contract holds the adapter contract's types (spec/adapter-contract.md, version 0.6)
 // as this adapter writes them. Field order follows the specification, and the tests check every
 // written file against spec/schema.
 package contract
@@ -9,7 +9,7 @@ import (
 )
 
 // Version is the adapter contract version the adapter speaks.
-const Version = "0.5"
+const Version = "0.6"
 
 // Layer names of the contract.
 const (

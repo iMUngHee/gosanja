@@ -289,6 +289,8 @@ fn diff_relation_order(row: &DiffRelationRow) -> [(bool, String); 5] {
         RelationKind::Ref { .. } => "ref",
         RelationKind::Call { .. } => "call",
         RelationKind::Implements => "implements",
+        RelationKind::ImplSelfType => "impl-self-type",
+        RelationKind::ImplTrait => "impl-trait",
     };
     [
         absent_last(row.from.old.as_deref()),

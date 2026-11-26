@@ -20,6 +20,11 @@ stored here. What each indexer writes for these fixtures is recorded in
 | `diff-basic` | two versions of one crate, `old/` and `new/`, each with its index and with its snapshot in `expected/`; one case of every kind of change a diff reports, the three candidate scores worked by hand in `NOTE.md`; the diff of the two snapshots is `expected/`, equal to `spec/examples/diff-basic` | `rust-analyzer 0.3.3049-standalone`, rustc 1.99.1; snapshots by this workspace's engine and Rust adapter |
 | `diff-public` | a frozen pair of public snapshots, base64 v0.20.0 and v0.21.0, with `truth.tsv`, the pairs listed before any matcher ran; provenance and licence in `NOTICE.md`; no index, and not rebuilt; at snapshot schema 0.2, which the reader refuses, so the matcher's test reads copies re-stamped to the current schema | gosanja 0.2.0 from `rust-analyzer 0.3.3049-standalone` indexes, rustc 1.99.1 (see `NOTICE.md`) |
 
+The raw SCIP `rust-basic` golden records base references only. The Rust adapter integration
+tests also index that fixture with syntax and check that `pub use views::render` marks two
+exact tokens and the `Joined` impls link to their self type and `Display`. The `rust-calls`
+snapshot exercises grouped targets, external traits and aliases.
+
 ## Regenerating the indexes
 
 The tests read the checked-in indexes and need none of the indexers. To rebuild them, put

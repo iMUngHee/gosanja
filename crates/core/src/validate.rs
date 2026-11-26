@@ -20,6 +20,8 @@ use crate::graph::LineIndex;
 use crate::schemas::{self, Fit, Schema, validator};
 use crate::write::{self, Location, SnapshotFiles, SourceReader};
 
+mod token_sites;
+
 /// One way a snapshot departs from the specification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -420,6 +422,7 @@ pub(crate) fn checked(
     v.identities(&snap);
     v.relations(&snap, &lines);
     v.gaps(&snap, &lines);
+    token_sites::check(&mut v, &snap);
     v.build(&snap, files);
     let entity_keys: BTreeSet<&str> = snap.entities.iter().map(|(_, e)| e.key.as_str()).collect();
     let declared: BTreeSet<&str> = snap

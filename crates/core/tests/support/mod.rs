@@ -21,6 +21,125 @@ use scip::types::{
 pub const DEF: i32 = SymbolRole::Definition as i32;
 pub const REF: i32 = 0;
 
+pub fn write_token_rows(path: &Path, rows: &[serde_json::Value]) {
+    use std::io::Write as _;
+    let mut file = std::fs::File::create(path).unwrap();
+    for row in rows {
+        writeln!(file, "{row}").unwrap();
+    }
+}
+
+pub fn token_snapshot(
+    sources: &dyn SourceReader,
+    documents: Vec<Document>,
+    syntax: &[serde_json::Value],
+    layers: &str,
+    options: &[&str],
+) -> Snapshot {
+    use gosanja_core::{adapter, sidecar};
+    let scratch = tempfile::tempdir().unwrap();
+    let base = scratch.path();
+    let root = base.join("root");
+    let index_file = base.join("index.scip");
+    let syntax_file = base.join("syntax.jsonl");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(&index_file, index("synthetic", documents)).unwrap();
+    write_token_rows(&syntax_file, syntax);
+    let mut args = vec![
+        repo("fixtures/fake-adapter/adapter.sh").into_os_string(),
+        "--index-file".into(),
+        index_file.into_os_string(),
+        "--syntax-file".into(),
+        syntax_file.into_os_string(),
+    ];
+    args.extend(options.iter().map(|arg| (*arg).into()));
+    let adapter = adapter::describe(adapter::Invocation::new(shell(), args).unwrap()).unwrap();
+    let output = adapter
+        .run_with_layers(&root, base, layers.parse().unwrap())
+        .unwrap();
+    sidecar::build(output, sources, "tokens").unwrap()
+}
+
+pub fn baseline_token_snapshot(
+    sources: &MemSource,
+    documents: Vec<Document>,
+    syntax: &[serde_json::Value],
+    layers: &str,
+    options: &[&str],
+) -> Option<SnapshotFiles> {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::{fmt::Write as _, fs, process::Command};
+    let engine = std::env::var_os("GOSANJA_TOKEN_BASELINE_BIN")?;
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path();
+    let root = path.join("root");
+    let out = path.join("snapshot");
+    for (file, contents) in &sources.files {
+        let target = root.join(file);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, contents).unwrap();
+    }
+    fs::write(path.join("index.scip"), index("synthetic", documents)).unwrap();
+    write_token_rows(&path.join("syntax.jsonl"), syntax);
+    let launch = path.join("adapter.sh");
+    let argument_names: Vec<_> = (0..options.len())
+        .map(|n| format!("TOKEN_ARG_{n}"))
+        .collect();
+    let mut arguments = String::new();
+    for name in &argument_names {
+        write!(arguments, " \"${name}\"").unwrap();
+    }
+    fs::write(
+        &launch,
+        format!(
+            "#!/bin/sh\nexec \"$TOKEN_FIXTURE\" --contract 0.5 --index-file \"$TOKEN_INDEX\" \
+             --syntax-file \"$TOKEN_SYNTAX\"{arguments} \"$@\"\n",
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&launch, fs::Permissions::from_mode(0o755)).unwrap();
+    let result = Command::new(&engine)
+        .args(["index", "--root"])
+        .arg(&root)
+        .args(["--adapter"])
+        .arg(launch)
+        .args(["--out"])
+        .arg(&out)
+        .args(["--layers", layers])
+        .env("TOKEN_FIXTURE", repo("fixtures/fake-adapter/adapter.sh"))
+        .env("TOKEN_INDEX", path.join("index.scip"))
+        .env("TOKEN_SYNTAX", path.join("syntax.jsonl"))
+        .env("XDG_CACHE_HOME", path.join("cache"))
+        .env("HOME", path)
+        .envs(argument_names.iter().zip(options.iter().copied()))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let result = Command::new(engine)
+        .arg("validate")
+        .arg(&out)
+        .arg("--root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stdout)
+    );
+    let snapshot = read_dir(&out);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(snapshot.manifest.as_ref().unwrap()).unwrap();
+    assert_eq!(manifest["schema"], "0.5");
+    Some(snapshot)
+}
+
 /// The directory of a checked-in fixture.
 #[must_use]
 pub fn fixture(name: &str) -> PathBuf {

@@ -1034,7 +1034,7 @@ fn unusable_adapters_are_reported_and_never_chosen() {
     assert_eq!(
         manifest,
         serde_json::json!({
-            "contract": "0.5",
+            "contract": "0.6",
             "name": "rust",
             "version": "1",
             "languages": ["rust"],
@@ -1078,8 +1078,8 @@ fn the_listing_shows_each_adapter_on_its_own_lines() {
     run.expect(0);
     let adapters = world.adapters();
     let expected = format!(
-        "go 0.9 contract=0.5 languages=go,templ layers=base markers=go.mod path={go}\n\
-         rust 1.2.3 contract=0.5 languages=rust layers=base,syntax,calls markers=Cargo.toml,rust-toolchain.toml path={rust}\n\
+        "go 0.9 contract=0.6 languages=go,templ layers=base markers=go.mod path={go}\n\
+         rust 1.2.3 contract=0.6 languages=rust layers=base,syntax,calls markers=Cargo.toml,rust-toolchain.toml path={rust}\n\
          \x20 requires tool-a >=1: found {found}\n\
          \x20 requires tool-b: missing\n\
          \x20 requires /opt/tool-c: not checked\n",
@@ -1132,11 +1132,11 @@ fn listed_values_stay_on_one_line() {
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 3, "{stdout}");
     assert!(
-        lines[0].starts_with(r"alpha 1\u{a}2\u{2028}\u{2029}\u{85}3 contract=0.5 "),
+        lines[0].starts_with(r"alpha 1\u{a}2\u{2028}\u{2029}\u{85}3 contract=0.6 "),
         "{stdout}"
     );
     assert_eq!(lines[1], r"  requires a\u{a}b: not checked");
-    assert!(lines[2].starts_with("beta 1 contract=0.5 "), "{stdout}");
+    assert!(lines[2].starts_with("beta 1 contract=0.6 "), "{stdout}");
 }
 
 // A failed base layer under automatic choice, and the cache beside `--out`.

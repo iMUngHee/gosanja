@@ -976,4 +976,274 @@ fn layer_states_alone_remove_matching_properties_relations_and_features() {
     }
 }
 
+#[test]
+fn token_relations_filter_by_syntax_and_restore_base_roles() {
+    use gosanja_schema::diff::{Change, Excluded, RelationKind};
+    use gosanja_schema::snapshot::{EntityRow, LayerState, RefRole, RelationRow};
+    use serde_json::{from_value, json};
+
+    let (mut old, _) = snapshots_with_layer_contributions();
+    old.relations.clear();
+    let adapter = &old.scope.adapter.as_ref().unwrap().name;
+    let name = "cargo:sample:rename_a().";
+    let target = "cargo:sample:target().";
+    let container = "cargo:sample:impl#";
+    let declaration = old.entities.iter_mut().find(|row| row.key == name).unwrap();
+    declaration.parent = Some(container.into());
+    old.entities.push(
+        from_value::<EntityRow>(json!({
+            "key":container,"name":"impl","role":"container","virtual":true,"src":"core:containment"
+        }))
+        .unwrap(),
+    );
+    let mark = json!(["lib.rs", 1, 3, 1, 4]);
+    let native = json!(["lib.rs", 0, 7, 0, 8]);
+    let reference = |roles, sites| {
+        from_value::<RelationRow>(json!({
+        "from":name,"to":target,"rel":"ref","roles":roles,"sites":sites,"src":"core:reference-in-body"
+    })).unwrap()
+    };
+    old.relations.extend([
+        reference(json!([]), json!([mark])),
+        reference(json!(["import"]), json!([native])),
+    ]);
+    let mut new = old.clone();
+    let mut imported = reference(json!(["import"]), json!([native, mark]));
+    imported.syntax_import_sites = Some(from_value(json!([mark])).unwrap());
+    let link = |kind, to, site| {
+        from_value::<RelationRow>(json!({
+            "from":container,"to":to,"rel":kind,"sites":[site],
+            "src":format!("adapter:{adapter}/syntax")
+        }))
+        .unwrap()
+    };
+    new.relations = vec![
+        imported,
+        link("impl-self-type", target, mark.clone()),
+        link("impl-trait", target, native.clone()),
+    ];
+    let compared = compare_snapshots(&old, &new);
+    assert_eq!(
+        compared
+            .relations
+            .into_iter()
+            .map(|row| (row.change, row.kind))
+            .collect::<Vec<_>>(),
+        vec![
+            (Change::Added, RelationKind::ImplSelfType),
+            (Change::Added, RelationKind::ImplTrait),
+            (Change::Removed, RelationKind::Ref { roles: vec![] }),
+        ]
+    );
+    let mut moved = new.clone();
+    moved.relations[1].sites = Some(from_value(json!([native])).unwrap());
+    assert_eq!(compare_snapshots(&new, &moved).relations, []);
+    moved.relations[1].to = name.into();
+    assert_eq!(compare_snapshots(&new, &moved).relations.len(), 2);
+
+    old.scope.layers.syntax = LayerState::NotRequested;
+    for (left, right) in [(&old, &new), (&new, &old)] {
+        let comparison = compare_snapshots(left, right);
+        assert_eq!(comparison.manifest.not_compared, [Excluded::Syntax]);
+        assert_eq!(comparison.relations, []);
+    }
+    new.relations[0].roles = Some(vec![RefRole::Import, RefRole::Write]);
+    assert_eq!(compare_snapshots(&old, &new).relations.len(), 4);
+}
+
+#[test]
+fn token_candidate_features_and_impl_only_package_follow_syntax_exclusion() {
+    use gosanja_schema::snapshot::{LayerState, RefRole};
+    use serde_json::{from_value, json};
+    let (mut old, mut new) = snapshots_with_layer_contributions();
+    let incoming = |snapshot: &gosanja_core::graph::Snapshot| {
+        let reference = &snapshot.relations[0];
+        let mut reverse = reference.clone();
+        std::mem::swap(&mut reverse.from, &mut reverse.to);
+        reverse
+    };
+    old.relations = vec![old.relations[0].clone(), incoming(&old)];
+    new.relations = vec![new.relations[0].clone(), incoming(&new)];
+    let site: gosanja_schema::position::Site = from_value(json!(["lib.rs", 1, 6, 1, 7])).unwrap();
+    for row in old.relations.iter_mut().chain(&mut new.relations) {
+        row.sites.as_mut().unwrap().push(site.clone());
+    }
+    let add_marks = |snapshot: &mut gosanja_core::graph::Snapshot| {
+        for mut row in snapshot.relations.clone() {
+            row.roles = Some(vec![RefRole::Import]);
+            row.sites = Some(vec![site.clone()]);
+            row.syntax_import_sites = row.sites.clone();
+            snapshot.relations.push(row);
+        }
+        for row in &mut snapshot.relations[..2] {
+            row.sites.as_mut().unwrap().pop();
+        }
+    };
+    let mut imported = new.clone();
+    add_marks(&mut imported);
+    let compared = compare_snapshots(&old, &imported);
+    assert_eq!(
+        (
+            compared.candidates[0].incoming,
+            compared.candidates[0].outgoing
+        ),
+        (500_000, 500_000)
+    );
+    old.scope.layers.syntax = LayerState::NotRequested;
+    let control = compare_snapshots(&old, &new);
+    let projected = compare_snapshots(&old, &imported);
+    assert_eq!(projected.candidates, control.candidates);
+    assert_eq!(
+        (
+            projected.candidates[0].incoming,
+            projected.candidates[0].outgoing
+        ),
+        (1_000_000, 1_000_000)
+    );
+    assert_eq!(
+        compare_snapshots(&imported, &old).candidates,
+        compare_snapshots(&new, &old).candidates
+    );
+
+    let external = &new.externals[0].clone();
+    old.externals.push(external.clone());
+    let container = "cargo:sample:impl#";
+    let adapter = imported.scope.adapter.as_ref().unwrap().name.clone();
+    for snapshot in [&mut old, &mut new, &mut imported] {
+        snapshot.entities.push(from_value(json!({
+            "key":container,"name":"impl","role":"container","virtual":true,"src":"core:containment"
+        })).unwrap());
+    }
+    imported.relations.push(
+        from_value(json!({
+            "from":container,"to":external.key,"rel":"impl-trait","sites":[site],
+            "src":format!("adapter:{adapter}/syntax")
+        }))
+        .unwrap(),
+    );
+    assert_eq!(
+        compare_snapshots(&new, &imported).manifest.packages_added,
+        ["cargo:widget"]
+    );
+    assert_eq!(
+        compare_snapshots(&imported, &new).manifest.packages_removed,
+        ["cargo:widget"]
+    );
+    assert_eq!(
+        compare_snapshots(&old, &imported).manifest.packages_added,
+        [] as [String; 0]
+    );
+    assert_eq!(
+        compare_snapshots(&imported, &old).manifest.packages_removed,
+        [] as [String; 0]
+    );
+}
+
+#[test]
+fn impl_links_contribute_to_candidates_through_a_paired_container() {
+    use gosanja_schema::snapshot::{LayerState, Role};
+    use serde_json::{from_value, json};
+
+    for (kind, entity_kind) in [
+        ("impl-self-type", "rust:struct"),
+        ("impl-trait", "rust:trait"),
+    ] {
+        let (mut old, mut new) = snapshots_with_layer_contributions();
+        let container = "cargo:sample:impl#";
+        let prepare = |snapshot: &mut gosanja_core::graph::Snapshot, name: &str| {
+            let parent = snapshot
+                .entities
+                .iter_mut()
+                .find(|row| row.name == "target")
+                .unwrap();
+            parent.parent = Some(container.into());
+            let definition = snapshot
+                .entities
+                .iter_mut()
+                .find(|row| row.name.starts_with("rename_"))
+                .unwrap();
+            definition.name = name.into();
+            definition.key = format!("cargo:sample:{name}#");
+            definition.symbol = Some(format!("s cargo sample 1 {name}#"));
+            definition.role = Some(Role::Type);
+            definition.kind = Some(entity_kind.into());
+            let key = definition.key.clone();
+            snapshot.entities.push(from_value(json!({
+                "key":container,"name":"impl","role":"container","virtual":true,"src":"core:containment"
+            })).unwrap());
+            let adapter = &snapshot.scope.adapter.as_ref().unwrap().name;
+            snapshot.relations = vec![
+                from_value(json!({
+                    "from":container,"to":key,"rel":kind,"sites":[["lib.rs",1,3,1,4]],
+                    "src":format!("adapter:{adapter}/syntax")
+                }))
+                .unwrap(),
+            ];
+        };
+        prepare(&mut old, "OldWork");
+        prepare(&mut new, "NewWork");
+        let supported = compare_snapshots(&old, &new);
+        assert_eq!(supported.candidates[0].incoming, 1_000_000, "{kind}");
+        assert!(
+            supported
+                .relations
+                .iter()
+                .all(|row| row.from.old.is_some() && row.from.new.is_some())
+        );
+        for (mut unsupported, supported) in [(old.clone(), &new), (new.clone(), &old)] {
+            unsupported.scope.layers.syntax = LayerState::NotRequested;
+            unsupported.relations.clear();
+            assert_eq!(
+                compare_snapshots(&unsupported, supported).candidates[0].incoming,
+                0
+            );
+            assert_eq!(
+                compare_snapshots(supported, &unsupported).candidates[0].incoming,
+                0
+            );
+        }
+    }
+}
+
+#[test]
+fn legacy_implements_preserves_candidate_multiplicity() {
+    use serde_json::{from_value, json};
+
+    let (mut old, mut new) = snapshots_with_layer_contributions();
+    for (snapshot, name, count) in [
+        (&mut old, "cargo:sample:rename_a().", 2),
+        (&mut new, "cargo:sample:rename_b().", 1),
+    ] {
+        snapshot.relations.truncate(1);
+        for col in 3..3 + count {
+            snapshot.relations.push(
+                from_value(json!({
+                    "from":name,"to":"cargo:sample:target().","rel":"implements",
+                    "sites":[["lib.rs",1,col,1,col+1]],"src":"scip:test"
+                }))
+                .unwrap(),
+            );
+        }
+    }
+    let comparison = compare_snapshots(&old, &new);
+    assert_eq!(comparison.candidates[0].outgoing, 666_666);
+}
+
+#[test]
+fn token_sites_refuse_old_snapshot_and_publish_new_diff() {
+    use gosanja_core::diff::CompareError;
+    let current = fixture("rust-basic").join("expected");
+    let mut old = read_dir(&current);
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(old.manifest.as_ref().unwrap()).unwrap();
+    manifest["schema"] = "0.5".into();
+    old.manifest = Some(serde_json::to_vec(&manifest).unwrap());
+    let old = materialize(&old);
+    assert!(matches!(
+        compare(old.path(), &current),
+        Err(CompareError::SchemaVersion(_))
+    ));
+    assert_eq!(compare(&current, &current).unwrap().manifest.schema, "0.5");
+}
+
 include!("build/diff.rs");

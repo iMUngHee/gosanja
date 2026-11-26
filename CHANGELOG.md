@@ -11,6 +11,25 @@ change may break compatibility, and an entry here says so when it does.
 - `gosanja index` and `gosanja diff` resolve `--out` paths ending in `.` or `..` to an existing
   directory before checking for overlap and deciding whether the output can be replaced.
 
+### Adapter contract 0.6
+
+Declare 0.6 in both the adapter manifest and its result. Adapters can emit tagged import
+token rows and impl header and member token rows in the syntax layer.
+
+### Snapshot schema 0.6
+
+The Rust adapter supplies exact written token ranges. The engine marks indexed Rust
+imports and re-exports and records their syntax evidence in `syntax_import_sites`.
+Existing virtual impl containers gain `impl-self-type` and `impl-trait` links when the
+indexed members and header tokens establish those endpoints. Conflicts are recorded as
+`ambiguous-impl` gaps. Consumers need a 0.6 reader.
+
+### Diff schema 0.5
+
+Reads snapshot 0.6. Compares impl header links and import roles when syntax is comparable.
+When syntax is excluded, restores base reference role buckets and their contribution to
+candidate features and package reachability.
+
 ### Adapter contract 0.5
 
 Requires 0.5 in both the adapter manifest and its result. The optional build layer can

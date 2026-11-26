@@ -21,7 +21,8 @@
         "unknown-value",
         "skipped-file",
         "unresolved-root",
-        "unknown-file"
+        "unknown-file",
+        "ambiguous-impl"
       ]
     },
     "file": {
@@ -567,7 +568,7 @@
         ],
         "properties": {
           "layer": {
-            "const": "build"
+            "enum": ["build", "syntax"]
           },
           "range": false,
           "count": false,
@@ -578,8 +579,25 @@
           "target": false,
           "scope": false,
           "src": {
-            "pattern": "^adapter:[a-z0-9-]+/build$"
+            "pattern": "^adapter:[a-z0-9-]+/(?:build|syntax)$"
           }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"gap": {"const": "ambiguous-impl"}}},
+      "then": {
+        "required": ["file", "range", "layer"],
+        "properties": {
+          "layer": {"const": "syntax"},
+          "src": {"pattern": "^adapter:[a-z0-9-]+/syntax$"},
+          "count": false,
+          "keys": false,
+          "anchor": false,
+          "code": false,
+          "detail": false,
+          "target": false,
+          "scope": false
         }
       }
     },

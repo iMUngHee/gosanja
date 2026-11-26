@@ -85,7 +85,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("manifest %s: %v", data, err)
 	}
 	scope := manifest.Scopes[0]
-	if scope.Adapter.Name != "go" || scope.Adapter.Contract != "0.5" ||
+	if scope.Adapter.Name != "go" || scope.Adapter.Contract != "0.6" ||
 		!reflect.DeepEqual(scope.Layers, map[string]string{"base": "present", "syntax": "present", "calls": "absent", "build": "present"}) {
 		t.Errorf("scope %+v", scope)
 	}

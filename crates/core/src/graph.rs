@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 
 use crate::identity::{self, Parsed, Suffix, Symbol};
 use crate::scip_stream::{self, DecodeError, Item};
+use crate::token_sites::Tokens;
 use crate::write::{Location, SourceReader};
 
 /// The facts of one snapshot, before they are sorted and written.
@@ -114,6 +115,19 @@ pub fn build_with(
     project_name: &str,
     merged: &BTreeSet<String>,
     before_references: impl FnOnce(&mut Snapshot),
+) -> Result<Snapshot, BuildError> {
+    build_with_tokens(index, sources, project_name, merged, |snapshot| {
+        before_references(snapshot);
+        Tokens::default()
+    })
+}
+
+pub(crate) fn build_with_tokens(
+    index: &mut dyn Read,
+    sources: &dyn SourceReader,
+    project_name: &str,
+    merged: &BTreeSet<String>,
+    before_references: impl FnOnce(&mut Snapshot) -> Tokens,
 ) -> Result<Snapshot, BuildError> {
     let mut input = Input::default();
     scip_stream::for_each_item(index, |item| match item {
@@ -316,7 +330,7 @@ impl Input {
         self,
         project_name: &str,
         merged: &BTreeSet<String>,
-        before_references: impl FnOnce(&mut Snapshot),
+        before_references: impl FnOnce(&mut Snapshot) -> Tokens,
     ) -> Snapshot {
         let mut out = Snapshot {
             project: Project {
@@ -346,10 +360,18 @@ impl Input {
         self.document_gaps(&mut out.gaps);
         let graph = Graph::new(&self.occurrences, &self.implementations);
         graph.entities(&self, &mut out);
-        before_references(&mut out);
+        let tokens = before_references(&mut out);
+        let members = tokens.member_parents(&out.entities);
         let folded = graph.fold(&self, merged, &mut out);
-        graph.references(&self, &mut out);
+        let token_refs = graph.token_references(&self, &tokens);
+        graph.references(&self, &tokens, &token_refs, &mut out);
         graph.implements(&folded, &mut out);
+        tokens.impl_relations(
+            &members,
+            &token_refs.headers,
+            &mut out.relations,
+            &mut out.gaps,
+        );
         out
     }
 
@@ -584,6 +606,20 @@ fn ref_roles(bits: i32) -> Vec<RefRole> {
 /// The definition sites of one symbol, by file and name range, with the body if any and the
 /// provenance of the document.
 type Observations = BTreeMap<(String, Range), (Option<Range>, String)>;
+
+const IMPORT: i32 = SymbolRole::Import as i32;
+
+#[derive(Default)]
+struct TokenReferences<'a> {
+    native_imports: BTreeSet<(Site, &'a str, Vec<RefRole>)>,
+    headers: BTreeMap<Site, BTreeSet<&'a str>>,
+}
+
+#[derive(Default)]
+struct RefSites {
+    sites: BTreeSet<Site>,
+    syntax_imports: BTreeSet<Site>,
+}
 
 /// Symbols of the index, sorted into rows.
 #[derive(Debug)]
@@ -871,15 +907,56 @@ impl<'a> Graph<'a> {
                 mechanism: None,
                 resolution: None,
                 sites: Some(sites.into_iter().collect()),
+                syntax_import_sites: None,
                 evidence: None,
                 src,
             });
         }
     }
 
+    fn token_references<'g>(&'g self, input: &Input, tokens: &Tokens) -> TokenReferences<'g> {
+        let headers = tokens.headers();
+        let mut observed = TokenReferences::default();
+        if tokens.imports.is_empty() && headers.is_empty() {
+            return observed;
+        }
+        for occ in input
+            .occurrences
+            .iter()
+            .filter(|occ| !is_definition(occ.roles))
+        {
+            let site = Site::new(&occ.file, occ.range);
+            let native_import = occ.roles & IMPORT != 0 && tokens.imports.contains(&site);
+            let is_header = headers.contains(&site);
+            if (native_import || is_header)
+                && let Some(target) = self.target(&occ.symbol)
+            {
+                if is_header {
+                    observed
+                        .headers
+                        .entry(site.clone())
+                        .or_default()
+                        .insert(target);
+                }
+                if native_import {
+                    observed
+                        .native_imports
+                        .insert((site, target, ref_roles(occ.roles & !IMPORT)));
+                }
+            }
+        }
+        observed
+    }
+
     /// Attributes every reference to the innermost body containing it, using the bodies the
     /// entities hold now.
-    fn references(&self, input: &Input, out: &mut Snapshot) {
+    fn references(
+        &self,
+        input: &Input,
+        tokens: &Tokens,
+        token_refs: &TokenReferences<'_>,
+        out: &mut Snapshot,
+    ) {
         let mut bodies: BTreeMap<String, Vec<(Range, String)>> = BTreeMap::new();
         for entity in &out.entities {
             if let Some(Def {
@@ -901,7 +978,7 @@ impl<'a> Graph<'a> {
                 (file, remaining)
             })
             .collect();
-        let mut refs: BTreeMap<(String, String, Vec<RefRole>), BTreeSet<Site>> = BTreeMap::new();
+        let mut refs: BTreeMap<(String, String, Vec<RefRole>), RefSites> = BTreeMap::new();
         let mut unattributed: BTreeMap<&str, u64> = BTreeMap::new();
         for occ in input.occurrences.iter().filter(|o| !is_definition(o.roles)) {
             let Some(target) = self.target(&occ.symbol) else {
@@ -921,9 +998,27 @@ impl<'a> Graph<'a> {
                 *unattributed.entry(occ.file.as_str()).or_default() += 1;
                 continue;
             };
-            refs.entry((from.clone(), target.clone(), ref_roles(occ.roles)))
-                .or_default()
-                .insert(Site::new(occ.file.clone(), occ.range));
+            let site = Site::new(&occ.file, occ.range);
+            let base_roles = ref_roles(occ.roles);
+            let mark = occ.roles & IMPORT == 0
+                && tokens.imports.contains(&site)
+                && !token_refs.native_imports.contains(&(
+                    site.clone(),
+                    target.as_str(),
+                    base_roles.clone(),
+                ));
+            let roles = if mark {
+                ref_roles(occ.roles | IMPORT)
+            } else {
+                base_roles
+            };
+            let bucket = refs
+                .entry((from.clone(), target.clone(), roles))
+                .or_default();
+            if mark {
+                bucket.syntax_imports.insert(site.clone());
+            }
+            bucket.sites.insert(site);
         }
         for ((from, to, roles), sites) in refs {
             out.relations.push(RelationRow {
@@ -933,7 +1028,9 @@ impl<'a> Graph<'a> {
                 roles: Some(roles),
                 mechanism: None,
                 resolution: None,
-                sites: Some(sites.into_iter().collect()),
+                sites: Some(sites.sites.into_iter().collect()),
+                syntax_import_sites: (!sites.syntax_imports.is_empty())
+                    .then(|| sites.syntax_imports.into_iter().collect()),
                 evidence: None,
                 src: REFERENCE_IN_BODY.to_owned(),
             });

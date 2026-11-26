@@ -942,3 +942,4 @@ fn decls_a_syntax_row_keyed_to_them_is_reported() {
 }
 
 include!("build/validate.rs");
+include!("tokens/validate.rs");

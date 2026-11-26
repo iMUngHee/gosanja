@@ -20,7 +20,10 @@ fn build_not_compared_on_the_command_line() {
         )
     };
     let run = |name: &str, test: &str| {
-        let adapter = world.adapter(name, &[("--build-file", build(&format!("{name}.jsonl"), test))]);
+        let adapter = world.adapter(
+            name,
+            &[("--build-file", build(&format!("{name}.jsonl"), test))],
+        );
         let (output, out) = world.index(&adapter, name, None);
         ok(&output);
         out
@@ -29,10 +32,15 @@ fn build_not_compared_on_the_command_line() {
     let new = run("new", "cfg");
     let (output, diff) = world.diff(&old, &new);
     ok(&output);
-    for table in ["entities.jsonl", "externals.jsonl", "relations.jsonl", "candidates.jsonl"] {
+    for table in [
+        "entities.jsonl",
+        "externals.jsonl",
+        "relations.jsonl",
+        "candidates.jsonl",
+    ] {
         assert!(rows(&diff, table).is_empty(), "{table}");
     }
     let manifest = manifest(&diff);
     assert_eq!(manifest["not_compared"], json!(["build", "test"]));
-    assert_eq!(manifest["schema"], "0.4");
+    assert_eq!(manifest["schema"], "0.5");
 }

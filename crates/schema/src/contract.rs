@@ -10,7 +10,7 @@ use crate::snapshot::{
 };
 
 /// Adapter contract version this crate reads and writes.
-pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 5);
+pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 6);
 
 /// File name of the result an adapter writes into its output directory.
 pub const RESULT_FILE: &str = "result.json";
@@ -274,13 +274,47 @@ pub struct TestRow {
     pub test: ItemTest,
 }
 
-/// One line of an adapter's `syntax.jsonl`: a syntax row or a test row.
+/// Written import tokens in one source file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportFact {
+    /// Always `imports`.
+    pub row: String,
+    /// Source file.
+    pub file: String,
+    /// Exact token ranges.
+    pub sites: Vec<Range>,
+}
+
+/// Written tokens from one implementation block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImplFact {
+    /// Always `impl`.
+    pub row: String,
+    /// Source file.
+    pub file: String,
+    /// From the impl keyword through the closing brace.
+    pub extent: Range,
+    /// Exact name ranges of direct members.
+    pub members: Vec<Range>,
+    /// Final token of the self type path, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_type: Option<Range>,
+    /// Final token of the implemented trait path, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trait_type: Option<Range>,
+}
+
+/// One line of an adapter's `syntax.jsonl`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxLine {
     /// Syntactic facts about a definition.
     Fact(SyntaxFact),
     /// Test evidence about a definition.
     Test(TestRow),
+    /// Import token candidates in one file.
+    Imports(ImportFact),
+    /// Header and member token candidates in one impl block.
+    Impl(ImplFact),
 }
 
 impl Serialize for SyntaxLine {
@@ -288,6 +322,8 @@ impl Serialize for SyntaxLine {
         match self {
             Self::Fact(fact) => fact.serialize(serializer),
             Self::Test(test) => test.serialize(serializer),
+            Self::Imports(imports) => imports.serialize(serializer),
+            Self::Impl(block) => block.serialize(serializer),
         }
     }
 }
@@ -295,15 +331,13 @@ impl Serialize for SyntaxLine {
 impl<'de> Deserialize<'de> for SyntaxLine {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
-        if value.get("row").is_some() {
-            serde_json::from_value(value)
-                .map(Self::Test)
-                .map_err(serde::de::Error::custom)
-        } else {
-            serde_json::from_value(value)
-                .map(Self::Fact)
-                .map_err(serde::de::Error::custom)
+        match value.get("row").and_then(serde_json::Value::as_str) {
+            Some("imports") => serde_json::from_value(value).map(Self::Imports),
+            Some("impl") => serde_json::from_value(value).map(Self::Impl),
+            _ if value.get("row").is_some() => serde_json::from_value(value).map(Self::Test),
+            _ => serde_json::from_value(value).map(Self::Fact),
         }
+        .map_err(serde::de::Error::custom)
     }
 }
 

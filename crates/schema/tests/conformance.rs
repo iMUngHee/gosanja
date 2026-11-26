@@ -169,9 +169,87 @@ fn relation(rel: Rel) -> RelationRow {
         mechanism: None,
         resolution: None,
         sites: None,
+        syntax_import_sites: None,
         evidence: None,
         src: "core:reference-in-body".into(),
     }
+}
+
+#[test]
+fn token_wire_and_relation_forms_pass_their_schemas() {
+    use gosanja_schema::contract::SyntaxLine;
+
+    let schemas = Schemas::load();
+    let import = json!({"row":"imports","file":"src/lib.rs","sites":[[4,8,4,13]]});
+    let impl_row = json!({
+        "row":"impl","file":"src/lib.rs","extent":[8,0,10,1],
+        "members":[[9,7,9,10]],"self_type":[8,5,8,11]
+    });
+    for value in [&import, &impl_row] {
+        let typed: SyntaxLine = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(&to_value(&typed), value);
+        schemas.assert_valid("syntax-fact", value);
+        let mut extended = value.clone();
+        extended["later_field"] = json!(true);
+        schemas.assert_valid("syntax-fact", &extended);
+        assert_eq!(
+            serde_json::from_value::<SyntaxLine>(extended).unwrap(),
+            typed
+        );
+    }
+    for value in [
+        json!({"row":"imports","file":"src/lib.rs","sites":[]}),
+        json!({"row":"imports","file":"src/lib.rs","sites":[[4,8,4,13],[4,8,4,13]]}),
+        json!({"row":"imports","file":"../lib.rs","sites":[[4,8,4,13]]}),
+        json!({"row":"impl","file":"src/lib.rs","extent":[8,0,10,1],"members":[[9,7,9,10]]}),
+        json!({"row":"impl","file":"src/lib.rs","extent":[8,0,10,1],"members":[],"self_type":[8,5,8,11]}),
+        json!({"row":"unknown","anchor":{"file":"src/lib.rs","line":0,"col":0}}),
+    ] {
+        schemas.assert_invalid("syntax-fact", &value);
+    }
+
+    let site = json!(["src/lib.rs", 4, 8, 4, 13]);
+    let from = "cargo:demo:views/render().";
+    let to = "cargo:demo:views/empty().";
+    let reference = json!({
+        "from":from,"to":to,"rel":"ref","roles":["import"],"sites":[site],
+        "syntax_import_sites":[site],"src":"core:reference-in-body"
+    });
+    schemas.assert_valid("relation", &reference);
+    for (field, invalid) in [
+        ("roles", json!(["read"])),
+        ("syntax_import_sites", json!([])),
+    ] {
+        let mut row = reference.clone();
+        row[field] = invalid;
+        schemas.assert_invalid("relation", &row);
+    }
+    for kind in ["impl-self-type", "impl-trait"] {
+        let mut row =
+            json!({"from":from,"to":to,"rel":kind,"sites":[site],"src":"adapter:rust/syntax"});
+        schemas.assert_valid("relation", &row);
+        row["sites"] = json!([]);
+        schemas.assert_invalid("relation", &row);
+        let mut diff = json!({
+            "change":"added","from":{"old":from,"new":from},"to":{"old":to,"new":to},"rel":kind
+        });
+        let typed: gosanja_schema::diff::RelationRow =
+            serde_json::from_value(diff.clone()).unwrap();
+        assert_eq!(to_value(&typed), diff);
+        schemas.assert_valid("diff-relation", &diff);
+        diff["roles"] = json!([]);
+        schemas.assert_invalid("diff-relation", &diff);
+    }
+    let mut gap = json!({
+        "gap":"ambiguous-impl","file":"src/lib.rs","range":[8,0,10,1],
+        "layer":"syntax","src":"adapter:rust/syntax"
+    });
+    schemas.assert_valid("gap", &gap);
+    gap["count"] = json!(1);
+    schemas.assert_invalid("gap", &gap);
+    schemas.assert_valid("gap", &json!({
+        "gap":"unknown-file","file":"src/omitted.rs","layer":"syntax","src":"adapter:rust/syntax"
+    }));
 }
 
 #[test]
@@ -609,8 +687,8 @@ fn every_gap_kind_passes_its_schema() {
 
 #[test]
 fn the_interfaces_are_at_their_current_versions() {
-    assert_eq!(CONTRACT_VERSION.to_string(), "0.5");
-    assert_eq!(SCHEMA_VERSION.to_string(), "0.5");
+    assert_eq!(CONTRACT_VERSION.to_string(), "0.6");
+    assert_eq!(SCHEMA_VERSION.to_string(), "0.6");
     assert_eq!(
         gosanja_schema::diff::SCHEMA_VERSION.to_string(),
         DIFF_SCHEMA
@@ -1011,16 +1089,16 @@ fn only_a_call_node_names_a_callee_and_it_may_omit_it() {
 
 /// The marker and the schema version of a diff, as `spec/diff.md` states them.
 const DIFF_FORMAT: &str = "gosanja-diff";
-const DIFF_SCHEMA: &str = "0.4";
+const DIFF_SCHEMA: &str = "0.5";
 
 #[test]
-fn diff_schema_version_accepts_0_4_and_refuses_0_3() {
+fn diff_schema_version_accepts_0_5_and_refuses_0_4() {
     use gosanja_schema::diff::SCHEMA_VERSION as DIFF_VERSION;
     let path = repository().join("spec/examples/diff-basic/manifest.json");
     let current: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    assert_eq!(current["schema"], "0.4");
-    assert_eq!(current["old"]["schema"], "0.5");
-    assert_eq!(current["new"]["schema"], "0.5");
+    assert_eq!(current["schema"], "0.5");
+    assert_eq!(current["old"]["schema"], "0.6");
+    assert_eq!(current["new"]["schema"], "0.6");
     let writer = |manifest: &Value| {
         manifest["schema"]
             .as_str()
@@ -1033,7 +1111,7 @@ fn diff_schema_version_accepts_0_4_and_refuses_0_3() {
         Ok(compat::Acceptance::Full)
     );
     let mut previous = current;
-    previous["schema"] = json!("0.3");
+    previous["schema"] = json!("0.4");
     let writer = writer(&previous);
     assert_eq!(
         compat::accept(DIFF_VERSION, writer),

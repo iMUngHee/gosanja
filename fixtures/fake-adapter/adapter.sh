@@ -5,7 +5,7 @@ name=fake
 version_json='"1"'
 languages='["rust"]'
 layers=''
-contract_version=0.5
+contract_version=0.6
 build_file=''
 build_entry=''
 encoding=utf-8
@@ -119,6 +119,8 @@ index)
         reported-*) syntax='"syntax":{"status":"failed","diagnostics":[{"code":"parser-failed","message":"'"$mode"' in /tmp/run-'"$$"'"}]},' ;;
         extra) extra=',"extra":true' ;;
         syntax-merged-false) syntax='"syntax":{"status":"ok","merged":false},' ;;
+        token-skipped) syntax='"syntax":{"status":"ok","skipped":[{"file":"skip.rs","code":"test-skip"}]},' ;;
+        token-malformed-result|old-token-result) syntax='"syntax":{"status":23},' ;;
     esac
     case "$mode" in
         merged-not-global|merged-not-global-duplicate-builds) merged='["local 1"]' ;;
@@ -138,6 +140,7 @@ index)
     if [ "$mode" = wrong-result-contract ]; then contract=0.2; calls='"calls":false'; fi
     if [ "$mode" = old-result ]; then contract=0.3; fi
     if [ "$mode" = old-build-result ]; then contract=0.4; fi
+    if [ "$mode" = old-token-result ]; then contract=0.5; fi
     build='"build":'"${build_entry:-{\"status\":\"ok\"\}}"
     case "$mode" in
         build-failed) build='"build":{"status":"failed","diagnostics":[{"code":"probe-build-error","message":"the build probe failed"}]}' ;;
@@ -167,6 +170,7 @@ index)
         crlf) printf '{"anchor":{"file":"x","line":0,"col":0}}\r\n' > "$out/syntax.jsonl" ;;
     esac
     if [ -n "$syntax_file" ]; then cp "$syntax_file" "$out/syntax.jsonl"; fi
+    if [ "$mode" = empty-syntax ]; then : > "$out/syntax.jsonl"; fi
     : > "$out/calls.jsonl"
     if [ -n "$calls_file" ]; then cp "$calls_file" "$out/calls.jsonl"; fi
     if [ "$mode" != build-no-file ]; then

@@ -682,7 +682,7 @@ fn another_minor_or_major_is_refused_before_reading() {
     let manifest = String::from_utf8(files.manifest.clone().expect("manifest")).expect("utf-8");
     assert!(manifest.contains(&own), "{manifest}");
     let _own = validate::read(&files, SCHEMA_VERSION).expect("its own version");
-    for schema in ["0.4", "0.6", "1.0"] {
+    for schema in ["0.5", "0.7", "1.0"] {
         files.manifest = Some(
             manifest
                 .replace(&own, &format!("\"schema\":\"{schema}\""))

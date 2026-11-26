@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const FORMAT: &str = "gosanja-diff";
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 4);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 5);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -202,7 +202,7 @@ pub enum Endpoint {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
-#[serde(tag = "rel", rename_all = "lowercase")]
+#[serde(tag = "rel", rename_all = "kebab-case")]
 pub enum RelationKind {
     Ref {
         roles: Vec<RefRole>,
@@ -213,6 +213,8 @@ pub enum RelationKind {
         src: String,
     },
     Implements,
+    ImplSelfType,
+    ImplTrait,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

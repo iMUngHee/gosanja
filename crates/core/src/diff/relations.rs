@@ -2,12 +2,12 @@
 use super::externals::package;
 use crate::validate::{ReadSnapshot, SymbolIndex};
 use gosanja_schema::diff::{Change, Endpoint, Excluded, RelationKind, RelationRow, Sides};
-use gosanja_schema::snapshot::Rel;
+use gosanja_schema::snapshot::{RefRole, Rel};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Whether a snapshot relation's source layer can contribute to the comparison.
 #[must_use]
-pub(super) fn compared(src: &str, excluded: &[Excluded]) -> bool {
+fn compared(src: &str, excluded: &[Excluded]) -> bool {
     !src.strip_prefix("adapter:")
         .and_then(|adapter| adapter.rsplit_once('/'))
         .is_some_and(|(_, layer)| match layer {
@@ -15,6 +15,76 @@ pub(super) fn compared(src: &str, excluded: &[Excluded]) -> bool {
             "calls" => excluded.contains(&Excluded::Calls),
             _ => false,
         })
+}
+
+pub(super) type EffectiveRelations<'a> = BTreeMap<(&'a str, &'a str, RelationKind), u64>;
+
+/// Select relations and recover the base reference buckets when syntax is excluded.
+pub(super) fn effective<'a>(
+    snapshot: &'a ReadSnapshot,
+    excluded: &[Excluded],
+) -> EffectiveRelations<'a> {
+    let mut rows = BTreeMap::new();
+    let without_syntax = excluded.contains(&Excluded::Syntax);
+    for (_, relation) in &snapshot.relations {
+        if !compared(&relation.src, excluded) {
+            continue;
+        }
+        let key = |kind| (relation.from.as_str(), relation.to.as_str(), kind);
+        let kind = match relation.rel {
+            Rel::Ref => {
+                let roles = relation
+                    .roles
+                    .as_ref()
+                    .expect("validated reference has roles");
+                if without_syntax && let Some(derived) = &relation.syntax_import_sites {
+                    let base_roles = roles
+                        .iter()
+                        .copied()
+                        .filter(|role| *role != RefRole::Import);
+                    rows.insert(
+                        key(RelationKind::Ref {
+                            roles: base_roles.collect(),
+                        }),
+                        1,
+                    );
+                    if relation
+                        .sites
+                        .as_ref()
+                        .expect("validated reference has sites")
+                        .len()
+                        == derived.len()
+                    {
+                        continue;
+                    }
+                }
+                rows.insert(
+                    key(RelationKind::Ref {
+                        roles: roles.clone(),
+                    }),
+                    1,
+                );
+                continue;
+            }
+            Rel::Call => RelationKind::Call {
+                mechanism: relation.mechanism.expect("validated call has mechanism"),
+                resolution: relation.resolution.expect("validated call has resolution"),
+                src: relation.src.clone(),
+            },
+            Rel::Implements => RelationKind::Implements,
+            Rel::ImplSelfType => {
+                rows.insert(key(RelationKind::ImplSelfType), 1);
+                continue;
+            }
+            Rel::ImplTrait => {
+                rows.insert(key(RelationKind::ImplTrait), 1);
+                continue;
+            }
+            Rel::Unknown => unreachable!("validated snapshot has known relation kinds"),
+        };
+        *rows.entry(key(kind)).or_default() += 1;
+    }
+    rows
 }
 
 type Identity = (Sides<String>, Sides<String>, RelationKind);
@@ -29,7 +99,7 @@ impl SideRelations {
         snapshot: &ReadSnapshot,
         pairs: &BTreeMap<&str, &str>,
         old: bool,
-        excluded: &[Excluded],
+        effective: &EffectiveRelations<'_>,
         symbols: &SymbolIndex,
     ) -> Self {
         let endpoint = |key: &str| {
@@ -53,27 +123,9 @@ impl SideRelations {
             .collect();
         let mut rows = BTreeSet::new();
         let mut packages = BTreeSet::new();
-        for (_, relation) in &snapshot.relations {
-            if !compared(&relation.src, excluded) {
-                continue;
-            }
-            let kind = match relation.rel {
-                Rel::Ref => RelationKind::Ref {
-                    roles: relation
-                        .roles
-                        .clone()
-                        .expect("validated reference has roles"),
-                },
-                Rel::Call => RelationKind::Call {
-                    mechanism: relation.mechanism.expect("validated call has mechanism"),
-                    resolution: relation.resolution.expect("validated call has resolution"),
-                    src: relation.src.clone(),
-                },
-                Rel::Implements => RelationKind::Implements,
-                Rel::Unknown => unreachable!("validated snapshot has known relation kinds"),
-            };
-            rows.insert((endpoint(&relation.from), endpoint(&relation.to), kind));
-            if let Some(external) = externals.get(relation.to.as_str()) {
+        for (from, to, kind) in effective.keys() {
+            rows.insert((endpoint(from), endpoint(to), kind.clone()));
+            if let Some(external) = externals.get(to) {
                 packages.insert(package(&external.symbol, symbols));
             }
         }
@@ -113,6 +165,8 @@ pub(super) fn order(rows: &mut [RelationRow]) {
             RelationKind::Call { .. } => "call",
             RelationKind::Ref { .. } => "ref",
             RelationKind::Implements => "implements",
+            RelationKind::ImplSelfType => "impl-self-type",
+            RelationKind::ImplTrait => "impl-trait",
         };
         (
             last(&relation.from.old),

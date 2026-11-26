@@ -176,6 +176,14 @@ A call names its callee by the callee's name token. The engine turns it into a `
 call when the index has a reference exactly there. A call whose callee is not a name, such as
 `make()(x)`, is reported without one and becomes an `open-call` gap.
 
+The adapter also reports the written tokens of `use` trees, including re-exports and
+block-local uses. For a positive impl with named members, it reports the direct member
+names, the final path segment of a path-shaped self type and, where present, the final
+segment of the trait path. Macro inputs are opaque. The engine uses exact indexed
+references and member declarations to corroborate those ranges. Indexing with
+`--layers base,syntax` is enough to derive import roles and impl header links even when
+the Cargo probe for test evidence is unavailable.
+
 ## What it cannot see
 
 - **References to packages compiled with different features.** When Cargo builds the same

@@ -1,12 +1,12 @@
 //! Rank alternatives for each removed definition independently.
 use super::{
     entities::lines,
-    relations::compared,
+    relations::EffectiveRelations,
     similarity::{multiset, sequence},
 };
 use crate::validate::ReadSnapshot;
 use gosanja_schema::{
-    diff::{CandidateRow, Excluded, Weights},
+    diff::{CandidateRow, RelationKind, Weights},
     snapshot::{EntityRow, Rel},
 };
 use std::collections::BTreeMap;
@@ -28,7 +28,7 @@ fn definitions<'a>(
     snapshot: &'a ReadSnapshot,
     mapped: &BTreeMap<&'a str, &'a str>,
     old_side: bool,
-    excluded: &[Excluded],
+    effective: &EffectiveRelations<'a>,
 ) -> Vec<Definition<'a>> {
     let entities: BTreeMap<_, _> = snapshot
         .entities
@@ -69,19 +69,23 @@ fn definitions<'a>(
             .get(key)
             .map(|&partner| if old_side { partner } else { key })
     };
-    for (_, relation) in &snapshot.relations {
-        if !compared(&relation.src, excluded) {
-            continue;
-        }
-        if let Some(target) = canonical(&relation.to)
-            && let Some(from) = definitions.get_mut(relation.from.as_str())
+    for (&(from, to, ref kind), &count) in effective {
+        let rel = match kind {
+            RelationKind::Ref { .. } => Rel::Ref,
+            RelationKind::Call { .. } => Rel::Call,
+            RelationKind::Implements => Rel::Implements,
+            RelationKind::ImplSelfType => Rel::ImplSelfType,
+            RelationKind::ImplTrait => Rel::ImplTrait,
+        };
+        if let Some(target) = canonical(to)
+            && let Some(from) = definitions.get_mut(from)
         {
-            *from.outgoing.entry((relation.rel, target)).or_default() += 1;
+            *from.outgoing.entry((rel, target)).or_default() += count;
         }
-        if let Some(source) = canonical(&relation.from)
-            && let Some(to) = definitions.get_mut(relation.to.as_str())
+        if let Some(source) = canonical(from)
+            && let Some(to) = definitions.get_mut(to)
         {
-            *to.incoming.entry((relation.rel, source)).or_default() += 1;
+            *to.incoming.entry((rel, source)).or_default() += count;
         }
     }
     definitions.into_values().collect()
@@ -92,15 +96,15 @@ pub(super) fn rank<'a>(
     new: &'a ReadSnapshot,
     pairs: &BTreeMap<&'a str, &'a str>,
     reverse: &BTreeMap<&'a str, &'a str>,
-    excluded: &[Excluded],
+    effective: (&EffectiveRelations<'a>, &EffectiveRelations<'a>),
     weights: Weights,
 ) -> Vec<CandidateRow> {
     let mut by_kind = BTreeMap::<_, Vec<_>>::new();
-    for row in definitions(new, reverse, false, excluded) {
+    for row in definitions(new, reverse, false, effective.1) {
         by_kind.entry(row.kind).or_default().push(row);
     }
     let mut output = Vec::new();
-    for left in definitions(old, pairs, true, excluded) {
+    for left in definitions(old, pairs, true, effective.0) {
         let Some(added) = by_kind.get(left.kind) else {
             continue;
         };
@@ -184,14 +188,15 @@ mod tests {
         new.entities[2].1.symbol = Some("ra m p 1 renamed.".into());
         new.entities[2].1.name = "cafè".into();
         let paired = BTreeMap::from([("outer", "outer"), ("inner", "inner")]);
-        let removed = definitions(&old, &paired, true, &[]);
+        let effective = EffectiveRelations::new();
+        let removed = definitions(&old, &paired, true, &effective);
         assert_eq!(removed[0].parents, ["library", "reader"]);
         let rows = rank(
             &old,
             &new,
             &paired,
             &paired,
-            &[],
+            (&effective, &effective),
             gosanja_schema::diff::WEIGHTS,
         );
         assert_eq!(rows.len(), 1);
