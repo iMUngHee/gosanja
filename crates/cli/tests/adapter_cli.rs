@@ -512,3 +512,5 @@ fn merged_old_result_after_accepted_describe() {
     );
     assert!(!published);
 }
+
+include!("build/cli.rs");

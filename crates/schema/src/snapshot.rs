@@ -174,6 +174,9 @@ pub enum FileTest {
     Target,
     /// Its name makes it test code.
     File,
+    /// A value from a newer minor.
+    #[serde(other)]
+    Unknown,
 }
 
 /// What makes an entity test code.
@@ -188,6 +191,9 @@ pub enum EntityTest {
     Target,
     /// Its file's name makes it test code.
     File,
+    /// A value from a newer minor.
+    #[serde(other)]
+    Unknown,
 }
 
 impl From<FileTest> for EntityTest {
@@ -196,6 +202,7 @@ impl From<FileTest> for EntityTest {
             FileTest::Cfg => Self::Cfg,
             FileTest::Target => Self::Target,
             FileTest::File => Self::File,
+            FileTest::Unknown => Self::Unknown,
         }
     }
 }
@@ -205,6 +212,7 @@ impl From<crate::contract::ItemTest> for EntityTest {
         match test {
             crate::contract::ItemTest::Attribute => Self::Attribute,
             crate::contract::ItemTest::Cfg => Self::Cfg,
+            crate::contract::ItemTest::Unknown => Self::Unknown,
         }
     }
 }

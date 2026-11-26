@@ -293,7 +293,7 @@ impl OptionalLayer<'_> {
                     Ok((rows, skipped)) => {
                         match self.deferred {
                             Some(deferred) => {
-                                deferred.extend(entry.skipped.iter().flatten().cloned())
+                                deferred.extend(entry.skipped.iter().flatten().cloned());
                             }
                             None => gaps.extend(skipped_files(entry, self.layer, &gap.src)),
                         }
@@ -311,6 +311,74 @@ impl OptionalLayer<'_> {
         });
         gaps.push(gap);
         (LayerState::Failed, vec![])
+    }
+}
+
+/// The optional layers of one run, read in terms of the argument.
+struct Optional {
+    /// The states of `syntax`, `calls` and `build`; `base` is set by the caller.
+    layers: Layers,
+    syntax: Vec<SyntaxFact>,
+    tests: Vec<TestRow>,
+    calls: Vec<CallEvidence>,
+    build: Vec<BuildRow>,
+    build_skipped: Vec<SkippedFile>,
+}
+
+fn read_optional(
+    manifest: &AdapterManifest,
+    acceptance: Acceptance,
+    request: LayerRequest,
+    dir: &Path,
+    result: &AdapterResult,
+    gaps: &mut Vec<GapRow>,
+) -> Optional {
+    let layer = |name, layer, known| OptionalLayer {
+        adapter: &manifest.name,
+        acceptance,
+        name,
+        layer,
+        offered: manifest.layers.contains(&known),
+        requested: request.contains(known),
+        scope: None,
+        deferred: None,
+    };
+    let (syntax_state, lines) = layer("syntax", Layer::Syntax, LayerName::Syntax).read(
+        dir,
+        result,
+        gaps,
+        regular,
+        read_syntax,
+    );
+    let (calls_state, calls) =
+        layer("calls", Layer::Calls, LayerName::Calls).read(dir, result, gaps, regular, read_calls);
+    let mut build_skipped = Vec::new();
+    let (build_state, build) = OptionalLayer {
+        scope: Some(crate::graph::SCOPE),
+        deferred: Some(&mut build_skipped),
+        ..layer("build", Layer::Build, LayerName::Build)
+    }
+    .read(dir, result, gaps, regular, read_build);
+    let mut syntax = Vec::new();
+    let mut tests = Vec::new();
+    for line in lines {
+        match line {
+            SyntaxLine::Fact(fact) => syntax.push(fact),
+            SyntaxLine::Test(test) => tests.push(test),
+        }
+    }
+    Optional {
+        layers: Layers {
+            base: LayerState::Present,
+            syntax: syntax_state,
+            calls: calls_state,
+            build: build_state,
+        },
+        syntax,
+        tests,
+        calls,
+        build,
+        build_skipped,
     }
 }
 
@@ -468,48 +536,14 @@ impl Described {
             &format!("adapter:{}/base", manifest.name),
         )
         .collect();
-        let (syntax_state, lines) = OptionalLayer {
-            adapter: &manifest.name,
+        let optional = read_optional(
+            &manifest,
             acceptance,
-            name: "syntax",
-            layer: Layer::Syntax,
-            offered: manifest.layers.contains(&LayerName::Syntax),
-            requested: request.contains(LayerName::Syntax),
-            scope: None,
-            deferred: None,
-        }
-        .read(dir.path(), &result, &mut gaps, regular, read_syntax);
-        let (calls_state, calls) = OptionalLayer {
-            adapter: &manifest.name,
-            acceptance,
-            name: "calls",
-            layer: Layer::Calls,
-            offered: manifest.layers.contains(&LayerName::Calls),
-            requested: request.contains(LayerName::Calls),
-            scope: None,
-            deferred: None,
-        }
-        .read(dir.path(), &result, &mut gaps, regular, read_calls);
-        let mut build_skipped = Vec::new();
-        let (build_state, build) = OptionalLayer {
-            adapter: &manifest.name,
-            acceptance,
-            name: "build",
-            layer: Layer::Build,
-            offered: manifest.layers.contains(&LayerName::Build),
-            requested: request.contains(LayerName::Build),
-            scope: Some(crate::graph::SCOPE),
-            deferred: Some(&mut build_skipped),
-        }
-        .read(dir.path(), &result, &mut gaps, regular, read_build);
-        let mut syntax = Vec::new();
-        let mut tests = Vec::new();
-        for line in lines {
-            match line {
-                SyntaxLine::Fact(fact) => syntax.push(fact),
-                SyntaxLine::Test(test) => tests.push(test),
-            }
-        }
+            request,
+            dir.path(),
+            &result,
+            &mut gaps,
+        );
         let builds = result.builds.unwrap_or_default();
         let merged = base.merged.clone().unwrap_or_default();
         Ok(AdapterOutput {
@@ -518,15 +552,13 @@ impl Described {
             builds,
             layers: Layers {
                 base: LayerState::Present,
-                syntax: syntax_state,
-                calls: calls_state,
-                build: build_state,
+                ..optional.layers
             },
-            syntax,
-            tests,
-            calls,
-            build,
-            build_skipped,
+            syntax: optional.syntax,
+            tests: optional.tests,
+            calls: optional.calls,
+            build: optional.build,
+            build_skipped: optional.build_skipped,
             merged,
             gaps,
             _directory: dir,

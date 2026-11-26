@@ -1208,3 +1208,5 @@ fn merged_implements_from_a_document_sharing_a_path_without_a_declaration_gives_
         .collect();
     assert!(rows.is_empty(), "{rows:?}");
 }
+
+include!("build/ingest.rs");

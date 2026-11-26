@@ -258,6 +258,9 @@ pub enum ItemTest {
     Attribute,
     /// Its own gate excludes it from every non-test compilation.
     Cfg,
+    /// A value from a newer minor.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A test row of an adapter's `syntax.jsonl`, marked by `"row": "test"`.

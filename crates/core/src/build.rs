@@ -1,6 +1,8 @@
-//! Joins an adapter's build layer to the snapshot: targets to their root entities, file facts to
-//! the admitted documents, and test evidence to entities. The rules are in
-//! `spec/adapter-contract.md` (build.jsonl, How a layer is read) and `spec/snapshot.md`.
+//! Joins an adapter's build layer to the snapshot.
+//!
+//! Targets are joined to their root entities, file facts to the admitted documents, and test
+//! evidence to entities. The rules are in `spec/adapter-contract.md` (build.jsonl, How a layer
+//! is read) and `spec/snapshot.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -207,16 +209,14 @@ fn roots(
             let entity = converted
                 .then(|| resolve(&snapshot.entities, &root.symbol, anchor.as_ref()))
                 .flatten();
-            match entity {
-                Some(key) => row.entity = Some(key),
-                None => {
-                    let mut gap = GapRow::new(GapKind::UnresolvedRoot, src);
-                    gap.layer = Some(Layer::Build);
-                    gap.target = Some(row.key.clone());
-                    gap.anchor.clone_from(&anchor);
-                    gaps.push(gap);
-                }
+            if entity.is_none() {
+                let mut gap = GapRow::new(GapKind::UnresolvedRoot, src);
+                gap.layer = Some(Layer::Build);
+                gap.target = Some(row.key.clone());
+                gap.anchor.clone_from(&anchor);
+                gaps.push(gap);
             }
+            row.entity = entity;
             row.root = Some(TargetRoot {
                 symbol: root.symbol,
                 anchor,

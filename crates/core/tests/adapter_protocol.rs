@@ -833,3 +833,5 @@ mod merged {
         assert_eq!(calls_to_package(&run.snapshot()), 1);
     }
 }
+
+include!("build/protocol.rs");

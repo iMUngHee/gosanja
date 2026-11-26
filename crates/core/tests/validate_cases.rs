@@ -940,3 +940,5 @@ fn decls_a_syntax_row_keyed_to_them_is_reported() {
     });
     assert_eq!(check(&files), [("syntax.jsonl", "syntax-on-decls")]);
 }
+
+include!("build/validate.rs");

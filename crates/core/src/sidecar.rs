@@ -84,9 +84,10 @@ pub fn apply_syntax(
     apply_syntax_and_tests(entities, facts, &[], adapter, column, gaps).0
 }
 
-/// [`apply_syntax`], with the layer's test rows: they pass the same phases among themselves
-/// (shape, anchors, one row per definition) and become the test evidence of their entities,
-/// keyed by entity key, never a syntax row.
+/// [`apply_syntax`], with the layer's test rows.
+///
+/// Test rows pass the same phases among themselves (shape, anchors, one row per definition)
+/// and become the test evidence of their entities, keyed by entity key, never a syntax row.
 pub fn apply_syntax_and_tests(
     entities: &mut [EntityRow],
     facts: &[SyntaxFact],
