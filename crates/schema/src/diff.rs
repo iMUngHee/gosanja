@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const FORMAT: &str = "gosanja-diff";
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 3);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 4);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -180,8 +180,10 @@ pub enum ExternalRow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Copy, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum Excluded {
+    Build,
     Calls,
     Syntax,
+    Test,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Copy, PartialOrd, Ord)]

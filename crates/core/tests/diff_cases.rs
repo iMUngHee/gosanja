@@ -454,6 +454,7 @@ fn package_snapshot(name: &str, sites: usize) -> gosanja_core::graph::Snapshot {
                 base: Present,
                 syntax: Absent,
                 calls: Absent,
+                build: Absent,
             },
             builds: vec![],
         },
@@ -463,6 +464,7 @@ fn package_snapshot(name: &str, sites: usize) -> gosanja_core::graph::Snapshot {
         relations: vec![],
         syntax: vec![],
         gaps: vec![],
+        targets: vec![],
         dropped_local_references: 0,
     }
 }

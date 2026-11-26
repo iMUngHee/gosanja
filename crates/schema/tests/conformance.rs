@@ -155,6 +155,7 @@ fn entity(key: &str) -> EntityRow {
             body_src: Some("scip:rust-analyzer".into()),
         }),
         decls: None,
+        test: None,
         src: "scip:rust-analyzer".into(),
     }
 }
@@ -202,6 +203,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
                 base: LayerState::Present,
                 syntax: LayerState::Failed,
                 calls: LayerState::Absent,
+                build: LayerState::NotRequested,
             },
             builds: vec![build("debug-default")],
         }],
@@ -212,6 +214,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
             relations: 7,
             syntax: 1,
             gaps: 2,
+            targets: 0,
             dropped_local_references: 4,
         },
     };
@@ -223,6 +226,9 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
         bytes: 612,
         lines: 33,
         sha256: "0".repeat(64),
+        targets: None,
+        test: None,
+        constraint: None,
     };
     schemas.assert_valid("file", &to_value(&file));
 
@@ -239,6 +245,7 @@ fn manifest_file_and_entity_rows_pass_their_schemas() {
         member_of: None,
         def: None,
         decls: None,
+        test: None,
         src: "core:containment".into(),
     };
     schemas.assert_valid("entity", &to_value(&container));
@@ -347,9 +354,15 @@ fn build_rows_pass_their_schema() {
     schemas.assert_valid("build", &target);
     schemas.assert_valid("build", &json!({"row": "target", "key": "gomod:m:m/p:package", "kind": "package", "name": "p", "root": {"symbol": "scip-go gomod m v1 `m/p`/"}}));
     schemas.assert_valid("build", &json!({"row": "file", "file": "src/lib.rs", "targets": ["cargo:demo:lib:demo"], "test": "target", "constraint": "//go:build linux"}));
-    for only in [json!({"targets": ["k"]}), json!({"test": "cfg"}), json!({"constraint": ""})] {
+    for only in [
+        json!({"targets": ["k"]}),
+        json!({"test": "cfg"}),
+        json!({"constraint": ""}),
+    ] {
         let mut row = json!({"row": "file", "file": "a.go"});
-        row.as_object_mut().unwrap().extend(only.as_object().unwrap().clone());
+        row.as_object_mut()
+            .unwrap()
+            .extend(only.as_object().unwrap().clone());
         schemas.assert_valid("build", &row);
     }
     for bad in [
@@ -370,8 +383,14 @@ fn build_rows_pass_their_schema() {
         schemas.assert_invalid("build", &bad);
     }
     let long = "k".repeat(1025);
-    schemas.assert_invalid("build", &json!({"row": "target", "key": long, "kind": "lib", "name": "demo"}));
-    schemas.assert_valid("build", &json!({"row": "target", "key": "k".repeat(1024), "kind": "lib", "name": "demo"}));
+    schemas.assert_invalid(
+        "build",
+        &json!({"row": "target", "key": long, "kind": "lib", "name": "demo"}),
+    );
+    schemas.assert_valid(
+        "build",
+        &json!({"row": "target", "key": "k".repeat(1024), "kind": "lib", "name": "demo"}),
+    );
 }
 
 #[test]
@@ -391,7 +410,10 @@ fn test_rows_pass_their_schema() {
     ] {
         schemas.assert_invalid("syntax-fact", &bad);
     }
-    schemas.assert_valid("syntax-fact", &json!({"anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "attributes": ["test"]}));
+    schemas.assert_valid(
+        "syntax-fact",
+        &json!({"anchor": {"file": "src/lib.rs", "line": 3, "col": 7}, "attributes": ["test"]}),
+    );
 }
 
 #[test]
@@ -426,7 +448,10 @@ fn file_build_fields_pass_their_schema() {
     let plain = json!({"path": "src/lib.rs", "language": "rust", "bytes": 3, "lines": 1, "sha256": "0".repeat(64)});
     schemas.assert_valid("file", &plain);
     for (field, value) in [
-        ("targets", json!(["cargo:demo:lib:demo", "cargo:demo:test:it"])),
+        (
+            "targets",
+            json!(["cargo:demo:lib:demo", "cargo:demo:test:it"]),
+        ),
         ("test", json!("cfg")),
         ("test", json!("target")),
         ("test", json!("file")),
@@ -584,8 +609,8 @@ fn every_gap_kind_passes_its_schema() {
 
 #[test]
 fn the_interfaces_are_at_their_current_versions() {
-    assert_eq!(CONTRACT_VERSION.to_string(), "0.4");
-    assert_eq!(SCHEMA_VERSION.to_string(), "0.4");
+    assert_eq!(CONTRACT_VERSION.to_string(), "0.5");
+    assert_eq!(SCHEMA_VERSION.to_string(), "0.5");
     assert_eq!(
         gosanja_schema::diff::SCHEMA_VERSION.to_string(),
         DIFF_SCHEMA
@@ -597,7 +622,7 @@ fn the_interfaces_are_at_their_current_versions() {
 #[test]
 fn only_optional_layers_may_be_not_requested() {
     let schemas = Schemas::load();
-    let layers = |base: &str, syntax: &str, calls: &str| json!({"base": base, "syntax": syntax, "calls": calls});
+    let layers = |base: &str, syntax: &str, calls: &str| json!({"base": base, "syntax": syntax, "calls": calls, "build": "not-requested"});
     let snapshot = |layers: Value| {
         json!({
             "format": FORMAT,
@@ -606,7 +631,7 @@ fn only_optional_layers_may_be_not_requested() {
             "project": {"name": "demo"},
             "scopes": [{"path": ".", "indexers": [], "layers": layers, "builds": []}],
             "counts": {"files": 0, "entities": 0, "externals": 0, "relations": 0,
-                       "syntax": 0, "gaps": 0, "dropped_local_references": 0}
+                       "syntax": 0, "gaps": 0, "targets": 0, "dropped_local_references": 0}
         })
     };
     let side = |layers: Value| {
@@ -616,7 +641,7 @@ fn only_optional_layers_may_be_not_requested() {
             "layers": layers,
             "builds": [],
             "counts": {"files": 0, "entities": 0, "externals": 0, "relations": 0,
-                       "syntax": 0, "gaps": 0, "dropped_local_references": 0},
+                       "syntax": 0, "gaps": 0, "targets": 0, "dropped_local_references": 0},
             "gaps": {}
         })
     };
@@ -645,7 +670,13 @@ fn only_optional_layers_may_be_not_requested() {
         layers("present", "not-requested", "not-requested"),
         layers("failed", "not-requested", "absent"),
     ];
+    let mut without_build = layers("present", "present", "present");
+    without_build.as_object_mut().unwrap().remove("build");
+    let mut build_skipped = layers("present", "present", "present");
+    build_skipped["build"] = json!("skipped");
     let refused = [
+        without_build,
+        build_skipped,
         layers("not-requested", "present", "present"),
         layers("present", "skipped", "present"),
         layers("present", "present", "requested"),
@@ -980,7 +1011,7 @@ fn only_a_call_node_names_a_callee_and_it_may_omit_it() {
 
 /// The marker and the schema version of a diff, as `spec/diff.md` states them.
 const DIFF_FORMAT: &str = "gosanja-diff";
-const DIFF_SCHEMA: &str = "0.3";
+const DIFF_SCHEMA: &str = "0.4";
 
 #[test]
 fn diff_schema_version_accepts_0_3_and_refuses_0_2() {

@@ -5,10 +5,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::position::{PositionEncoding, Range};
-use crate::snapshot::{BuildContext, Mechanism, OutlineNode, Resolution, Tool};
+use crate::snapshot::{
+    BuildContext, FileTest, Mechanism, OutlineNode, Resolution, TargetRoot, Tool,
+};
 
 /// Adapter contract version this crate reads and writes.
-pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 4);
+pub const CONTRACT_VERSION: crate::compat::Version = crate::compat::Version::new(0, 5);
 
 /// File name of the result an adapter writes into its output directory.
 pub const RESULT_FILE: &str = "result.json";
@@ -23,6 +25,8 @@ pub enum LayerName {
     Syntax,
     /// Call evidence.
     Calls,
+    /// Build targets, file membership and file-level test code.
+    Build,
     /// A value from a newer minor.
     #[serde(other)]
     Unknown,
@@ -36,6 +40,7 @@ impl LayerName {
             Self::Base => "base",
             Self::Syntax => "syntax",
             Self::Calls => "calls",
+            Self::Build => "build",
             Self::Unknown => "unknown",
         }
     }
@@ -46,6 +51,7 @@ impl LayerName {
 pub struct LayerRequest {
     syntax: bool,
     calls: bool,
+    build: bool,
 }
 
 impl LayerRequest {
@@ -53,6 +59,7 @@ impl LayerRequest {
     pub const ALL: Self = Self {
         syntax: true,
         calls: true,
+        build: true,
     };
 
     /// Check whether the request includes this layer.
@@ -62,15 +69,21 @@ impl LayerRequest {
             LayerName::Base => true,
             LayerName::Syntax => self.syntax,
             LayerName::Calls => self.calls,
+            LayerName::Build => self.build,
             LayerName::Unknown => false,
         }
     }
 
     /// Requested layers in protocol argument order.
     pub fn iter(self) -> impl Iterator<Item = LayerName> {
-        [LayerName::Base, LayerName::Syntax, LayerName::Calls]
-            .into_iter()
-            .filter(move |&layer| self.contains(layer))
+        [
+            LayerName::Base,
+            LayerName::Syntax,
+            LayerName::Calls,
+            LayerName::Build,
+        ]
+        .into_iter()
+        .filter(move |&layer| self.contains(layer))
     }
 }
 
@@ -82,12 +95,14 @@ impl std::str::FromStr for LayerRequest {
         let mut request = Self {
             syntax: false,
             calls: false,
+            build: false,
         };
         for name in list.split(',') {
             let selected = match name {
                 "base" => &mut base,
                 "syntax" => &mut request.syntax,
                 "calls" => &mut request.calls,
+                "build" => &mut request.build,
                 _ => return Err(format!("unknown layer {name:?}")),
             };
             if *selected {
@@ -235,6 +250,106 @@ pub struct SyntaxFact {
     pub outline: Option<Vec<OutlineNode>>,
 }
 
+/// The evidence a test row gives for its definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ItemTest {
+    /// The language's built-in test or benchmark, proven at its expansion site.
+    Attribute,
+    /// Its own gate excludes it from every non-test compilation.
+    Cfg,
+}
+
+/// A test row of an adapter's `syntax.jsonl`, marked by `"row": "test"`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestRow {
+    /// Always `test`.
+    pub row: String,
+    /// The definition the evidence is about.
+    pub anchor: Anchor,
+    /// The evidence.
+    pub test: ItemTest,
+}
+
+/// One line of an adapter's `syntax.jsonl`: a syntax row or a test row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyntaxLine {
+    /// Syntactic facts about a definition.
+    Fact(SyntaxFact),
+    /// Test evidence about a definition.
+    Test(TestRow),
+}
+
+impl Serialize for SyntaxLine {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Fact(fact) => fact.serialize(serializer),
+            Self::Test(test) => test.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SyntaxLine {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.get("row").is_some() {
+            serde_json::from_value(value)
+                .map(Self::Test)
+                .map_err(serde::de::Error::custom)
+        } else {
+            serde_json::from_value(value)
+                .map(Self::Fact)
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+/// A row of an adapter's `build.jsonl`, told apart by `row`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "row", rename_all = "kebab-case")]
+pub enum BuildRow {
+    /// A build target.
+    Target(TargetFact),
+    /// Build facts of one source file.
+    File(FileFact),
+}
+
+/// A build target as an adapter states it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetFact {
+    /// Unique in the layer.
+    pub key: String,
+    /// Lower-case word from an open set.
+    pub kind: String,
+    /// The adapter's name for the target.
+    pub name: String,
+    /// The target's root, when the adapter can name one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<TargetRoot>,
+    /// Features the target needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_features: Option<Vec<String>>,
+    /// Set when the target is built only for tests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<bool>,
+}
+
+/// Build facts of one source file as an adapter states them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileFact {
+    /// Path relative to the scope root.
+    pub file: String,
+    /// Targets proven to include the file, sorted, distinct.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<String>>,
+    /// Every compilation that read the file was a test compilation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<FileTest>,
+    /// The file's build constraint as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraint: Option<String>,
+}
+
 /// A row of an adapter's `calls.jsonl`: one observation of a call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallEvidence {
@@ -275,11 +390,12 @@ mod tests {
             LayerName::Base,
             LayerName::Syntax,
             LayerName::Calls,
+            LayerName::Build,
             LayerName::Unknown,
         ];
         assert_eq!(
             layers.map(LayerName::as_str),
-            ["base", "syntax", "calls", "unknown"]
+            ["base", "syntax", "calls", "build", "unknown"]
         );
         for layer in layers {
             assert_eq!(serde_json::to_value(layer).unwrap(), layer.as_str());
@@ -296,6 +412,16 @@ mod tests {
                 "calls,syntax,base",
                 &[LayerName::Base, LayerName::Syntax, LayerName::Calls][..],
             ),
+            ("build,base", &[LayerName::Base, LayerName::Build][..]),
+            (
+                "build,calls,syntax,base",
+                &[
+                    LayerName::Base,
+                    LayerName::Syntax,
+                    LayerName::Calls,
+                    LayerName::Build,
+                ][..],
+            ),
         ] {
             let request = list.parse::<LayerRequest>().unwrap();
             assert_eq!(request.iter().collect::<Vec<_>>(), expected);
@@ -303,12 +429,13 @@ mod tests {
         }
         assert_eq!(
             LayerRequest::ALL,
-            "base,syntax,calls".parse::<LayerRequest>().unwrap()
+            "base,syntax,calls,build".parse::<LayerRequest>().unwrap()
         );
         for list in [
             "syntax",
             "base,base",
             "base,graph",
+            "base,build,build",
             "base,",
             "base, syntax",
             "",

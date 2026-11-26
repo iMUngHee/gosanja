@@ -165,6 +165,9 @@ fn compare_rows(
             || present(old) != present(new)
     };
     let mut excluded = Vec::new();
+    if present(old_scope.layers.build) || present(new_scope.layers.build) {
+        excluded.push(Excluded::Build);
+    }
     let old_calls = present(old_scope.layers.calls);
     let new_calls = present(new_scope.layers.calls);
     if not_comparable(old_scope.layers.calls, new_scope.layers.calls)
@@ -183,6 +186,13 @@ fn compare_rows(
     }
     if not_comparable(old_scope.layers.syntax, new_scope.layers.syntax) {
         excluded.push(Excluded::Syntax);
+    }
+    let marked = |snapshot: &ReadSnapshot| {
+        snapshot.entities.iter().any(|(_, e)| e.test.is_some())
+            || snapshot.files.iter().any(|(_, f)| f.test.is_some())
+    };
+    if marked(old_snapshot) || marked(new_snapshot) {
+        excluded.push(Excluded::Test);
     }
     let pairs = pair::pairs(old_snapshot, new_snapshot, old_symbols, new_symbols);
     let reverse = pairs.iter().map(|(&old, &new)| (new, old)).collect();

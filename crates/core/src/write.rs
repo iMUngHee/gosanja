@@ -110,7 +110,7 @@ pub fn enum_name<T: Serialize>(value: &T) -> String {
     }
 }
 
-/// The seven files of a snapshot as bytes; `None` for a file that is not there.
+/// The eight files of a snapshot as bytes; `None` for a file that is not there.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SnapshotFiles {
     /// `manifest.json`.
@@ -125,6 +125,8 @@ pub struct SnapshotFiles {
     pub relations: Option<Vec<u8>>,
     /// `syntax.jsonl`.
     pub syntax: Option<Vec<u8>>,
+    /// `targets.jsonl`.
+    pub targets: Option<Vec<u8>>,
     /// `gaps.jsonl`.
     pub gaps: Option<Vec<u8>>,
     /// Files that are there and could not be read, with the reason.
@@ -134,7 +136,7 @@ pub struct SnapshotFiles {
 impl SnapshotFiles {
     /// File names in the order the specification lists them, with their contents.
     #[must_use]
-    pub fn named(&self) -> [(&'static str, Option<&[u8]>); 7] {
+    pub fn named(&self) -> [(&'static str, Option<&[u8]>); 8] {
         [
             ("manifest.json", self.manifest.as_deref()),
             ("files.jsonl", self.files.as_deref()),
@@ -142,11 +144,12 @@ impl SnapshotFiles {
             ("externals.jsonl", self.externals.as_deref()),
             ("relations.jsonl", self.relations.as_deref()),
             ("syntax.jsonl", self.syntax.as_deref()),
+            ("targets.jsonl", self.targets.as_deref()),
             ("gaps.jsonl", self.gaps.as_deref()),
         ]
     }
 
-    /// Reads the seven files of the snapshot at `dir`: [`Self::read_manifest`], then
+    /// Reads the eight files of the snapshot at `dir`: [`Self::read_manifest`], then
     /// [`Self::read_tables`].
     #[must_use]
     pub fn read(dir: &Path) -> Self {
@@ -165,7 +168,7 @@ impl SnapshotFiles {
         files
     }
 
-    /// Reads the six tables of the snapshot at `dir`, as [`Self::read_manifest`] reads the
+    /// Reads the seven tables of the snapshot at `dir`, as [`Self::read_manifest`] reads the
     /// manifest. Reading again replaces what an earlier read said about the tables and keeps
     /// what was said about the manifest.
     pub fn read_tables(&mut self, dir: &Path) {
@@ -176,6 +179,7 @@ impl SnapshotFiles {
         self.externals = read_file(dir, "externals.jsonl", unreadable);
         self.relations = read_file(dir, "relations.jsonl", unreadable);
         self.syntax = read_file(dir, "syntax.jsonl", unreadable);
+        self.targets = read_file(dir, "targets.jsonl", unreadable);
         self.gaps = read_file(dir, "gaps.jsonl", unreadable);
     }
 }
@@ -195,7 +199,7 @@ fn read_file(
     }
 }
 
-/// Writes the seven files of `snapshot` into the existing directory `dir`.
+/// Writes the eight files of `snapshot` into the existing directory `dir`.
 ///
 /// # Errors
 ///
@@ -303,6 +307,7 @@ pub fn serialise(snapshot: &Snapshot) -> SnapshotFiles {
     let externals = table(&snapshot.externals, |r| vec![Some(r.key.clone())]);
     let relations = table(&snapshot.relations, relation_order);
     let syntax = table(&snapshot.syntax, |r| vec![Some(r.key.clone())]);
+    let targets = table(&snapshot.targets, |r| vec![Some(r.key.clone())]);
     let gaps = table(&snapshot.gaps, gap_order);
     let mut scope = snapshot.scope.clone();
     scope.indexers.sort();
@@ -324,6 +329,7 @@ pub fn serialise(snapshot: &Snapshot) -> SnapshotFiles {
             relations: relations.1,
             syntax: syntax.1,
             gaps: gaps.1,
+            targets: targets.1,
             dropped_local_references: snapshot.dropped_local_references,
         },
     };
@@ -336,6 +342,7 @@ pub fn serialise(snapshot: &Snapshot) -> SnapshotFiles {
         externals: Some(externals.0),
         relations: Some(relations.0),
         syntax: Some(syntax.0),
+        targets: Some(targets.0),
         gaps: Some(gaps.0),
         unreadable: Vec::new(),
     }

@@ -630,7 +630,7 @@ fn newer_minor_snapshot() -> SnapshotFiles {
     };
     SnapshotFiles {
         manifest: Some(
-            br#"{"format":"gosanja-snapshot","schema":"1.1","tool":{"name":"gosanja","version":"9"},"project":{"name":"p"},"scopes":[],"counts":{"files":0,"entities":3,"externals":0,"relations":2,"syntax":0,"gaps":0,"dropped_local_references":0},"new":1}"#
+            br#"{"format":"gosanja-snapshot","schema":"1.1","tool":{"name":"gosanja","version":"9"},"project":{"name":"p"},"scopes":[],"counts":{"files":0,"entities":3,"externals":0,"relations":2,"syntax":0,"gaps":0,"targets":0,"dropped_local_references":0},"new":1}"#
                 .to_vec(),
         ),
         files: Some(Vec::new()),
@@ -645,6 +645,7 @@ fn newer_minor_snapshot() -> SnapshotFiles {
             r#"{"from":"m:p:a/","to":"m:p:a/","rel":"teleports","sites":[],"src":"core:reference-in-body"}"#,
         ]),
         syntax: Some(Vec::new()),
+        targets: Some(Vec::new()),
         gaps: Some(Vec::new()),
         unreadable: Vec::new(),
     }
@@ -681,7 +682,7 @@ fn another_minor_or_major_is_refused_before_reading() {
     let manifest = String::from_utf8(files.manifest.clone().expect("manifest")).expect("utf-8");
     assert!(manifest.contains(&own), "{manifest}");
     let _own = validate::read(&files, SCHEMA_VERSION).expect("its own version");
-    for schema in ["0.3", "0.5", "1.0"] {
+    for schema in ["0.4", "0.6", "1.0"] {
         files.manifest = Some(
             manifest
                 .replace(&own, &format!("\"schema\":\"{schema}\""))

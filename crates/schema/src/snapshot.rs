@@ -10,7 +10,7 @@ use crate::position::{Range, Site};
 pub const FORMAT: &str = "gosanja-snapshot";
 
 /// Snapshot schema version this crate reads and writes.
-pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 4);
+pub const SCHEMA_VERSION: crate::compat::Version = crate::compat::Version::new(0, 5);
 
 /// `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,7 +69,7 @@ pub struct AdapterInfo {
     pub contract: String,
 }
 
-/// State of the three layers of a scope.
+/// State of the four layers of a scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Layers {
     /// Definitions, references and relationships.
@@ -78,6 +78,8 @@ pub struct Layers {
     pub syntax: LayerState,
     /// Call evidence.
     pub calls: LayerState,
+    /// Build targets, file membership and file-level test code.
+    pub build: LayerState,
 }
 
 /// Whether a layer contributed to the snapshot.
@@ -131,6 +133,8 @@ pub struct Counts {
     pub syntax: u64,
     /// Rows of `gaps.jsonl`.
     pub gaps: u64,
+    /// Rows of `targets.jsonl`.
+    pub targets: u64,
     /// References to local symbols, which are not recorded.
     pub dropped_local_references: u64,
 }
@@ -149,6 +153,97 @@ pub struct FileRow {
     pub lines: u64,
     /// SHA-256 of the file's bytes, 64 hex digits.
     pub sha256: String,
+    /// Targets the build layer proved include the file, sorted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<String>>,
+    /// The file is test code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<FileTest>,
+    /// The file's build constraint as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraint: Option<String>,
+}
+
+/// What makes a file test code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FileTest {
+    /// A test configuration of another target compiled it.
+    Cfg,
+    /// Every compilation that read it belongs to a test or bench target.
+    Target,
+    /// Its name makes it test code.
+    File,
+}
+
+/// What makes an entity test code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EntityTest {
+    /// The language's built-in test or benchmark.
+    Attribute,
+    /// A gate, its own or its file's.
+    Cfg,
+    /// Its file belongs only to test or bench targets.
+    Target,
+    /// Its file's name makes it test code.
+    File,
+}
+
+impl From<FileTest> for EntityTest {
+    fn from(test: FileTest) -> Self {
+        match test {
+            FileTest::Cfg => Self::Cfg,
+            FileTest::Target => Self::Target,
+            FileTest::File => Self::File,
+        }
+    }
+}
+
+impl From<crate::contract::ItemTest> for EntityTest {
+    fn from(test: crate::contract::ItemTest) -> Self {
+        match test {
+            crate::contract::ItemTest::Attribute => Self::Attribute,
+            crate::contract::ItemTest::Cfg => Self::Cfg,
+        }
+    }
+}
+
+/// A target's root: a SCIP symbol, with an anchor when the symbol alone does not choose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetRoot {
+    /// A global SCIP symbol.
+    pub symbol: String,
+    /// The root's declaration site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<crate::contract::Anchor>,
+}
+
+/// A row of `targets.jsonl`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetRow {
+    /// The `path` of the scope whose build layer wrote the row.
+    pub scope: String,
+    /// Unique in the snapshot.
+    pub key: String,
+    /// Lower-case word from an open set.
+    pub kind: String,
+    /// The adapter's name for the target.
+    pub name: String,
+    /// The root, with its anchor in snapshot coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<TargetRoot>,
+    /// The entity the root resolved to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    /// Features the target needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_features: Option<Vec<String>>,
+    /// Set when the target is built only for tests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<bool>,
+    /// Provenance.
+    pub src: String,
 }
 
 /// What a definition is, as far as the core distinguishes.
@@ -206,6 +301,9 @@ pub struct EntityRow {
     /// by file and name range; present instead of `def`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decls: Option<Vec<Decl>>,
+    /// The entity is test code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<EntityTest>,
     /// Provenance.
     pub src: String,
 }
@@ -471,6 +569,8 @@ pub enum Layer {
     Syntax,
     /// Call evidence.
     Calls,
+    /// Build targets and file facts.
+    Build,
     /// A value from a newer minor.
     #[serde(other)]
     Unknown,
@@ -510,6 +610,10 @@ pub enum GapKind {
     UnknownValue,
     /// A layer reported a file it could not process.
     SkippedFile,
+    /// A target's root did not resolve to an entity.
+    UnresolvedRoot,
+    /// The build layer named a file that is not an admitted document.
+    UnknownFile,
     /// A value from a newer minor.
     #[serde(other)]
     Unrecognised,
@@ -552,6 +656,12 @@ pub struct GapRow {
     /// Layer the gap concerns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer: Option<Layer>,
+    /// The scope a build-layer outcome gap belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// The target the gap concerns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     /// The anchor as the adapter gave it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<crate::contract::Anchor>,
@@ -576,6 +686,8 @@ impl GapRow {
             count: None,
             keys: None,
             layer: None,
+            scope: None,
+            target: None,
             anchor: None,
             code: None,
             detail: None,

@@ -10,8 +10,9 @@ use std::{
 use gosanja_schema::{
     compat::{self, Acceptance, RowVerdict, Version},
     contract::{
-        AdapterManifest, AdapterResult, CONTRACT_VERSION, CallEvidence, LayerName, LayerRequest,
-        LayerResult, LayerStatus, RESULT_FILE, SyntaxFact,
+        AdapterManifest, AdapterResult, BuildRow, CONTRACT_VERSION, CallEvidence, LayerName,
+        LayerRequest, LayerResult, LayerStatus, RESULT_FILE, SkippedFile, SyntaxFact, SyntaxLine,
+        TestRow,
     },
     snapshot::{BuildContext, FailedDetail, GapKind, GapRow, Layer, LayerState, Layers},
 };
@@ -30,7 +31,14 @@ pub struct AdapterOutput {
     pub builds: Vec<BuildContext>,
     pub layers: Layers,
     pub syntax: Vec<SyntaxFact>,
+    /// Test rows of the syntax layer, apart from its syntax rows.
+    pub tests: Vec<TestRow>,
     pub calls: Vec<CallEvidence>,
+    /// Rows of the build layer, read and shape-checked, not yet joined.
+    pub build: Vec<BuildRow>,
+    /// The build entry's `skipped`, which the build layer's phases judge before any of it
+    /// becomes a gap.
+    pub build_skipped: Vec<SkippedFile>,
     /// Symbols the base layer states are declared at several sites (`merged`).
     pub merged: Vec<String>,
     pub gaps: Vec<GapRow>,
@@ -183,20 +191,31 @@ fn read_rows<T: DeserializeOwned>(
     }
 }
 
-/// Reads syntax facts and returns the count skipped under the compatibility policy.
+/// Reads the syntax and test rows of `syntax.jsonl` and returns the count skipped under the
+/// compatibility policy.
 ///
 /// # Errors
 /// An invalid row or stream invalidates the whole layer.
 pub fn read_syntax(
     reader: impl BufRead,
     acceptance: Acceptance,
-) -> io::Result<(Vec<SyntaxFact>, u64)> {
-    read_rows(
-        reader,
-        Schema::SyntaxFact,
-        acceptance,
-        crate::sidecar::valid_ranges,
-    )
+) -> io::Result<(Vec<SyntaxLine>, u64)> {
+    read_rows(reader, Schema::SyntaxFact, acceptance, |line| match line {
+        SyntaxLine::Fact(fact) => crate::sidecar::valid_ranges(fact),
+        SyntaxLine::Test(_) => true,
+    })
+}
+
+/// Reads the rows of `build.jsonl` and returns the count skipped under the compatibility
+/// policy.
+///
+/// # Errors
+/// An invalid row or stream invalidates the whole layer.
+pub fn read_build(
+    reader: impl BufRead,
+    acceptance: Acceptance,
+) -> io::Result<(Vec<BuildRow>, u64)> {
+    read_rows(reader, Schema::Build, acceptance, |_| true)
 }
 
 /// Reads compiler call observations and returns the count skipped under the compatibility policy.
@@ -228,11 +247,16 @@ struct OptionalLayer<'a> {
     layer: Layer,
     offered: bool,
     requested: bool,
+    /// The scope a build-layer outcome gap names; `None` for the other layers.
+    scope: Option<&'a str>,
+    /// Where the entry's `skipped` goes when the layer's own phases judge it before it
+    /// becomes a gap; `None` turns it into gaps at once.
+    deferred: Option<&'a mut Vec<SkippedFile>>,
 }
 
 impl OptionalLayer<'_> {
     fn read<T: DeserializeOwned>(
-        &self,
+        self,
         dir: &Path,
         result: &AdapterResult,
         gaps: &mut Vec<GapRow>,
@@ -247,6 +271,7 @@ impl OptionalLayer<'_> {
             format!("adapter:{}/{}", self.adapter, self.name),
         );
         gap.layer = Some(self.layer);
+        gap.scope = self.scope.map(str::to_owned);
         if !self.offered {
             gap.gap = GapKind::MissingLayer;
             gaps.push(gap);
@@ -266,7 +291,13 @@ impl OptionalLayer<'_> {
                 Err(_) => FailedDetail::FileMissing,
                 Ok(file) => match read(BufReader::new(file), self.acceptance) {
                     Ok((rows, skipped)) => {
-                        gaps.extend(skipped_files(entry, self.layer, &gap.src));
+                        match self.deferred {
+                            Some(deferred) => {
+                                deferred.extend(entry.skipped.iter().flatten().cloned())
+                            }
+                            None => gaps.extend(skipped_files(entry, self.layer, &gap.src)),
+                        }
+                        gap.scope = None;
                         if skipped > 0 {
                             gap.gap = GapKind::UnknownValue;
                             gap.count = Some(skipped);
@@ -437,13 +468,15 @@ impl Described {
             &format!("adapter:{}/base", manifest.name),
         )
         .collect();
-        let (syntax_state, syntax) = OptionalLayer {
+        let (syntax_state, lines) = OptionalLayer {
             adapter: &manifest.name,
             acceptance,
             name: "syntax",
             layer: Layer::Syntax,
             offered: manifest.layers.contains(&LayerName::Syntax),
             requested: request.contains(LayerName::Syntax),
+            scope: None,
+            deferred: None,
         }
         .read(dir.path(), &result, &mut gaps, regular, read_syntax);
         let (calls_state, calls) = OptionalLayer {
@@ -453,8 +486,30 @@ impl Described {
             layer: Layer::Calls,
             offered: manifest.layers.contains(&LayerName::Calls),
             requested: request.contains(LayerName::Calls),
+            scope: None,
+            deferred: None,
         }
         .read(dir.path(), &result, &mut gaps, regular, read_calls);
+        let mut build_skipped = Vec::new();
+        let (build_state, build) = OptionalLayer {
+            adapter: &manifest.name,
+            acceptance,
+            name: "build",
+            layer: Layer::Build,
+            offered: manifest.layers.contains(&LayerName::Build),
+            requested: request.contains(LayerName::Build),
+            scope: Some(crate::graph::SCOPE),
+            deferred: Some(&mut build_skipped),
+        }
+        .read(dir.path(), &result, &mut gaps, regular, read_build);
+        let mut syntax = Vec::new();
+        let mut tests = Vec::new();
+        for line in lines {
+            match line {
+                SyntaxLine::Fact(fact) => syntax.push(fact),
+                SyntaxLine::Test(test) => tests.push(test),
+            }
+        }
         let builds = result.builds.unwrap_or_default();
         let merged = base.merged.clone().unwrap_or_default();
         Ok(AdapterOutput {
@@ -465,9 +520,13 @@ impl Described {
                 base: LayerState::Present,
                 syntax: syntax_state,
                 calls: calls_state,
+                build: build_state,
             },
             syntax,
+            tests,
             calls,
+            build,
+            build_skipped,
             merged,
             gaps,
             _directory: dir,
@@ -495,6 +554,8 @@ mod tests {
             requested: true,
             acceptance: Acceptance::SkipUnknown,
             adapter: "fake",
+            scope: None,
+            deferred: None,
         };
         let future = r#"{"anchor":{"file":"x","line":0,"col":0},"outline":[{"k":"future","range":[0,0,0,1]}]}"#;
         let known = r#"{"anchor":{"file":"x","line":0,"col":0}}"#;
@@ -502,6 +563,16 @@ mod tests {
         let mut gaps = Vec::new();
         let (state, rows) = layer.read(dir.path(), &result, &mut gaps, regular, read_syntax);
         assert_eq!((state, rows.len()), (LayerState::Present, 1));
+        let layer = OptionalLayer {
+            name: "syntax",
+            layer: Layer::Syntax,
+            offered: true,
+            requested: true,
+            acceptance: Acceptance::SkipUnknown,
+            adapter: "fake",
+            scope: None,
+            deferred: None,
+        };
         assert_eq!(gaps.len(), 2);
         assert!(
             gaps.iter()
@@ -544,6 +615,8 @@ mod tests {
                 layer: Layer::Syntax,
                 offered: true,
                 requested,
+                scope: None,
+                deferred: None,
             }
             .read(
                 dir.path(),

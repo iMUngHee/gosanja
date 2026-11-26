@@ -4,7 +4,10 @@ mode=${GOSANJA_FAKE_MODE:-good}
 name=fake
 version_json='"1"'
 languages='["rust"]'
-layers='["base","syntax","calls"]'
+layers=''
+contract_version=0.5
+build_file=''
+build_entry=''
 encoding=utf-8
 markers=''
 requires=''
@@ -30,10 +33,21 @@ while [ "$#" -ge 2 ]; do
         --syntax-file) syntax_file=$2 ;;
         --calls-file) calls_file=$2 ;;
         --merged) merged=$2 ;;
+        --contract) contract_version=$2 ;;
+        --build-file) build_file=$2 ;;
+        --build-entry) build_entry=$2 ;;
         *) break ;;
     esac
     shift 2
 done
+# A 0.4 adapter knew no build layer: it offers none, and still writes the build files below.
+if [ -z "$layers" ]; then
+    if [ "$contract_version" = 0.4 ]; then
+        layers='["base","syntax","calls"]'
+    else
+        layers='["base","syntax","calls","build"]'
+    fi
+fi
 if [ -n "$record" ]; then
     if [ "$mode" = changed-describe ] && [ "$1" = describe ] && [ -s "$record" ]; then
         mode=incompatible
@@ -43,14 +57,17 @@ fi
 if [ -n "$record_argv" ]; then printf '%s\n' "$@" >> "$record_argv"; fi
 case "$1" in
 describe)
-    contract=0.4
+    contract=$contract_version
     extra=''
     case "$mode" in
         incompatible) contract=1.0 ;;
         old-contract) contract=0.2 ;;
         describe-failed) exit 1 ;;
         invalid-manifest) echo '{}'; exit 0 ;;
-        not-offered|skip-not-offered) layers='["base","calls"]' ;;
+        not-offered|skip-not-offered)
+            layers='["base","calls","build"]'
+            if [ "$contract_version" = 0.4 ]; then layers='["base","calls"]'; fi
+            ;;
         extra) extra=',"extra":true' ;;
     esac
     printf '{"contract":"%s","name":"%s","version":%s,"languages":%s,"position_encoding":"%s","layers":%s%s%s%s}\n' "$contract" "$name" "$version_json" "$languages" "$encoding" "$layers" "$markers" "$requires" "$extra"
@@ -65,7 +82,7 @@ index)
         nonzero) exit 1 ;;
         no-result) exit 0 ;;
         not-json) echo '{' > "$out/result.json"; exit 0 ;;
-        invalid-result) echo '{"contract":"0.4","layers":{"base":{"status":"invalid"}}}' > "$out/result.json"; exit 0 ;;
+        invalid-result) echo '{"contract":"'"$contract_version"'","layers":{"base":{"status":"invalid"}}}' > "$out/result.json"; exit 0 ;;
     esac
     builds='[{"id":"dev","features":["fast"]},{"id":"release","features":["full"]}]'
     base='"base":{"status":"ok"},'
@@ -117,10 +134,25 @@ index)
         if [ "$mode" = merged-failed-base ]; then status=failed; fi
         base='"base":{"status":"'"$status"'","merged":'"$merged"'},'
     fi
-    contract=0.4
+    contract=$contract_version
     if [ "$mode" = wrong-result-contract ]; then contract=0.2; calls='"calls":false'; fi
     if [ "$mode" = old-result ]; then contract=0.3; fi
-    printf '{"contract":"%s","layers":{%s%s%s},"builds":%s%s}\n' "$contract" "$base" "$syntax" "$calls" "$builds" "$extra" > "$out/result.json"
+    if [ "$mode" = old-build-result ]; then contract=0.4; fi
+    build='"build":'"${build_entry:-{\"status\":\"ok\"\}}"
+    case "$mode" in
+        build-failed) build='"build":{"status":"failed","diagnostics":[{"code":"probe-build-error","message":"the build probe failed"}]}' ;;
+        build-no-status) build='' ;;
+        build-malformed) build='"build":{"status":"ok","skipped":[{"file":"../escape","code":"bad"}]}' ;;
+    esac
+    entries="$base$syntax$calls"
+    if [ -n "$build" ]; then
+        case "$entries" in
+            *,|'') entries="$entries$build" ;;
+            *) entries="$entries,$build" ;;
+        esac
+    fi
+    entries=${entries%,}
+    printf '{"contract":"%s","layers":{%s},"builds":%s%s}\n' "$contract" "$entries" "$builds" "$extra" > "$out/result.json"
     if [ "$mode" != no-index ]; then cp "${index_file:-$(dirname "$0")/../rust-basic/index.scip}" "$out/index.scip"; fi
     if [ "$mode" = broken-scip ]; then printf "\377" > "$out/index.scip"; fi
     if [ "$mode" != no-file ]; then
@@ -137,6 +169,10 @@ index)
     if [ -n "$syntax_file" ]; then cp "$syntax_file" "$out/syntax.jsonl"; fi
     : > "$out/calls.jsonl"
     if [ -n "$calls_file" ]; then cp "$calls_file" "$out/calls.jsonl"; fi
+    if [ "$mode" != build-no-file ]; then
+        : > "$out/build.jsonl"
+        if [ -n "$build_file" ]; then cp "$build_file" "$out/build.jsonl"; fi
+    fi
     ;;
 *) exit 1 ;;
 esac

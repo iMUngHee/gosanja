@@ -10,8 +10,8 @@ use std::fmt;
 use gosanja_schema::compat::{self, Acceptance, Refusal, RowVerdict, Version};
 use gosanja_schema::position::{Range, Site};
 use gosanja_schema::snapshot::{
-    Decl, EntityRow, ExternalRow, FORMAT, FileRow, GapKind, GapRow, Manifest, RelationRow,
-    SCHEMA_VERSION, SyntaxRow,
+    Decl, EntityRow, EntityTest, ExternalRow, FORMAT, FileRow, GapKind, GapRow, Layer, LayerState,
+    Manifest, RelationRow, SCHEMA_VERSION, SyntaxRow, TargetRow,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -57,6 +57,8 @@ pub struct ReadSnapshot {
     pub relations: Vec<(usize, RelationRow)>,
     /// Rows of `syntax.jsonl`.
     pub syntax: Vec<(usize, SyntaxRow)>,
+    /// Rows of `targets.jsonl`.
+    pub targets: Vec<(usize, TargetRow)>,
     /// Rows of `gaps.jsonl`.
     pub gaps: Vec<(usize, GapRow)>,
     /// Rows skipped for a value from a newer minor, or for depending on such a row.
@@ -175,6 +177,13 @@ pub(crate) fn read_tables(
         Schema::Syntax,
         false,
         files.syntax.as_deref(),
+        acceptance,
+    );
+    out.targets = out.table(
+        "targets.jsonl",
+        Schema::Target,
+        false,
+        files.targets.as_deref(),
         acceptance,
     );
     out.gaps = out.table(
@@ -411,6 +420,7 @@ pub(crate) fn checked(
     v.identities(&snap);
     v.relations(&snap, &lines);
     v.gaps(&snap, &lines);
+    v.build(&snap, files);
     let entity_keys: BTreeSet<&str> = snap.entities.iter().map(|(_, e)| e.key.as_str()).collect();
     let declared: BTreeSet<&str> = snap
         .entities
@@ -499,6 +509,7 @@ impl Checks {
             ("relations", c.relations, snap.relations.len()),
             ("syntax", c.syntax, snap.syntax.len()),
             ("gaps", c.gaps, snap.gaps.len()),
+            ("targets", c.targets, snap.targets.len()),
         ];
         for (name, stated, actual) in counted {
             if stated != actual as u64 {
@@ -554,6 +565,14 @@ impl Checks {
         self.sorted(
             "syntax.jsonl",
             &snap.syntax,
+            &text,
+            |r| vec![Some(r.key.clone())],
+            Order::UniqueKey,
+        );
+        let text = lines(files.targets.as_ref());
+        self.sorted(
+            "targets.jsonl",
+            &snap.targets,
             &text,
             |r| vec![Some(r.key.clone())],
             Order::UniqueKey,
@@ -908,6 +927,379 @@ impl Checks {
             }
             if let (Some(file), Some(range)) = (&g.file, g.range) {
                 self.position("gaps.jsonl", *line, lines, file, range);
+            }
+        }
+    }
+
+    /// The facts of the build layer, per scope, as `spec/snapshot.md` ("Build facts in a valid
+    /// snapshot") requires: every state a writer cannot emit is rejected.
+    fn build(&mut self, snap: &ReadSnapshot, files: &SnapshotFiles) {
+        let Some(manifest) = &snap.manifest else {
+            return;
+        };
+        let scopes: BTreeMap<&str, (LayerState, bool)> = manifest
+            .scopes
+            .iter()
+            .map(|s| (s.path.as_str(), (s.layers.build, s.adapter.is_some())))
+            .collect();
+        let scope_of = |file: &str| -> Option<&str> {
+            scopes
+                .keys()
+                .copied()
+                .filter(|scope| {
+                    *scope == "."
+                        || file
+                            .strip_prefix(*scope)
+                            .is_some_and(|rest| rest.starts_with('/'))
+                })
+                .max_by_key(|scope| if *scope == "." { 0 } else { scope.len() })
+        };
+        let state = |scope: Option<&str>| scope.and_then(|s| scopes.get(s)).map(|(st, _)| *st);
+        let targets: BTreeMap<&str, (usize, &TargetRow)> = snap
+            .targets
+            .iter()
+            .map(|(line, t)| (t.key.as_str(), (*line, t)))
+            .collect();
+        let entities: Vec<EntityRow> = snap.entities.iter().map(|(_, e)| e.clone()).collect();
+        let by_key: BTreeMap<&str, &EntityRow> =
+            entities.iter().map(|e| (e.key.as_str(), e)).collect();
+        // Targets: scope, key grammar, layer state, entity and root link.
+        let mut root_gaps: BTreeMap<&str, Vec<(usize, &GapRow)>> = BTreeMap::new();
+        for (line, g) in &snap.gaps {
+            if g.gap == GapKind::UnresolvedRoot {
+                match g.target.as_deref() {
+                    Some(key) if targets.contains_key(key) => {
+                        root_gaps.entry(key).or_default().push((*line, g));
+                    }
+                    Some(key) => self.diag(
+                        "gaps.jsonl",
+                        *line,
+                        "dangling-target",
+                        format!("`target` {key} names no row of targets.jsonl"),
+                    ),
+                    None => {}
+                }
+            }
+        }
+        for (line, t) in &snap.targets {
+            let line = *line;
+            if !crate::build::is_target_key(&t.key) {
+                self.diag(
+                    "targets.jsonl",
+                    line,
+                    "target-key-grammar",
+                    format!("{:?} is not a target key", t.key),
+                );
+            }
+            match scopes.get(t.scope.as_str()) {
+                None => self.diag(
+                    "targets.jsonl",
+                    line,
+                    "unknown-scope",
+                    format!("`scope` {} names no scope of the manifest", t.scope),
+                ),
+                Some((state, _)) if *state != LayerState::Present => self.diag(
+                    "targets.jsonl",
+                    line,
+                    "build-facts-without-build-layer",
+                    format!(
+                        "a target of scope {} whose build layer is not present",
+                        t.scope
+                    ),
+                ),
+                Some(_) => {}
+            }
+            let gaps = root_gaps.get(t.key.as_str()).map_or(&[][..], Vec::as_slice);
+            self.root_link(line, t, gaps, &entities, &by_key);
+        }
+        // File rows: known targets, sorted, layer state, membership against the skips.
+        let mut skips: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+        for (line, g) in &snap.gaps {
+            if g.gap == GapKind::SkippedFile
+                && g.layer == Some(Layer::Build)
+                && let (Some(file), Some(code)) = (&g.file, &g.code)
+            {
+                skips.insert((file.as_str(), code.as_str()), *line);
+            }
+        }
+        let mut with_targets = BTreeSet::new();
+        for (line, f) in &snap.files {
+            let line = *line;
+            let has_facts = f.targets.is_some() || f.test.is_some() || f.constraint.is_some();
+            if has_facts && state(scope_of(&f.path)) != Some(LayerState::Present) {
+                self.diag(
+                    "files.jsonl",
+                    line,
+                    "build-facts-without-build-layer",
+                    format!(
+                        "{} carries build facts in a scope whose build layer is not present",
+                        f.path
+                    ),
+                );
+            }
+            if let Some(keys) = &f.targets {
+                with_targets.insert(f.path.as_str());
+                if !keys.windows(2).all(|p| p[0] < p[1]) {
+                    self.diag(
+                        "files.jsonl",
+                        line,
+                        "targets-unsorted",
+                        format!("`targets` of {} is not sorted or repeats a key", f.path),
+                    );
+                }
+                for key in keys {
+                    if !targets.contains_key(key.as_str()) {
+                        self.diag(
+                            "files.jsonl",
+                            line,
+                            "dangling-target",
+                            format!("`targets` names {key}, which is no row of targets.jsonl"),
+                        );
+                    }
+                }
+                if skips.contains_key(&(f.path.as_str(), "target-unknown")) {
+                    self.diag(
+                        "files.jsonl",
+                        line,
+                        "targets-beside-target-unknown",
+                        format!("{} has `targets` and a `target-unknown` skip", f.path),
+                    );
+                }
+            } else if (f.test.is_some() || f.constraint.is_some())
+                && !skips.contains_key(&(f.path.as_str(), "target-unknown"))
+            {
+                self.diag(
+                    "files.jsonl",
+                    line,
+                    "targetless-without-target-unknown",
+                    format!(
+                        "{} has build facts without `targets` and no `target-unknown` skip",
+                        f.path
+                    ),
+                );
+            }
+        }
+        for (&(file, code), &line) in &skips {
+            if code == "targets-incomplete" && !with_targets.contains(file) {
+                self.diag(
+                    "gaps.jsonl",
+                    line,
+                    "targets-incomplete-without-targets",
+                    format!("{file} has a `targets-incomplete` skip and no `targets`"),
+                );
+            }
+        }
+        // Gaps of layer `build`, per state of their scope.
+        let mut outcome: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+        for (line, g) in &snap.gaps {
+            if g.layer != Some(Layer::Build) {
+                continue;
+            }
+            let scope = match g.gap {
+                GapKind::MissingLayer | GapKind::FailedLayer => g.scope.as_deref(),
+                GapKind::UnresolvedRoot => g
+                    .target
+                    .as_deref()
+                    .and_then(|k| targets.get(k))
+                    .map(|(_, t)| t.scope.as_str()),
+                _ => g.file.as_deref().and_then(scope_of),
+            };
+            let Some(scope) = scope.filter(|s| scopes.contains_key(*s)) else {
+                self.diag(
+                    "gaps.jsonl",
+                    *line,
+                    "unknown-scope",
+                    "a gap of layer `build` belongs to no scope of the manifest".to_owned(),
+                );
+                continue;
+            };
+            let entry = outcome.entry(scope).or_default();
+            match g.gap {
+                GapKind::MissingLayer => entry.0 += 1,
+                GapKind::FailedLayer => entry.1 += 1,
+                _ => {}
+            }
+            let (state, _) = scopes[scope];
+            let allowed = match g.gap {
+                GapKind::MissingLayer => state == LayerState::Absent,
+                GapKind::FailedLayer => state == LayerState::Failed,
+                _ => state == LayerState::Present,
+            };
+            if !allowed {
+                self.diag(
+                    "gaps.jsonl",
+                    *line,
+                    "build-gap-outside-its-state",
+                    format!(
+                        "a `{}` gap of layer `build` in a scope whose build layer is {}",
+                        write::enum_name(&g.gap),
+                        write::enum_name(&state)
+                    ),
+                );
+            }
+        }
+        for (&scope, &(state, adapter)) in &scopes {
+            let (missing, failed) = outcome.get(scope).copied().unwrap_or_default();
+            let wrong = match state {
+                LayerState::Absent if adapter => missing != 1,
+                LayerState::Absent => missing != 0,
+                LayerState::Failed => failed != 1,
+                _ => false,
+            };
+            if wrong {
+                self.diagnostics.push(Diagnostic {
+                    file: "gaps.jsonl",
+                    line: None,
+                    code: if state == LayerState::Absent {
+                        "missing-layer-gap-mismatch"
+                    } else {
+                        "build-gap-outside-its-state"
+                    },
+                    detail: format!(
+                        "scope {scope}: build layer {} with {missing} `missing-layer` and {failed} `failed-layer` gaps",
+                        write::enum_name(&state)
+                    ),
+                });
+            }
+        }
+        self.entity_marks(snap);
+        self.test_in_syntax(files);
+    }
+
+    /// A target's `entity` against its `root`, and the `unresolved-root` gaps naming it.
+    fn root_link(
+        &mut self,
+        line: usize,
+        t: &TargetRow,
+        gaps: &[(usize, &GapRow)],
+        entities: &[EntityRow],
+        by_key: &BTreeMap<&str, &EntityRow>,
+    ) {
+        let mut wrong = |code: &'static str, detail: String| {
+            self.diagnostics.push(Diagnostic {
+                file: "targets.jsonl",
+                line: Some(line),
+                code,
+                detail,
+            });
+        };
+        let Some(root) = &t.root else {
+            if t.entity.is_some() || !gaps.is_empty() {
+                wrong(
+                    "rootless-target-linked",
+                    format!("{} has no `root` and an `entity` or a root gap", t.key),
+                );
+            }
+            return;
+        };
+        let resolved = crate::build::resolve(entities, &root.symbol, root.anchor.as_ref());
+        match &t.entity {
+            Some(entity) => {
+                if !by_key.contains_key(entity.as_str()) {
+                    wrong("dangling-key", format!("`entity` {entity} names no entity"));
+                } else if resolved.as_deref() != Some(entity.as_str()) {
+                    wrong(
+                        "target-entity-mismatch",
+                        format!(
+                            "`entity` {entity} is not where the root of {} resolves",
+                            t.key
+                        ),
+                    );
+                }
+                if !gaps.is_empty() {
+                    wrong(
+                        "link-beside-root-gap",
+                        format!("{} has an `entity` and an `unresolved-root` gap", t.key),
+                    );
+                }
+            }
+            None => {
+                if resolved.is_some() && root.anchor.is_some() {
+                    wrong(
+                        "root-gap-for-resolving-anchor",
+                        format!(
+                            "the root anchor of {} resolves, so it needs its `entity`",
+                            t.key
+                        ),
+                    );
+                }
+                match gaps {
+                    [] => wrong(
+                        "unresolved-root-without-gap",
+                        format!(
+                            "{} has a `root`, no `entity` and no `unresolved-root` gap",
+                            t.key
+                        ),
+                    ),
+                    [(_, gap)] => {
+                        if gap.anchor != root.anchor {
+                            wrong(
+                                "root-gap-anchor-mismatch",
+                                format!("the gap of {} has another anchor than its root", t.key),
+                            );
+                        }
+                    }
+                    _ => wrong(
+                        "duplicate-root-gap",
+                        format!("{} has several `unresolved-root` gaps", t.key),
+                    ),
+                }
+            }
+        }
+    }
+
+    /// Each entity `test` whose source the snapshot determines.
+    fn entity_marks(&mut self, snap: &ReadSnapshot) {
+        let marks: BTreeMap<&str, Option<EntityTest>> = snap
+            .files
+            .iter()
+            .map(|(_, f)| (f.path.as_str(), f.test.map(EntityTest::from)))
+            .collect();
+        let mark = |file: &str| marks.get(file).copied().flatten();
+        for (line, e) in &snap.entities {
+            let Some(test) = e.test else {
+                continue;
+            };
+            let sourced = if e.group || e.r#virtual {
+                false
+            } else if let Some(decls) = &e.decls {
+                decls.iter().all(|d| mark(&d.file) == Some(test))
+            } else {
+                match test {
+                    EntityTest::Target | EntityTest::File => {
+                        e.def.as_ref().is_some_and(|d| mark(&d.file) == Some(test))
+                    }
+                    EntityTest::Attribute | EntityTest::Cfg => true,
+                }
+            };
+            if !sourced {
+                self.diag(
+                    "entities.jsonl",
+                    *line,
+                    "entity-mark-without-source",
+                    format!("the `test` of {} has no source the snapshot holds", e.key),
+                );
+            }
+        }
+    }
+
+    /// A row of the snapshot's `syntax.jsonl` never carries a test row's `row` or `test`.
+    fn test_in_syntax(&mut self, files: &SnapshotFiles) {
+        let text = files
+            .syntax
+            .as_deref()
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .unwrap_or_default();
+        for (i, line) in text.lines().enumerate() {
+            if let Ok(serde_json::Value::Object(row)) = serde_json::from_str(line)
+                && (row.contains_key("test") || row.contains_key("row"))
+            {
+                self.diag(
+                    "syntax.jsonl",
+                    i + 1,
+                    "test-in-syntax",
+                    "a syntax row carries test evidence".to_owned(),
+                );
             }
         }
     }
