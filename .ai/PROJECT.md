@@ -17,3 +17,6 @@ gosanja is a Rust engine that builds a deterministic map of a codebase from comp
 ## Versioning
 
 Three versions move independently. The release is the workspace package version in the root `Cargo.toml` (semver) and governs the command line and the Rust API. The snapshot schema and the adapter contract are `major.minor` versions recorded in every manifest and specified under `spec/`; their compatibility rules and change classes are in `spec/README.md`. A change to either interface is recorded in `CHANGELOG.md` with what a reader or an adapter author has to do.
+
+- For every workspace release, including patch releases, add a `diff (old -> new, tool-version: new)` entry to `docs/self-index-history.md`. Build Gosanja and its Rust adapter from the new release, use them to index both releases with the same toolchain and layers, validate both snapshots, and record the structural diff before tagging.
+- Tag the final release commit on `main` with an annotated `vX.Y.Z` tag matching the workspace package version. Push the tag with the release and verify it resolves to that commit on the remote.
