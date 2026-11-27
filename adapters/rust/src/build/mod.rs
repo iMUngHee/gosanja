@@ -1,6 +1,7 @@
 //! Build targets and the compilation evidence for their files.
 
 mod dep;
+mod scripts;
 mod units;
 pub use dep::dep_info;
 
@@ -258,6 +259,105 @@ impl Build {
 
 type Launch<'a> = dyn FnMut(&str, &[OsString], &[(&str, &OsStr)]) -> io::Result<Output> + 'a;
 
+/// The four checks. They run in one pair of directories, so that each compiles only what the
+/// earlier ones did not, until one cannot be explained by what the earlier ones left: that
+/// check and every later one then run in directories of their own.
+struct Checks<'a> {
+    work: PathBuf,
+    compiler: &'a Path,
+    host: &'a str,
+    root: &'a Path,
+    known: units::Known,
+    scripts: scripts::Scripts,
+    shared: bool,
+}
+
+impl Checks<'_> {
+    fn cargo(&self, dir: &Path, extra: &[&str], launch: &mut Launch<'_>) -> io::Result<Output> {
+        let target = dir.join("target");
+        let build = dir.join("build");
+        let env = [
+            ("RUSTC", self.compiler.as_os_str()),
+            ("RUSTC_WRAPPER", OsStr::new("")),
+            ("RUSTC_WORKSPACE_WRAPPER", OsStr::new("")),
+            ("CARGO_TARGET_DIR", target.as_os_str()),
+            ("CARGO_BUILD_BUILD_DIR", build.as_os_str()),
+        ];
+        let args: Vec<_> = [
+            "check",
+            "--workspace",
+            "--locked",
+            "--message-format=json",
+            "-v",
+        ]
+        .into_iter()
+        .chain(extra.iter().copied())
+        .map(OsString::from)
+        .collect();
+        launch("cargo", &args, &env)
+    }
+
+    fn read(&self, dir: &Path, output: &Output, known: &mut units::Known) -> units::Run {
+        units::read(
+            &units::Check {
+                output,
+                compiler: self.compiler,
+                host: self.host,
+                root: self.root,
+                target: &dir.join("target"),
+                build: &dir.join("build"),
+            },
+            known,
+        )
+    }
+
+    /// Check `i` and the units it compiled.
+    fn run(
+        &mut self,
+        i: usize,
+        extra: &[&str],
+        launch: &mut Launch<'_>,
+    ) -> io::Result<(Output, units::Run)> {
+        if self.shared {
+            let dir = self.work.join("checks");
+            let attempt = self.cargo(&dir, extra, launch);
+            let mut known = std::mem::take(&mut self.known);
+            let explained = match &attempt {
+                Ok(output) if output.status.success() => {
+                    self.scripts.verify(&output.stdout).and_then(|()| {
+                        let run = self.read(&dir, output, &mut known);
+                        run.stale.map_or(Ok(run), |stale| Err(stale.reason()))
+                    })
+                }
+                _ => Err("the check did not succeed"),
+            };
+            match explained {
+                Ok(run) => {
+                    self.known = known;
+                    return attempt.map(|output| (output, run));
+                }
+                // The first check found the directories empty: it is a check on its own.
+                Err(_) if i == 0 => {
+                    return attempt.map(|output| {
+                        let run = self.read(&dir, &output, &mut units::Known::new());
+                        (output, run)
+                    });
+                }
+                Err(reason) => {
+                    eprintln!(
+                        "gosanja-adapter-rust: build check {i} runs again in directories of its own: {reason}"
+                    );
+                    self.shared = false;
+                }
+            }
+        }
+        let dir = self.work.join(format!("check-{i}"));
+        let output = self.cargo(&dir, extra, launch)?;
+        let run = self.read(&dir, &output, &mut units::Known::new());
+        Ok((output, run))
+    }
+}
+
 fn probe(launch: &mut Launch<'_>, tool: &str, args: &[&str]) -> Option<String> {
     let output = launch(
         tool,
@@ -274,10 +374,6 @@ fn probe(launch: &mut Launch<'_>, tool: &str, args: &[&str]) -> Option<String> {
 
 /// Run the four checks needed by build or syntax. The launcher supplies the project
 /// environment before applying the check's overrides.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the four checks share one ordered coverage and source sampling loop"
-)]
 pub fn collect(
     root: &Path,
     out: &Path,
@@ -323,6 +419,15 @@ pub fn collect(
         })
         .collect();
     let mut runs = Vec::new();
+    let mut checks = Checks {
+        work: out.join("work"),
+        compiler: &compiler,
+        host,
+        root,
+        known: units::Known::new(),
+        scripts: scripts::Scripts::default(),
+        shared: true,
+    };
     for (i, extra) in [
         &["--all-targets"][..],
         &["--all-targets", "--profile", "test"],
@@ -332,34 +437,14 @@ pub fn collect(
     .into_iter()
     .enumerate()
     {
-        let run_dir = out.join("work").join(format!("check-{i}"));
-        let target = run_dir.join("target");
-        let build = run_dir.join("build");
-        let env = [
-            ("RUSTC", compiler.as_os_str()),
-            ("RUSTC_WRAPPER", OsStr::new("")),
-            ("RUSTC_WORKSPACE_WRAPPER", OsStr::new("")),
-            ("CARGO_TARGET_DIR", target.as_os_str()),
-            ("CARGO_BUILD_BUILD_DIR", build.as_os_str()),
-        ];
-        let args: Vec<_> = [
-            "check",
-            "--workspace",
-            "--locked",
-            "--message-format=json",
-            "-v",
-        ]
-        .into_iter()
-        .chain(extra.iter().copied())
-        .map(OsString::from)
-        .collect();
-        let Ok(result) = launch("cargo", &args, &env) else {
+        let Ok((result, run)) = checks.run(i, extra, launch) else {
             if i < 2 {
                 return Build::failed(&documents, "check-failed");
             }
             runs.push(units::Run {
                 complete: false,
                 units: Vec::new(),
+                stale: None,
             });
             continue;
         };
@@ -376,7 +461,6 @@ pub fn collect(
             eprintln!("{}", String::from_utf8_lossy(&result.stderr));
             return Build::failed(&documents, "check-failed");
         }
-        let run = units::read(&result, &compiler, host, root, &target, &build);
         for path in run
             .units
             .iter()

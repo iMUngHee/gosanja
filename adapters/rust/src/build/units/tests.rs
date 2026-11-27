@@ -63,6 +63,11 @@ impl Replay {
     }
 
     fn run(&self, artifacts: &[Value], log: String) -> Run {
+        self.read(artifacts, log, &mut Known::new())
+    }
+
+    /// A check in directories that earlier checks, whose invocations `known` holds, used too.
+    fn read(&self, artifacts: &[Value], log: String, known: &mut Known) -> Run {
         let mut stdout = Vec::new();
         for artifact in artifacts {
             serde_json::to_writer(&mut stdout, artifact).unwrap();
@@ -74,12 +79,15 @@ impl Replay {
             stderr: log.into_bytes(),
         };
         read(
-            &output,
-            &self.compiler,
-            "test-host",
-            &self.root,
-            &self.root.join("target"),
-            &self.out,
+            &Check {
+                output: &output,
+                compiler: &self.compiler,
+                host: "test-host",
+                root: &self.root,
+                target: &self.root.join("target"),
+                build: &self.out,
+            },
+            known,
         )
     }
 }
@@ -239,4 +247,135 @@ fn build_units_pinned_build_script_pairs() {
         assert_eq!(run.units[0].files[0].canonical, replay.source);
         fs::remove_file(replay.out.join(format!("demo{suffix}.d"))).unwrap();
     }
+}
+
+/// A second check in the same directories: `first` ran and left its dep-info file.
+fn shared(replay: &Replay, known: &mut Known) {
+    replay.depfile("src.rs", "-a", "libdemo-a.rmeta");
+    let log = replay.log("src.rs", "-Cextra-filename=-a");
+    let first = replay.read(
+        &[replay.artifact("lib", "libdemo-a.rmeta", false)],
+        log,
+        known,
+    );
+    assert!(first.complete, "{first:?}");
+    assert_eq!(first.stale, None);
+}
+
+fn fresh(mut artifact: Value) -> Value {
+    artifact["fresh"] = json!(true);
+    artifact
+}
+
+#[test]
+fn build_units_fresh_artifact_takes_its_earlier_invocation() {
+    let replay = Replay::new();
+    let mut known = Known::new();
+    shared(&replay, &mut known);
+    let artifact = fresh(replay.artifact("lib", "libdemo-a.rmeta", true));
+    let run = replay.read(&[artifact], String::new(), &mut known);
+    assert!(run.complete, "{run:?}");
+    assert_eq!(run.stale, None);
+    let [unit] = run.units.as_slice() else {
+        panic!("{run:?}")
+    };
+    assert!(unit.test);
+    assert_eq!(unit.files[0].canonical, replay.source);
+}
+
+#[test]
+fn build_units_rerun_replaces_its_earlier_invocation() {
+    let replay = Replay::new();
+    let mut known = Known::new();
+    shared(&replay, &mut known);
+    let log = replay.log("src.rs", "-Cextra-filename=-a --test");
+    let artifact = replay.artifact("lib", "libdemo-a.rmeta", true);
+    let run = replay.read(&[artifact], log, &mut known);
+    assert!(run.complete, "{run:?}");
+    assert_eq!(run.stale, None);
+    assert!(run.units[0].enables_test);
+    assert_eq!(known.len(), 1);
+}
+
+#[test]
+fn build_units_fresh_artifact_without_an_invocation_is_stale() {
+    let replay = Replay::new();
+    let mut known = Known::new();
+    shared(&replay, &mut known);
+    let artifact = fresh(replay.artifact("lib", "libdemo-b.rmeta", false));
+    let run = replay.read(&[artifact], String::new(), &mut known);
+    assert!(!run.complete);
+    assert_eq!(run.stale, Some(Stale::Unmatched));
+    assert!(run.units.is_empty());
+}
+
+#[test]
+fn build_units_fresh_artifact_with_two_invocations_is_stale() {
+    let replay = Replay::new();
+    let mut known = Known::new();
+    shared(&replay, &mut known);
+    replay.depfile("src.rs", "-b", "libdemo-b.rmeta");
+    let log = replay.log("src.rs", "-Cextra-filename=-b");
+    let second = replay.read(
+        &[replay.artifact("lib", "libdemo-b.rmeta", false)],
+        log,
+        &mut known,
+    );
+    assert!(second.complete, "{second:?}");
+    // A build script's artifact is matched by its directory alone, which both invocations use.
+    let artifact = fresh(replay.artifact("custom-build", "build_script_build-c", false));
+    let run = replay.read(&[artifact], String::new(), &mut known);
+    assert!(!run.complete);
+    assert_eq!(run.stale, Some(Stale::Ambiguous));
+    assert!(run.units.is_empty());
+}
+
+#[test]
+fn build_units_unexplained_depfile_is_stale_only_when_reusing() {
+    let replay = Replay::new();
+    let mut known = Known::new();
+    shared(&replay, &mut known);
+    fs::write(replay.out.join("other.d"), "").unwrap();
+    let artifact = fresh(replay.artifact("lib", "libdemo-a.rmeta", false));
+    let run = replay.read(&[artifact], String::new(), &mut known);
+    assert!(!run.complete);
+    assert_eq!(run.stale, Some(Stale::Unexplained));
+
+    let log = replay.log("src.rs", "-Cextra-filename=-a");
+    let alone = replay.run(&[replay.artifact("lib", "libdemo-a.rmeta", false)], log);
+    assert!(!alone.complete);
+    assert_eq!(alone.stale, None);
+}
+
+#[test]
+fn build_units_incompleteness_of_the_check_itself_is_not_stale() {
+    let replay = Replay::new();
+    let mut known = Known::new();
+    shared(&replay, &mut known);
+    let log = replay.log("src.rs", "-Cextra-filename=-a @flags");
+    let opaque = replay.read(
+        &[replay.artifact("lib", "libdemo-a.rmeta", false)],
+        log,
+        &mut known,
+    );
+    assert!(!opaque.complete);
+    assert_eq!(opaque.stale, None);
+
+    let unpaired = replay.read(
+        &[replay.artifact("lib", "libdemo-b.rmeta", false)],
+        String::new(),
+        &mut known,
+    );
+    assert!(!unpaired.complete);
+    assert_eq!(unpaired.stale, None);
+}
+
+#[test]
+fn build_units_each_stale_kind_names_its_own_reason() {
+    let reasons: BTreeSet<_> = [Stale::Unmatched, Stale::Ambiguous, Stale::Unexplained]
+        .map(Stale::reason)
+        .into_iter()
+        .filter(|reason| !reason.is_empty())
+        .collect();
+    assert_eq!(reasons.len(), 3);
 }

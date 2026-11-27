@@ -20,6 +20,8 @@ use support::{Case, engine, listing};
 
 #[path = "end_to_end/build_targets.rs"]
 mod build_targets;
+#[path = "end_to_end/check_reuse.rs"]
+mod check_reuse;
 
 const APP: &str = "app/src/main.rs";
 const KIT: &str = "kit/src/lib.rs";
@@ -1107,7 +1109,11 @@ exec '{}' "$@"
     .unwrap();
     fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
     let failed = binaries.snapshot(&case, &root, "failed", "base,syntax");
-    assert_eq!(fs::read_to_string(intercepted).unwrap(), "intercepted\n");
+    // The check fails in the directories it shares, then again in directories of its own.
+    assert_eq!(
+        fs::read_to_string(intercepted).unwrap(),
+        "intercepted\nintercepted\n"
+    );
     let entities = |out: &Path, expected_mark| {
         let mut rows = table(out, "entities.jsonl");
         let marked_entity = rows

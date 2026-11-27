@@ -27,10 +27,47 @@ pub(super) struct Listing {
 pub(super) struct Run {
     pub complete: bool,
     pub units: Vec<Unit>,
+    /// Why the invocations of earlier checks could not explain this one, when they could not.
+    pub stale: Option<Stale>,
 }
 
+/// A check in a shared directory that the accumulated invocations do not explain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Stale {
+    /// A fresh artifact that no earlier invocation produced.
+    Unmatched,
+    /// A fresh artifact that several earlier invocations could have produced.
+    Ambiguous,
+    /// A dep-info file that no invocation wrote.
+    Unexplained,
+}
+
+impl Stale {
+    pub(super) const fn reason(self) -> &'static str {
+        match self {
+            Self::Unmatched => "a fresh artifact matches no earlier compiler invocation",
+            Self::Ambiguous => "a fresh artifact matches several earlier compiler invocations",
+            Self::Unexplained => "a dep-info file has no compiler invocation",
+        }
+    }
+}
+
+/// One Cargo check and the directories it wrote.
+pub(super) struct Check<'a> {
+    pub output: &'a Output,
+    pub compiler: &'a Path,
+    pub host: &'a str,
+    pub root: &'a Path,
+    pub target: &'a Path,
+    pub build: &'a Path,
+}
+
+/// Compiler invocations by the dep-info file each one writes. Checks that share a directory
+/// accumulate them, because Cargo prints no invocation for a unit it finds fresh.
+pub(super) type Known = BTreeMap<PathBuf, Invocation>;
+
 #[derive(Debug, Default)]
-struct Invocation {
+pub(super) struct Invocation {
     name: String,
     dir: PathBuf,
     root: Option<PathBuf>,
@@ -288,14 +325,56 @@ fn listed_paths(
         .collect()
 }
 
-pub(super) fn read(
-    output: &Output,
-    compiler: &Path,
-    host: &str,
-    root: &Path,
-    target: &Path,
-    build: &Path,
-) -> Run {
+/// Add the invocations a check printed to `known`, and count them by dep-info file.
+fn record(log: &str, compiler: &Path, known: &mut Known) -> BTreeMap<PathBuf, usize> {
+    let mut live = BTreeMap::new();
+    for call in log
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Running `"))
+        .filter_map(|line| line.strip_suffix('`'))
+        .filter_map(|line| invocation(line, compiler))
+    {
+        let depfile = call.depfile();
+        *live.entry(depfile.clone()).or_insert(0) += 1;
+        known.insert(depfile, call);
+    }
+    live
+}
+
+/// An artifact with every invocation that could have produced it.
+type Candidates<'a> = Vec<(&'a PathBuf, &'a Invocation, BTreeSet<PathBuf>)>;
+
+/// The invocations that could have produced `artifact`: those of this check, and for an
+/// artifact Cargo found fresh those of the earlier checks too.
+fn candidates<'a>(
+    artifact: &Value,
+    fresh: bool,
+    live: &BTreeMap<PathBuf, usize>,
+    known: &'a Known,
+) -> Candidates<'a> {
+    known
+        .iter()
+        .filter(|(depfile, _)| fresh || live.contains_key(*depfile))
+        .filter_map(|(depfile, call)| {
+            let files = known_outputs(call, artifact);
+            (!files.is_empty()).then_some((depfile, call, files))
+        })
+        .collect()
+}
+
+/// Pair the check's artifacts with compiler invocations. `known` holds the invocations of the
+/// earlier checks in the same directories and gains this check's; pass an empty one for a
+/// check in directories of its own.
+pub(super) fn read(check: &Check<'_>, known: &mut Known) -> Run {
+    let Check {
+        output,
+        compiler,
+        host,
+        root,
+        target,
+        build,
+    } = *check;
+    let reusing = !known.is_empty();
     let mut complete = output.status.success() && !cfg!(windows);
     let artifacts: Vec<Value> = output
         .stdout
@@ -305,42 +384,39 @@ pub(super) fn read(
         .collect();
     let compiler_log = std::str::from_utf8(&output.stderr);
     complete &= compiler_log.is_ok();
-    let invocations: Vec<_> = compiler_log
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("Running `"))
-        .filter_map(|line| line.strip_suffix('`'))
-        .filter_map(|line| invocation(line, compiler))
-        .collect();
-    let mut artifact_counts = vec![0; artifacts.len()];
-    let mut depfile_counts = BTreeMap::new();
+    let live = record(compiler_log.unwrap_or_default(), compiler, known);
+    let mut stale = None;
+    let mut matched = BTreeMap::<&Path, usize>::new();
     let mut pairs = Vec::new();
-    for call in &invocations {
-        let depfile = call.depfile();
-        *depfile_counts.entry(depfile.clone()).or_insert(0) += 1;
-        let candidates: Vec<_> = artifacts
-            .iter()
-            .enumerate()
-            .filter_map(|(i, artifact)| {
-                let files = known_outputs(call, artifact);
-                (!files.is_empty()).then_some((i, files))
-            })
-            .collect();
-        for (i, _) in &candidates {
-            artifact_counts[*i] += 1;
+    for artifact in &artifacts {
+        let fresh = reusing && artifact["fresh"] == true;
+        let mut candidates = candidates(artifact, fresh, &live, known);
+        for (depfile, _, _) in &candidates {
+            *matched.entry(depfile.as_path()).or_insert(0) += 1;
         }
-        let [candidate] = candidates.as_slice() else {
+        match (candidates.pop(), candidates.is_empty()) {
+            (Some(candidate), true) => pairs.push((artifact, candidate)),
+            (found, _) => {
+                complete = false;
+                if fresh {
+                    stale.get_or_insert(if found.is_some() {
+                        Stale::Ambiguous
+                    } else {
+                        Stale::Unmatched
+                    });
+                }
+            }
+        }
+    }
+    complete &= live
+        .iter()
+        .all(|(depfile, count)| *count == 1 && matched.get(depfile.as_path()) == Some(&1));
+    let mut units = Vec::new();
+    for (artifact, (depfile, call, files)) in pairs {
+        if matched[depfile.as_path()] != 1 || live.get(depfile).is_some_and(|count| *count != 1) {
             complete = false;
             continue;
-        };
-        pairs.push((call, depfile, candidate.clone()));
-    }
-    let mut units = Vec::new();
-    for (call, depfile, (i, files)) in pairs {
-        if artifact_counts[i] != 1 || depfile_counts[&depfile] != 1 {
-            continue;
         }
-        let artifact = &artifacts[i];
         let Some(test) = artifact["profile"]["test"].as_bool() else {
             complete = false;
             continue;
@@ -349,7 +425,7 @@ pub(super) fn read(
             complete = false;
             continue;
         };
-        let listed = listed_paths(call, artifact, root, &depfile, files);
+        let listed = listed_paths(call, artifact, root, depfile, files);
         complete &= listed.is_some();
         let files = listed
             .into_iter()
@@ -376,15 +452,18 @@ pub(super) fn read(
             files,
         });
     }
-    let depfiles: BTreeSet<_> = depfile_counts
-        .into_iter()
-        .filter_map(|(path, count)| (count == 1).then_some(path))
-        .collect();
-    complete &= depfiles.len() == invocations.len()
-        && artifact_counts.into_iter().all(|count| count == 1)
-        && inventory(target, &depfiles)
-        && inventory(build, &depfiles);
-    Run { complete, units }
+    let depfiles: BTreeSet<_> = known.keys().cloned().collect();
+    if !(inventory(target, &depfiles) && inventory(build, &depfiles)) {
+        complete = false;
+        if reusing {
+            stale.get_or_insert(Stale::Unexplained);
+        }
+    }
+    Run {
+        complete,
+        units,
+        stale,
+    }
 }
 
 #[cfg(all(test, unix))]

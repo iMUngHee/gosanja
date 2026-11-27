@@ -336,7 +336,7 @@ fn build_configured_compiler_is_not_used() {
     let out = snapshot(&case, Some("base,syntax,build"));
     let trace = fs::read_to_string(record).unwrap();
     assert!(
-        !trace.lines().any(|line| line.contains("/work/check-")),
+        !trace.lines().any(|line| line.contains("/work/check")),
         "{trace}"
     );
     assert!(
@@ -953,18 +953,17 @@ rust-targets = { path = "../project", features = ["extra"] }
     let result = case.run(case.index().args(["--layers", "base,build"]));
     assert_eq!(result["layers"]["build"]["status"], "ok", "{result}");
 
+    // The checks share their directories, and the library was compiled there both with the
+    // feature the development dependency turns on and, by the last check, without it.
+    let mut listed = Vec::new();
+    lib_depfiles(&case.out.join("work/checks"), &mut listed);
+    let with_shared = listed
+        .iter()
+        .filter(|depfile| depfile.contains("src/shared.rs"))
+        .count();
+    assert!(0 < with_shared && with_shared < listed.len(), "{listed:?}");
     for run in 0..4 {
-        let dir = case.out.join(format!("work/check-{run}"));
-        let mut listed = Vec::new();
-        lib_depfiles(&dir, &mut listed);
-        assert!(!listed.is_empty(), "no library depfile in {dir:?}");
-        assert_eq!(
-            listed
-                .iter()
-                .any(|depfile| depfile.contains("src/shared.rs")),
-            run == 3,
-            "run {run}: {listed:?}"
-        );
+        assert!(!case.out.join(format!("work/check-{run}")).exists());
     }
 
     let snapshot = snapshot(&case, Some("base,build"));
