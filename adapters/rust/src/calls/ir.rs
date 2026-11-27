@@ -5,6 +5,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::fs::File;
+use std::io::{self, BufRead as _, BufReader, Seek as _};
+use std::path::Path;
 
 /// A line this reader understands that it could not follow, or a module that ends inside a
 /// function. The layer fails with `ir-unreadable`.
@@ -35,16 +38,46 @@ impl fmt::Display for Unreadable {
 }
 
 /// The metadata kinds the reader understands; a node of another kind is passed over.
-pub const KINDS: [&str; 8] = [
+pub const KINDS: [&str; 6] = [
     "DISubprogram",
     "DILocation",
     "DILexicalBlock",
     "DILexicalBlockFile",
-    "DINamespace",
-    "DICompositeType",
     "DIFile",
     "DICompileUnit",
 ];
+
+/// The fields the calls layer reads from those nodes. A node's other fields are parsed, so
+/// that a malformed one still fails the module, and then left out: a module holds a node for
+/// every call and most of a node's text is fields nothing asks for.
+const KEPT: [&str; 12] = [
+    "checksum",
+    "checksumkind",
+    "column",
+    "directory",
+    "file",
+    "filename",
+    "inlinedAt",
+    "isOptimized",
+    "line",
+    "name",
+    "producer",
+    "scope",
+];
+
+/// The kept fields of a node, by name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Fields(Vec<(&'static str, Value)>);
+
+impl Fields {
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        debug_assert!(KEPT.contains(&key), "the reader does not keep {key}");
+        self.0
+            .iter()
+            .find_map(|(name, value)| (*name == key).then_some(value))
+    }
+}
 
 /// A field value of a metadata node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +96,7 @@ pub enum Value {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub kind: &'static str,
-    pub fields: BTreeMap<String, Value>,
+    pub fields: Fields,
     /// The 1-based line it was written on.
     pub line: usize,
 }
@@ -114,9 +147,34 @@ pub struct Text {
 /// When an understood line does not parse, a node is defined twice, or the text ends inside
 /// a function.
 pub fn read(text: &str) -> Result<Text, Unreadable> {
+    passes(|| Ok(text.lines().map(Ok)))
+}
+
+/// Reads a module from a file as [`read`] does, a line at a time, so that neither pass holds
+/// the module's text.
+///
+/// # Errors
+/// As [`read`], and when the file cannot be read or is not UTF-8.
+pub fn read_file(path: &Path) -> Result<Text, Unreadable> {
+    // One open file for both passes, so that both read the same module.
+    let file = File::open(path).map_err(|error| Unreadable::new(0, error.to_string()))?;
+    passes(|| {
+        (&file).rewind()?;
+        Ok(BufReader::new(&file).lines())
+    })
+}
+
+/// Reads a module from its lines, which `pass` gives from the start each time it is called.
+fn passes<L: AsRef<str>, I: Iterator<Item = io::Result<L>>>(
+    pass: impl Fn() -> io::Result<I>,
+) -> Result<Text, Unreadable> {
+    let whole = |error: io::Error| Unreadable::new(0, error.to_string());
+    let at = |n: usize| move |error: io::Error| Unreadable::new(n, error.to_string());
     let mut out = Text::default();
-    for (n, line) in text.lines().enumerate() {
+    for (n, line) in pass().map_err(whole)?.enumerate() {
         let n = n + 1;
+        let line = line.map_err(at(n))?;
+        let line = line.as_ref();
         if line.starts_with('!') {
             if let Some((id, node)) = metadata(line, n)?
                 && out.nodes.insert(id, node).is_some()
@@ -131,8 +189,13 @@ pub fn read(text: &str) -> Result<Text, Unreadable> {
             out.triple = Some(value);
         }
     }
-    let mut lines = text.lines().enumerate().map(|(n, l)| (n + 1, l));
-    while let Some((n, line)) = lines.next() {
+    let mut lines = pass()
+        .map_err(whole)?
+        .enumerate()
+        .map(|(n, line)| line.map(|line| (n + 1, line)).map_err(at(n + 1)));
+    while let Some(next) = lines.next() {
+        let (n, line) = next?;
+        let line = line.as_ref();
         if line.starts_with("define ") {
             out.functions.push(function(line, n, &mut lines)?);
         } else if line.starts_with("declare ") {
@@ -146,10 +209,10 @@ fn bad(line: usize, what: &str) -> Unreadable {
     Unreadable::new(line, format!("a {what} line that does not parse"))
 }
 
-fn function<'a>(
+fn function<L: AsRef<str>>(
     line: &str,
     n: usize,
-    lines: &mut impl Iterator<Item = (usize, &'a str)>,
+    lines: &mut impl Iterator<Item = Result<(usize, L), Unreadable>>,
 ) -> Result<Function, Unreadable> {
     let head = line
         .trim_end()
@@ -161,7 +224,9 @@ fn function<'a>(
         calls: Vec::new(),
         line: n,
     };
-    while let Some((m, body)) = lines.next() {
+    while let Some(next) = lines.next() {
+        let (m, body) = next?;
+        let body = body.as_ref();
         if body == "}" {
             return Ok(f);
         }
@@ -172,7 +237,8 @@ fn function<'a>(
         if keyword == "invoke" {
             let (_, next) = lines
                 .next()
-                .ok_or_else(|| Unreadable::new(0, "the module ends inside a function"))?;
+                .ok_or_else(|| Unreadable::new(0, "the module ends inside a function"))??;
+            let next = next.as_ref();
             if !next.trim_start().starts_with("to label ") {
                 return Err(bad(m, "invoke"));
             }
@@ -418,8 +484,9 @@ fn metadata(line: &str, n: usize) -> Result<Option<(u32, Node)>, Unreadable> {
     )))
 }
 
-fn fields(args: &str) -> Option<BTreeMap<String, Value>> {
-    let mut out = BTreeMap::new();
+fn fields(args: &str) -> Option<Fields> {
+    let mut out = Fields::default();
+    let mut seen = BTreeSet::new();
     if args.trim().is_empty() {
         return Some(out);
     }
@@ -453,8 +520,11 @@ fn fields(args: &str) -> Option<BTreeMap<String, Value>> {
         } else {
             Value::Raw(value.to_owned())
         };
-        if out.insert(key.to_owned(), value).is_some() {
+        if !seen.insert(key) {
             return None;
+        }
+        if let Some(kept) = KEPT.iter().find(|kept| **kept == key) {
+            out.0.push((kept, value));
         }
     }
     Some(out)

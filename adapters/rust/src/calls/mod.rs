@@ -133,17 +133,7 @@ pub fn finish(
     let mut refusals = Vec::new();
     let mut rustc = None;
     for b in &built {
-        let read = fs::read(&b.ir)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| String::from_utf8(bytes).map_err(|e| e.to_string()));
-        let module = match read {
-            Ok(text) => Module::read(&text),
-            Err(e) => Err(Refused::Unreadable {
-                error: ir::Unreadable::new(0, e),
-                toolchain: None,
-            }),
-        };
-        match module {
+        match Module::read_file(&b.ir) {
             Ok(m) => {
                 rustc.get_or_insert_with(|| version(&m.toolchain));
                 modules.push(m);

@@ -112,11 +112,24 @@ impl Module {
     /// [`Refused::Optimised`] when the compile unit does not say it was not optimised,
     /// or [`Refused::Prerelease`] when it names a prerelease compiler.
     pub fn read(text: &str) -> Result<Self, Refused> {
+        Self::check(ir::read(text))
+    }
+
+    /// Reads the module in the file at `path`, as [`Module::read`] reads a text.
+    ///
+    /// # Errors
+    /// As [`Module::read`]; a file that cannot be read or is not UTF-8 is
+    /// [`Refused::Unreadable`].
+    pub fn read_file(path: &Path) -> Result<Self, Refused> {
+        Self::check(ir::read_file(path))
+    }
+
+    fn check(ir: Result<ir::Text, Unreadable>) -> Result<Self, Refused> {
         let early = |error| Refused::Unreadable {
             error,
             toolchain: None,
         };
-        let ir = ir::read(text).map_err(early)?;
+        let ir = ir.map_err(early)?;
         let nodes = Nodes(&ir.nodes);
         let (toolchain, optimised) = nodes.compile_unit().map_err(early)?;
         let m =

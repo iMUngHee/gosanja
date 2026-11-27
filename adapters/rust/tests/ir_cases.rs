@@ -260,3 +260,83 @@ fn a_call_head_with_text_of_several_bytes_before_a_quote_does_not_parse() {
     let e = unreadable(&text);
     assert!(e.contains("call"), "{e}");
 }
+
+fn fixture_path() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ir/reader/app.ll")
+}
+
+fn unreadable_file(path: &Path) -> String {
+    match Module::read_file(path) {
+        Err(Refused::Unreadable { error, toolchain }) => {
+            assert_eq!(toolchain, None);
+            error.to_string()
+        }
+        other => panic!("expected an unreadable module, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_module_reads_the_same_from_its_file_as_from_its_text() {
+    let from_file = Module::read_file(&fixture_path()).unwrap();
+    let from_text = Module::read(&app()).unwrap();
+    assert_eq!(format!("{from_file:?}"), format!("{from_text:?}"));
+    assert_eq!(function(&from_file, MAIN).instructions.len(), 2);
+}
+
+#[test]
+fn a_file_that_cannot_be_read_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = unreadable_file(&dir.path().join("missing.ll"));
+    assert!(!missing.starts_with("line "), "{missing}");
+    unreadable_file(dir.path());
+}
+
+#[test]
+fn a_file_that_is_not_utf8_fails_wherever_the_bytes_are() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = app();
+    // The first pass reads every line, so the byte is found wherever it is: in a line the
+    // reader passes over, in an instruction, in a metadata node.
+    for anchor in [
+        "target datalayout",
+        CALL_DIRECT,
+        "!144 = distinct !DISubprogram(",
+    ] {
+        let at = text.find(anchor).unwrap() + anchor.len() - 2;
+        let mut bytes = text.clone().into_bytes();
+        bytes[at] = 0xFF;
+        let path = dir.path().join("bad.ll");
+        std::fs::write(&path, bytes).unwrap();
+        let line = text[..at].lines().count();
+        let error = unreadable_file(&path);
+        assert!(error.starts_with(&format!("line {line}: ")), "{error}");
+    }
+}
+
+#[test]
+fn a_field_the_reader_does_not_keep_is_still_checked() {
+    let text = app();
+    let subprogram = text
+        .lines()
+        .find(|l| l.starts_with("!144 = distinct !DISubprogram("))
+        .unwrap();
+    for bad in [
+        "(futureField: 7, futureField: 8, name: ",
+        "(futureField: \"\\zz\", name: ",
+        "(future field: 7, name: ",
+    ] {
+        let edited = subprogram.replacen("(name: ", bad, 1);
+        let error = unreadable(&text.replacen(subprogram, &edited, 1));
+        assert!(
+            error.contains("DISubprogram node that does not parse"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_node_of_a_kind_nothing_asks_for_is_passed_over_even_when_malformed() {
+    let text =
+        app() + "!9001 = !DINamespace(name: \"n\", name: \"again\")\n!9002 = !DICompositeType(\n";
+    Module::read(&text).unwrap();
+}
