@@ -48,10 +48,12 @@ read-only.
 Two things are outside these measures, as the adapter contract allows, and you should know
 them:
 
-- **Your build scripts and procedural macros run.** `rust-analyzer scip` builds and runs them
-  to see the code they generate, as `cargo build` and your editor do, and the calls layer's
-  build runs them again for the targets it compiles. A build script that writes into its own
-  source directory will do so.
+- **Your build scripts and procedural macros run.** The adapter's Cargo checks and
+  `rust-analyzer scip` build and run them to see the code they generate, as `cargo build` and
+  your editor do, and the calls layer's build runs them again for the targets it compiles. A
+  build script can run more than once, and in the build layer's checks it finds the
+  `OUT_DIR` an earlier check left. A build script that writes into its own source directory
+  will do so.
 - **Your cargo configuration stays in force**, the project's and the one in your cargo home,
   apart from the two build directories and the compiler wrappers used to capture unit
   arguments. A compiler flag set there, for example an `--emit` path in `build.rustflags`, is applied as
@@ -103,9 +105,15 @@ target/debug/gosanja validate /tmp/gosanja-rust-flow --root fixtures/rust-flow
 ### Choosing build facts
 
 Use `--layers base,build` to publish Cargo targets and file membership without the syntax and
-calls layers. The build layer reads Cargo metadata and dependency info from four isolated
-`cargo check` runs. These checks select the active toolchain's `rustc` and clear Cargo's
-configured compiler wrappers. They record proven membership and report gaps where the
+calls layers. The build layer reads Cargo metadata and dependency info from four
+`cargo check` runs. They share one pair of build directories, so a later check compiles only
+what the earlier ones did not, and the adapter pairs each unit Cargo finds fresh with the
+command line an earlier check printed for it. When the earlier checks cannot explain a later
+one (a fresh artifact with no such command line or several, a dep-info file no command line
+wrote, a build script whose second run prints other directives or leaves other files in its
+`OUT_DIR`, or a check that fails), that check and every later one run again in directories
+of their own, and the adapter says why on stderr. These checks select the active toolchain's
+`rustc` and clear Cargo's configured compiler wrappers. They record proven membership and report gaps where the
 compiler output leaves membership uncertain. Test marks depend on the observed default
 feature build. Other feature contexts can withhold a mark. The adapter withholds Rust test marks on Windows. A `cfg` mark on an item
 can come from syntax evidence about its own gate or build evidence about its file.
