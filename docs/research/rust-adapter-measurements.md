@@ -1,6 +1,6 @@
 # Rust adapter measurements
 
-Local observations on 2026-11-24, Linux x86_64. The synthetic probes used rustc 1.99.1 (58cf8f9c3), Cargo 1.99.1 (5f94df478), rustup 1.29.1 and rust-analyzer 0.3.3049-standalone. Span probes used proc-macro2 1.0.107 with span-locations and syn 2.0.119 with full. The sibling-dependency snapshot used Gosanja 0.2.0. The final two sections measure reference recall on a fixture and anchor misses on public crates.
+Local observations on 2026-11-24, Linux x86_64. The synthetic probes used rustc 1.99.1 (58cf8f9c3), Cargo 1.99.1 (5f94df478), rustup 1.29.1 and rust-analyzer 0.3.3049-standalone. Span probes used proc-macro2 1.0.107 with span-locations and syn 2.0.119 with full. The sibling-dependency snapshot used Gosanja 0.2.0. Two later sections measure reference recall on a fixture and anchor misses on public crates. The last, from 2026-11-27 and 2026-11-28, measures peak memory and time by stage and states its own host and tools.
 
 For the synthetic probes, in command examples ROOT is the workspace, OUT is an existing directory outside it, and TARGET and BUILD are pre-created directories under OUT. Cargo ran offline with cached dependencies. One workspace had a binary and library package, a procedural-macro member, a build script, unicode-ident 1.0.27 from the registry and a sibling path dependency. The configuration probes used a locked library named counter with no project build code, optionally depending on itoa 1.0.18.
 
@@ -327,3 +327,167 @@ done
 ```
 
 Both snapshots validated. Before and after listings were byte-identical in each clone, including the generated lockfile and Git metadata. Their SHA-256 digests were `e5a745a4ea0ba7eb4536bc56f00eb430a1eebbf424f0e2d426ecf7dd0b9abddd` (byteorder, 91 listing lines) and `e1c29cc381dc228c0f9b92f56e1dc4b5e2e183d10a4ff9b07efd8cb533c35225` (memchr, 450). Cargo metadata listed zero custom-build targets for either root package. The listings measure net changes inside each clone. They do not track transient writes or dependency build outputs outside it.
+
+## Peak memory and time by stage
+
+Local measurements on 2026-11-27 and 2026-11-28, made for https://github.com/iMUngHee/gosanja/issues/10, on `x86_64-unknown-linux-gnu`: an AMD Ryzen 7 9850X3D with 16 threads and 30 GiB of memory, transparent huge pages `always`. The adapter was built with `cargo build --release` from `35a8843`. rust-analyzer was 0.3.3049-standalone, the 2026-09-14 release.
+
+Variants of the adapter and of its rust-analyzer input in this section are trials made outside the repository. None of them is what the adapter does at `35a8843`.
+
+### Inputs
+
+| Input | Source | `.rs` files, lines | Packages in `Cargo.lock` | Toolchain |
+| --- | --- | --- | --- | --- |
+| this repository | `35a8843`, 4 members | 89 outside `fixtures/`, 40,365 | 104 | rustc 1.99.1 (58cf8f9c3 2026-10-13), Cargo 1.99.1 (5f94df478 2026-08-27) |
+| typst | https://github.com/typst/typst/tree/v0.15.1, `9dfd3a08500b7896045f907433cf7b4b02434fad` | 405, 155,352 | 425 | rustc 1.100.0 (0ef1bc386 2026-11-09), Cargo 1.100.0 (3acc79c0c 2026-11-05) |
+| private workspace P | the tree issue 10 describes: 3 members, toolchain file pinning 1.99.1 | 272 tracked, 137,858 | 388 | rustc 1.99.1, Cargo 1.99.1 |
+
+Each input was a fresh clone under `/var/tmp` with its dependencies fetched once by `cargo fetch --locked`. `git status --short` printed nothing after every run.
+
+### Method
+
+A sampler started the measured command and, every 20 ms, walked `/proc/<pid>/task/*/children` from it. For every process it kept the largest `VmHWM` of `/proc/<pid>/status`, and for every sample it summed `VmRSS` over the tree. The sum counts a shared page once per process that maps it. A process that lives less than one interval can be missed. Stages are the lifetimes of the tools the adapter starts. Runs were pinned to 4 CPUs, the size of the host in issue 10, unless a row says otherwise.
+
+```sh
+taskset -c 0-3 python3 -I peaks.py run.tsv -- gosanja-adapter-rust index --root "$ROOT" --out "$OUT"
+cd "$ROOT" && CARGO_TARGET_DIR="$SCRATCH" taskset -c 0-3 python3 -I peaks.py ra.tsv -- \
+    rust-analyzer scip . --output "$SCRATCH/native.scip"
+```
+
+### Whole run of the adapter
+
+P, all layers, 4 CPUs, 364.4 s:
+
+| Stage | Window | Largest single process | Largest tree sum |
+| --- | --- | --- | --- |
+| calls build (`cargo rustc`) | 0.1-72.2 s | rustc 3,407 MiB; rust-lld 1,328 MiB | 3,332 MiB |
+| unit capture (`cargo check --workspace --all-targets`) | 72.2-102.9 s | rustc 1,547 MiB | 2,749 MiB |
+| `rust-analyzer scip` on the generated `rust-project.json` | 103.8-245.0 s | rust-analyzer 6,417 MiB | 6,572 MiB |
+| build layer, four `cargo check` runs | 246.0-360.6 s | rustc 1,549 MiB | 3,377 MiB |
+| adapter after its last tool (IR and rows) | 360.6-364.4 s | the adapter, 2,711 MiB | - |
+
+The other two inputs:
+
+- typst, 4 CPUs, 415.7 s. The calls build took 0.1-357.9 s, with rust-lld at 3,834 MiB, ld.lld at 3,309 MiB, rustc at 2,955 MiB and a tree sum of 4,297 MiB. The capture check took 358.0-415.4 s, with rustc at 999 MiB. The base layer then failed with `missing proc-macro library` (https://github.com/iMUngHee/gosanja/issues/11), so no rust-analyzer stage ran.
+- This repository, 12 CPUs, 54.8 s. The calls build peaked at rustc 1,257 MiB and a tree sum of 2,784 MiB. rust-analyzer peaked at 1,900 MiB. The adapter peaked at 1,145 MiB after its last tool.
+
+### rust-analyzer in cargo mode and on the split graph
+
+The adapter indexed all three inputs through its split path. Cargo mode is the command above without the adapter.
+
+| Input | Cargo mode | Split graph | Index bytes, cargo mode / split |
+| --- | --- | --- | --- |
+| this repository | 1,478 MiB, 6.4 s | 1,913 MiB, 6.5 s | 7,481,692 / 8,962,614 |
+| typst | 3,207 MiB, 47.5 s | not run (issue 11) | 26,701,063 / - |
+| P | 3,611 MiB, 43.7 s | 6,417 MiB, 141.2 s | 28,173,503 / 44,932,294 |
+
+P's graph held 475 crates. Of these, 79 were workspace units: 3 libraries, 3 library tests, 2 binaries, 2 binary tests, 67 integration tests and 2 build scripts. The other 396 were units of 270 dependency packages. This repository's graph held 140 crates, 31 of them workspace units.
+
+Every workspace unit reads its own copy of the files it compiles. P's 67 integration-test units held 587 copies of 75 paths, and 8 helper modules under `tests/common/` were copied 65 times each. In the raw index each copy is a document of its own. In the published index, `tests/common/mod.rs` has 259 definition ranges. 184 of them carry 65 `local` symbols each, one per unit. The other 75 carry one global symbol.
+
+### Variants of the rust-analyzer input
+
+Each variant rewrote P's generated `rust-project.json` and ran `rust-analyzer scip` on it directly, with the adapter's configuration `{"cfg":{"setTest":false}}`. V0 is the graph as generated. A comparer read the workspace documents of both raw indexes and compared each document's multiset of (range, symbol, roles) and its symbol information, with the adapter's unit names (`<package>__gosanja_unit_<stem>`) kept in the symbols. For shared views it compared, for each `tests/` path, the non-local occurrences of every V0 copy with the single shared document. Batched variants were merged first; a document that two batches both wrote had to be equal in both. Every index had empty `external_symbols` and equal metadata.
+
+A first pass of these comparisons removed the unit names before comparing. That hid changes in published names: the dependency merge below looked identical then and differs with the names kept. The table gives only comparisons made with the names kept.
+
+| Variant | Peak | Time | Output against V0, unit names kept |
+| --- | --- | --- | --- |
+| V0 | 6,419 MiB | 140.3 s | - |
+| dependency crates equal in cfg, env, edition, target and merged dependencies merged into one (475 to 422) | 6,234 MiB | 145.2 s | 116 of 965 documents differ: references into a merged crate now name another unit |
+| as above, dependencies reading their package directory instead of a copy | - | killed by SIGSEGV after 32.3 s | - |
+| dependencies of every non-member proc-macro crate removed, then unreachable crates dropped (475 to 331) | 5,436 MiB | 147.1 s | identical |
+| as above, keeping the dependencies of the 2 of 18 non-member proc-macro crates whose sources hold an item-level macro invocation (475 to 338) | 5,500 MiB | 131.9 s | identical |
+| workspace units in 2 batches split by source size, each the closure of its roots, workspace crates outside a batch's roots read from a hard-linked mirror outside the index root | 5,109 MiB | 84.3 + 70.0 s | identical; no document in two batches |
+| proc-macro trim of all 18, then the same 2 mirrored batches | 4,164 MiB | 85.7 + 69.7 s | identical; no document in two batches |
+| integration-test units share one view, with the proc-macro trim of all 18 | 4,226 MiB | 52.2 s | non-test documents identical; the 67 test paths of a single unit identical; the 8 helper paths under `tests/common/` differ, as V0's 65 copies of each also differ among themselves in the test crate's unit name; `local` occurrences 207,374 to 37,390 |
+| as above, in 2 mirrored batches | 3,365 MiB | 23.0 + 29.8 s | as the row above |
+| `--num-threads 1` | 6,406 MiB | 186.2 s | identical |
+| `{"lru":{"capacity":16}}` added | 6,417 MiB | 187.2 s | identical |
+| `MALLOC_ARENA_MAX=2` | 6,289 MiB | 199.5 s | identical |
+| transparent huge pages disabled with `prctl(PR_SET_THP_DISABLE)` | 6,416 MiB | 151.5 s | identical |
+| diagnostic: library and binary test units removed | 5,656 MiB | 133.0 s | lossy |
+| diagnostic: integration-test units removed | 4,400 MiB | 43.6 s | lossy |
+
+The four settings rows ran while other trials used CPUs 4-15, so only their peaks compare with V0, not their times. At the 2026-09-14 tag, `update_base_query_lru_capacities` and `update_lru_capacities` have their bodies commented out (https://raw.githubusercontent.com/rust-lang/rust-analyzer/2026-09-14/crates/ide-db/src/lib.rs). `scip` loads with `prefill_caches: true` and takes only its thread count from `--num-threads` (https://raw.githubusercontent.com/rust-lang/rust-analyzer/2026-09-14/crates/rust-analyzer/src/cli/scip.rs). The binary links glibc dynamically and contains no mimalloc or jemalloc symbol names. A second session ran V0 with `LD_PRELOAD=/usr/lib/libjemalloc.so.2` (jemalloc 5.4.0): 6,320 MiB / 141.2 s, and 6,260 MiB / 144.8 s with `MALLOC_CONF=dirty_decay_ms:0,muzzy_decay_ms:0,narenas:4`, with the index bytes after its header equal to V0's.
+
+Why the trim keeps two crates' dependencies: the indexer finds a procedural macro by analysing the macro crate's own source, and a dependency's macro can generate the declaring function, as `synstructure::decl_derive!` does. A crate whose files hold an item-level macro invocation keeps its dependency edges. On P the two kinds of trim gave the same output.
+
+Why shared views were not pursued: sharing is only sound when every crate resolves the shared files the same way, and syntax cannot show that in general. A trait implemented in one crate root and not in another changes which method a helper's call resolves to. On P, 1 of the 8 helper files uses a `crate::` or `super::` path and 12 of the 67 test roots hold `impl` items, so a rule strict enough to be sound shares nothing there.
+
+### The calls build and the IR reader
+
+`-C debuginfo=line-tables-only` replaced `-C debuginfo=2` in a copy of the adapter. With all layers:
+
+| Input | `calls.jsonl` | IR bytes, all modules | Largest module | rustc peak | Adapter peak |
+| --- | --- | --- | --- | --- | --- |
+| this repository, 12 CPUs | 1,654 rows, sorted files equal | 412,704,364 to 220,610,433 | - | 1,255 to 939 MiB | 1,143 to 635 MiB |
+| P, 12 CPUs | 5,192 rows, sorted files equal; calls layer of `result.json` equal | 747,521,209 to 468,089,718 | 616,587,180 to 389,972,718 | 3,407 (4 CPUs) to 2,694 MiB | 2,711 to 1,771 MiB |
+
+The adapter's peak comes from reading one module, not from keeping all of them. A probe read every module of a run as `calls::finish` does, once keeping each parsed module and once dropping it:
+
+| IR | Modules kept | Modules dropped |
+| --- | --- | --- |
+| this repository, `debuginfo=2`, largest 235,419,360 bytes | 1,114,628 kB | 1,088,272 kB |
+| typst, `debuginfo=2`, 23 modules, 1,215,783,482 bytes, largest 543,460,297 | 2,327,268 kB | 2,294,752 kB |
+| P, `debuginfo=2`, 747,521,209 bytes | 2,448,872 kB | 2,424,824 kB |
+
+P's largest `line-tables-only` module held 952,275 metadata nodes, 602,071 of them `DILocation`, and 325,727 call or invoke instructions. The reader keeps the module's text and every node of an understood kind as a `BTreeMap<String, Value>`. A copy that kept only the twelve keys the calls code reads, and read the file line by line in two passes instead of holding its text, lowered the probe's peak on P's `line-tables-only` IR from 1,465,300 kB to 937,648 kB with the first change and to 556,644 kB with both. The adapter built from that copy, with `line-tables-only`, peaked at 884 MiB on P. Its `calls.jsonl` and the calls layer of `result.json` equalled the HEAD run's. The adapter's tests passed in that copy except `the_probe_gives_its_row`, which expects `-C debuginfo=2` in the command.
+
+On typst, a copy that also passed `-C linker=` a program that only creates the file named by `-o` wrote all 23 modules byte-identical. rust-lld's peak fell from 3,832 to 127 MiB, since only build scripts and procedural macros were still linked. The rustc peak went from 2,264 to 2,312 MiB and the tree sum from 5,383 to 5,980 MiB on 12 CPUs.
+
+A second session measured why the calls build takes 72 s on P: each member's library is compiled once as a dependency of its binaries and once more by `cargo rustc --lib` with the IR options. A probe with Cargo alone replaced the per-target builds by one `cargo build` per package and a `RUSTC_WRAPPER` that added the IR options to the selected units only: 70.9 s became 54.3 s, and 4 of the 5 modules were byte-identical, the fifth differing in one line that names a file under `OUT_DIR`. It was not taken further. A wrapper appends its options after the configured `rustflags`, which reverses their precedence, and a library that Cargo already built as a dependency is fresh, so the wrapper never sees it and its IR is missing.
+
+### Cargo checks sharing one build directory
+
+Local measurement on 2026-11-27 and 2026-11-28, Linux x86_64, 16 logical CPUs with each run pinned to 4 by `taskset`, gosanja `35a8843`, rustc and Cargo 1.99.1, rust-analyzer 0.3.3049-standalone. Inputs: private workspace P (3 members, 475 compiler artifacts in `cargo check --workspace --all-targets`) and a `git archive` copy of gosanja at `35a8843`.
+
+At `35a8843` the adapter runs five checks, each in a directory of its own: the capture check before the indexer (`work/unit-target`, `work/unit-build`) and the build layer's four (`work/check-0` to `work/check-3`). Every one compiles the dependencies from nothing.
+
+**Cargo alone.** The five commands were run in order with one `CARGO_TARGET_DIR` and `CARGO_BUILD_BUILD_DIR`, the adapter's child environment rebuilt by hand, a pass-through script as `RUSTC_WRAPPER` for the first and `RUSTC` set to the sysroot compiler for the rest. C stands for `cargo check --workspace --locked --message-format=json -v`.
+
+| Command on P | Wall | `Running` lines | Artifacts, fresh |
+|---|---|---|---|
+| C `--all-targets` (wrapper) | 31.0 s | 506 | 475, 0 |
+| C `--all-targets` | 2.6 s | 74 | 475, 402 |
+| C `--all-targets --profile test` | 2.5 s | 73 | 473, 401 |
+| C `--all-targets --all-features` | 2.6 s | 74 | 475, 402 |
+| C `--lib --bins` | 9.2 s | 25 | 385, 361 |
+
+The sum is 47.9 s. The check under the wrapper and the one with `RUSTC` set share fingerprints. The units rebuilt every time belong to one member whose build script names a `rerun-if-changed` path that does not exist, and to what depends on it; Cargo's `Dirty` lines say so.
+
+**Why the adapter cannot share the directory as it is.** `units::read` takes a unit's options from the `Running` line that `-v` prints, and Cargo prints none for a unit it finds fresh. A fresh artifact then has no invocation, the run is incomplete, and `inventory` refuses a dep-info file no invocation of the same run explains.
+
+**Prototype (a proposal, not in the repository).** A copy of `35a8843` changed in three files: the capture check passes `-v` and keeps its stderr; the four checks use the capture check's directories; `units::read` keeps a map from dep-info path to invocation across the runs, seeded from the capture log, matches an artifact reported `fresh` against the whole map and any other artifact against its own run only, and checks the inventory against the map's keys. Baseline and prototype ran at the same time on separate sets of 4 CPUs:
+
+```sh
+taskset -c "$CPUS" gosanja-adapter-rust index --root "$ROOT" --out "$OUT" --layers base,syntax,build
+for f in build.jsonl syntax.jsonl result.json index.scip; do cmp "$BASE/$f" "$PROTO/$f" && echo "$f identical"; done
+```
+
+```text
+build.jsonl identical
+syntax.jsonl identical
+result.json identical
+index.scip identical
+```
+
+That output was the same for both inputs.
+
+| Input | Baseline | Prototype | Checks, baseline | Checks, prototype |
+|---|---|---|---|---|
+| P | 299.2 s | 202.5 s | 34.5 + 117.9 s | 34.6 + 21.5 s |
+| gosanja copy | 34.1 s | 14.3 s | not split | not split |
+
+Known gaps: one run of each; the two sides ran concurrently, so the times include contention. On P the baseline already skips all 270 files as `targets-incomplete` (a `-l` option makes three dependency units opaque, https://github.com/iMUngHee/gosanja/issues/7), so equal output there says little about the path where a run is complete; the gosanja copy has no skips and covers it. Not tried: a capture check that fails or is not run, a second index into a directory that already holds artifacts, Windows, and the calls layer. The prototype's unit tests were not updated.
+
+Unverified: that Cargo's fingerprint covers everything `units::read` takes from a command line, so that a fresh unit's earlier `Running` line still describes it. The identical outputs agree with this and do not prove it.
+
+### Known gaps
+
+- Every figure comes from one run.
+- The graph variants were measured on rust-analyzer's raw output. The adapter did not restore paths from them or publish a snapshot.
+- No run combined all the changes from start to end. None ran on a 7 GB host or under a memory limit.
+- A shared view assumes that a file shared by several units resolves the same way in each. On P all 65 copies of every shared path agreed. Where a shared module's `crate::` paths reach items that differ between crates, this has not been tested.
+- typst has no split-graph measurement, because its base layer fails.
+- rust-analyzer releases after 2026-09-14 were not measured.
