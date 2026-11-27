@@ -101,6 +101,24 @@ fn build_units_pair_invocations_and_artifacts() {
 }
 
 #[test]
+fn build_units_link_library_options_are_known() {
+    let replay = Replay::new();
+    replay.depfile("src.rs", "-hash", "libdemo-hash.rmeta");
+    for extra in [
+        "-l static=demo",
+        "-l static:+whole-archive=demo",
+        "-lm",
+        "-L native=/lib -l m",
+    ] {
+        let log = replay.log("src.rs", &format!("-Cextra-filename=-hash {extra}"));
+        let artifact = replay.artifact("lib", "libdemo-hash.rmeta", false);
+        let run = replay.run(&[artifact], log);
+        assert!(run.complete, "{extra}: {run:?}");
+        assert!(!run.units[0].opaque, "{extra}");
+    }
+}
+
+#[test]
 fn build_units_working_directory_verification() {
     let replay = Replay::new();
     let artifact = replay.artifact("lib", "libdemo-hash.rmeta", true);

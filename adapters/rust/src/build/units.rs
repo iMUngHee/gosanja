@@ -148,7 +148,7 @@ fn option(unit: &mut Invocation, name: &str, arg: &str) -> bool {
             true
         }
         "-C" | "--codegen" => codegen(unit, arg),
-        "-L" | "-A" | "-W" | "-D" | "-F" | "--allow" | "--warn" | "--deny" | "--forbid"
+        "-L" | "-l" | "-A" | "-W" | "-D" | "-F" | "--allow" | "--warn" | "--deny" | "--forbid"
         | "--force-warn" | "--edition" | "--crate-type" | "--error-format" | "--json"
         | "--diagnostic-width" | "--check-cfg" | "--extern" | "--cap-lints" => true,
         _ => false,

@@ -841,6 +841,35 @@ exec '{}' "$@"
     assert_eq!(incomplete, with_membership);
 }
 
+/// Cargo passes `-l` to a unit of a package whose build script names a library to link.
+#[test]
+fn build_link_library_keeps_membership_complete() {
+    let case = targets();
+    fs::write(
+        case.root.join("build_m.rs"),
+        "pub fn f() { println!(\"cargo::rustc-link-lib=m\"); }\n",
+    )
+    .unwrap();
+    let out = snapshot(&case, Some("base,syntax,build"));
+    let build_gaps: Vec<_> = table(&out, "gaps.jsonl")
+        .into_iter()
+        .filter(|row| row["layer"] == "build")
+        .collect();
+    assert!(build_gaps.is_empty(), "{build_gaps:?}");
+    let files = table(&out, "files.jsonl");
+    let row = |path: &str| {
+        files
+            .iter()
+            .find(|row| row["path"] == path)
+            .unwrap_or_else(|| panic!("missing {path}"))
+    };
+    assert_eq!(
+        row("src/lib.rs")["targets"],
+        json!(["cargo:rust-targets:lib:rust_targets"])
+    );
+    assert_eq!(row("tests/it.rs")["test"], "target");
+}
+
 fn lib_depfiles(dir: &Path, matches: &mut Vec<String>) {
     for entry in fs::read_dir(dir).unwrap() {
         let entry = entry.unwrap();
