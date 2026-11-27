@@ -485,9 +485,9 @@ Unverified: that Cargo's fingerprint covers everything `units::read` takes from 
 
 ### The changes together
 
-Measured on 2026-11-28 with two binaries built `--release`: B1 from `9b4b5bc`, which fixes https://github.com/iMUngHee/gosanja/issues/7 and https://github.com/iMUngHee/gosanja/issues/11 and nothing else, and T from `9b2a0d1`, which adds the procedural-macro trim, the shared build-layer checks, `-C debuginfo=line-tables-only` and the IR reader that keeps only the fields it reads and reads a module in two passes. The inputs were frozen: this repository as an archive of `9b4b5bc`, typst at `9dfd3a0` and P at its tagged commit, each with the toolchain it pins and a warm Cargo home. Every run used `taskset -c 0-3`, all layers and a fresh output directory, and ran `gosanja index` and `gosanja validate` for the snapshot and then the adapter directly, under the sampler, for its own output. The sampler recorded each process's parent and refreshed its command line, so a stage is one direct child of the adapter.
+Measured on 2026-11-28 with two binaries built `--release`: B1 from `9b4b5bc`, which fixes https://github.com/iMUngHee/gosanja/issues/7 and https://github.com/iMUngHee/gosanja/issues/11 and nothing else, and T from `9b2a0d1`, which adds the procedural-macro trim, the shared build-layer checks, `-C debuginfo=line-tables-only` and the IR reader that keeps only the fields it reads and reads a module in two passes. The inputs were frozen: this repository as an archive of `9b4b5bc`, typst at `9dfd3a0` and P at its tagged commit, each with a warm Cargo home. This repository and P pin Cargo 1.99.1; typst pins no toolchain and ran with the host's Cargo 1.100.0. Every run used `taskset -c 0-3`, all layers and a fresh output directory, and ran `gosanja index` and `gosanja validate` for the snapshot and then the adapter directly, under the sampler, for its own output. The sampler recorded each process's parent and refreshed its command line, so a stage is one direct child of the adapter.
 
-B1 ran three times on each input. In each input its three snapshots agreed row for row, `manifest.json` included: 57,396 rows for this repository, 202,422 for typst and 197,653 for P. So no run-to-run noise was seen. T's snapshot of each input equalled B1's in every row. Its `calls.jsonl`, sorted, and the `layers.calls` and `builds` of its `result.json` equalled B1's too. No build-layer check of T ran again in directories of its own.
+B1 ran three times on each input. In each input its three snapshots agreed row for row, `manifest.json` included: 57,396 rows for this repository, 202,422 for typst and 197,653 for P. So no run-to-run noise was seen. T's snapshot of each input equalled B1's in every row. Its `calls.jsonl`, sorted, and the `layers.calls` and `builds` of its `result.json` equalled B1's too. On this repository and P no build-layer check of T ran again in directories of its own. On typst T's second check did: Cargo 1.100 saves what a build script printed in `run/stdout` beside its `OUT_DIR`, where earlier versions write a file named `output`, and T read only `output`. T2, built from `8093bfb`, reads whichever of the two is there; on typst no check of T2 ran again, and its snapshot, sorted `calls.jsonl`, `layers.calls` and `builds` equalled B1's.
 
 On P, B1 and T then ran three times each, alternating. Medians:
 
@@ -502,12 +502,14 @@ On P, B1 and T then ran three times each, alternating. Medians:
 
 A stage's tree sum can include the last processes of the stage before it, which is why the capture check's matches the calls build's. T's graph for P held 339 crates, B1's 475. The trim T implements reads only the root file of each outside procedural-macro crate and accepts no `derive`, so its graph differs from the trial's 338 crates and its peak, 5,667 MiB, from the trial's 5,500 MiB.
 
-One run of each binary on the other inputs, B1's being the first of its three:
+One run of each binary on the other inputs, B1's being the first of its three. On typst T2 replaces T; T's run there is kept below for the checks it repeated:
 
-| Input | B1 | T |
+| Input | B1 | T, or T2 on typst |
 | --- | --- | --- |
 | this repository | 57.6 s; rust-analyzer 1,913 MiB, 6.7 s | 38.3 s; rust-analyzer 1,804 MiB, 6.4 s |
-| typst | 861.8 s; rust-analyzer 5,502 MiB; calls build 472.1 s, rust-lld 3,838 MiB; build-layer checks 285.1 s; adapter 2,538 MiB | 652.3 s; rust-analyzer 5,192 MiB; calls build 352.0 s, rust-lld 3,825 MiB; build-layer checks 216.8 s; adapter 793 MiB |
+| typst | 861.8 s; rust-analyzer 5,502 MiB; calls build 472.1 s, rust-lld 3,838 MiB; build-layer checks 285.1 s; adapter 2,538 MiB | 513.5 s; rust-analyzer 5,186 MiB; calls build 350.8 s, rust-lld 3,830 MiB; build-layer checks 79.9 s; adapter 793 MiB |
+
+T's run on typst took 652.3 s, 216.8 s of it in the build-layer checks; its other stages were within 1% of T2's.
 
 The gate ran on T's tree: `scripts/check.sh` and `scripts/self-check.sh` against `35a8843` passed, and the Rust part of `scripts/check-live.sh` reproduced every checked-in Rust index and snapshot byte for byte and passed the 12 live tests. Its Go part did not run: this host has scip-go 0.2.9, and the script requires 0.2.10.
 
