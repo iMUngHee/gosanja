@@ -500,9 +500,9 @@ On P, B1 and T then ran three times each, alternating. Medians:
 | build-layer checks | 115.1 s; 1,513 MiB; tree 3,301 MiB | 45.7 s; 1,503 MiB; tree 3,276 MiB |
 | adapter process | 2,710 MiB | 881 MiB |
 
-T's graph for P held 339 crates, B1's 475. The trim T implements reads only the root file of each outside procedural-macro crate and accepts no `derive`, so its graph differs from the trial's 338 crates and its peak, 5,667 MiB, from the trial's 5,500 MiB.
+A stage's tree sum can include the last processes of the stage before it, which is why the capture check's matches the calls build's. T's graph for P held 339 crates, B1's 475. The trim T implements reads only the root file of each outside procedural-macro crate and accepts no `derive`, so its graph differs from the trial's 338 crates and its peak, 5,667 MiB, from the trial's 5,500 MiB.
 
-One run of each binary on the other inputs:
+One run of each binary on the other inputs, B1's being the first of its three:
 
 | Input | B1 | T |
 | --- | --- | --- |
@@ -517,5 +517,5 @@ The gate ran on T's tree: `scripts/check.sh` and `scripts/self-check.sh` against
 - The graph variants were measured on rust-analyzer's raw output. The adapter did not restore paths from them or publish a snapshot.
 - None of the runs was on a 7 GB host or under a memory limit.
 - A shared view assumes that a file shared by several units resolves the same way in each. On P all 65 copies of every shared path agreed. Where a shared module's `crate::` paths reach items that differ between crates, this has not been tested.
-- typst has no split-graph measurement, because its base layer fails.
+- The graph variants have no typst measurement: at `35a8843` its base layer failed (issue 11). B1 and T index it.
 - rust-analyzer releases after 2026-09-14 were not measured.

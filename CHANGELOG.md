@@ -18,8 +18,8 @@ how much memory indexing them takes:
 
 - A compiler invocation that carries `-l`, which Cargo passes for every
   `cargo::rustc-link-lib` a build script prints, no longer makes build membership unknown
-  for the whole workspace. Such workspaces, including many that use `aws-lc-sys` or
-  `libsqlite3-sys`, now get file targets and test marks where every file was a
+  for the whole workspace. Such a workspace, for example one that depends on `aws-lc-sys` or
+  `libsqlite3-sys`, now gets file targets and test marks where every file was a
   `targets-incomplete` and `test-unknown` skip before
   (https://github.com/iMUngHee/gosanja/issues/7).
 - A workspace with a procedural-macro member no longer fails the base layer with
