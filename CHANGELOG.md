@@ -11,6 +11,39 @@ change may break compatibility, and an entry here says so when it does.
 - `gosanja index` and `gosanja diff` resolve `--out` paths ending in `.` or `..` to an existing
   directory before checking for overlap and deciding whether the output can be replaced.
 
+### Rust adapter: build units, procedural macros and peak memory
+
+This changes neither interface. It changes what a snapshot of some Rust projects holds and
+how much memory indexing them takes:
+
+- A compiler invocation that carries `-l`, which Cargo passes for every
+  `cargo::rustc-link-lib` a build script prints, no longer makes build membership unknown
+  for the whole workspace. Such workspaces, including many that use `aws-lc-sys` or
+  `libsqlite3-sys`, now get file targets and test marks where every file was a
+  `targets-incomplete` and `test-unknown` skip before
+  (https://github.com/iMUngHee/gosanja/issues/7).
+- A workspace with a procedural-macro member no longer fails the base layer with
+  `indexer-failed` when Cargo reports split build configurations. Cargo checks such a member
+  on its own and emits only metadata for it; that unit now reaches rust-analyzer as a
+  procedural macro without a library, and the members that expand the macro use the unit
+  that linked one (https://github.com/iMUngHee/gosanja/issues/11).
+- On the split path, a procedural macro from outside the project whose root file declares
+  every macro it exports reaches rust-analyzer without its own dependencies, and crates only
+  it needed leave the graph. The index does not change.
+- The build layer's four `cargo check` runs share one pair of build directories, so a later
+  check compiles only what the earlier ones did not. A check the earlier ones cannot explain
+  runs again in directories of its own, and the adapter says why on stderr.
+- The calls layer's build asks for `-C debuginfo=line-tables-only` instead of
+  `-C debuginfo=2`, and the IR reader keeps only the metadata fields it reads and reads a
+  module in two passes over its file instead of holding its text.
+
+On a 3-member workspace with 388 packages, on 4 CPUs, the medians of three runs went from
+6,414 to 5,667 MiB for rust-analyzer, 3,349 to 2,660 MiB for the calls build's compiler,
+2,710 to 881 MiB for the adapter itself, 115 to 46 s for the build layer's checks and 358 to
+281 s for the whole run, with every snapshot row unchanged.
+
+The snapshots and the diff checked in under `fixtures/` and `spec/examples/` do not change.
+
 ### Adapter contract 0.6
 
 Declare 0.6 in both the adapter manifest and its result. Adapters can emit tagged import

@@ -483,11 +483,39 @@ Known gaps: one run of each; the two sides ran concurrently, so the times includ
 
 Unverified: that Cargo's fingerprint covers everything `units::read` takes from a command line, so that a fresh unit's earlier `Running` line still describes it. The identical outputs agree with this and do not prove it.
 
+### The changes together
+
+Measured on 2026-11-28 with two binaries built `--release`: B1 from `9b4b5bc`, which fixes https://github.com/iMUngHee/gosanja/issues/7 and https://github.com/iMUngHee/gosanja/issues/11 and nothing else, and T from `9b2a0d1`, which adds the procedural-macro trim, the shared build-layer checks, `-C debuginfo=line-tables-only` and the IR reader that keeps only the fields it reads and reads a module in two passes. The inputs were frozen: this repository as an archive of `9b4b5bc`, typst at `9dfd3a0` and P at its tagged commit, each with the toolchain it pins and a warm Cargo home. Every run used `taskset -c 0-3`, all layers and a fresh output directory, and ran `gosanja index` and `gosanja validate` for the snapshot and then the adapter directly, under the sampler, for its own output. The sampler recorded each process's parent and refreshed its command line, so a stage is one direct child of the adapter.
+
+B1 ran three times on each input. In each input its three snapshots agreed row for row, `manifest.json` included: 57,396 rows for this repository, 202,422 for typst and 197,653 for P. So no run-to-run noise was seen. T's snapshot of each input equalled B1's in every row. Its `calls.jsonl`, sorted, and the `layers.calls` and `builds` of its `result.json` equalled B1's too. No build-layer check of T ran again in directories of its own.
+
+On P, B1 and T then ran three times each, alternating. Medians:
+
+| Stage | B1 | T |
+| --- | --- | --- |
+| whole run | 358.4 s | 281.2 s |
+| calls build | 70.3 s; rustc 3,349 MiB; tree 3,425 MiB | 67.5 s; rustc 2,660 MiB; tree 2,705 MiB |
+| capture check | 31.4 s; 1,509 MiB; tree 2,663 MiB | 31.3 s; 1,508 MiB; tree 2,705 MiB |
+| `rust-analyzer scip` | 133.7 s; 6,414 MiB; tree 6,569 MiB | 130.8 s; 5,667 MiB; tree 5,831 MiB |
+| build-layer checks | 115.1 s; 1,513 MiB; tree 3,301 MiB | 45.7 s; 1,503 MiB; tree 3,276 MiB |
+| adapter process | 2,710 MiB | 881 MiB |
+
+T's graph for P held 339 crates, B1's 475. The trim T implements reads only the root file of each outside procedural-macro crate and accepts no `derive`, so its graph differs from the trial's 338 crates and its peak, 5,667 MiB, from the trial's 5,500 MiB.
+
+One run of each binary on the other inputs:
+
+| Input | B1 | T |
+| --- | --- | --- |
+| this repository | 57.6 s; rust-analyzer 1,913 MiB, 6.7 s | 38.3 s; rust-analyzer 1,804 MiB, 6.4 s |
+| typst | 861.8 s; rust-analyzer 5,502 MiB; calls build 472.1 s, rust-lld 3,838 MiB; build-layer checks 285.1 s; adapter 2,538 MiB | 652.3 s; rust-analyzer 5,192 MiB; calls build 352.0 s, rust-lld 3,825 MiB; build-layer checks 216.8 s; adapter 793 MiB |
+
+The gate ran on T's tree: `scripts/check.sh` and `scripts/self-check.sh` against `35a8843` passed, and the Rust part of `scripts/check-live.sh` reproduced every checked-in Rust index and snapshot byte for byte and passed the 12 live tests. Its Go part did not run: this host has scip-go 0.2.9, and the script requires 0.2.10.
+
 ### Known gaps
 
-- Every figure comes from one run.
+- Every figure before "The changes together" comes from one run, and so do that subsection's runs on this repository and typst.
 - The graph variants were measured on rust-analyzer's raw output. The adapter did not restore paths from them or publish a snapshot.
-- No run combined all the changes from start to end. None ran on a 7 GB host or under a memory limit.
+- None of the runs was on a 7 GB host or under a memory limit.
 - A shared view assumes that a file shared by several units resolves the same way in each. On P all 65 copies of every shared path agreed. Where a shared module's `crate::` paths reach items that differ between crates, this has not been tested.
 - typst has no split-graph measurement, because its base layer fails.
 - rust-analyzer releases after 2026-09-14 were not measured.
