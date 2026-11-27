@@ -257,7 +257,7 @@ Each target is compiled by itself, in the order package, kind and name, with
 
 ```text
 cargo rustc --locked --offline --message-format=json -p <package>@<version> (--lib | --bin <name>) --
-    --emit=llvm-ir=<path> -C codegen-units=1 -C debuginfo=2 -C opt-level=0
+    --emit=llvm-ir=<path> -C codegen-units=1 -C debuginfo=line-tables-only -C opt-level=0
 ```
 
 in the same restricted environment as the adapter's other tools. A row is therefore what one
