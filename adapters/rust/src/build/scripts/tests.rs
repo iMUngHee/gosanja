@@ -149,3 +149,51 @@ fn a_script_first_seen_in_a_later_check_is_a_first_run() {
         Err("a build script ran again and printed different directives")
     );
 }
+
+/// Cargo 1.100 keeps what a script printed in `run/stdout` beside `OUT_DIR`.
+#[test]
+fn a_rerun_is_compared_where_cargo_saves_the_output_in_a_run_directory() {
+    let work = tempfile::tempdir().unwrap();
+    let out_dir = work.path().join("pkg/0123/out");
+    let saved = work.path().join("pkg/0123/run/stdout");
+    fs::create_dir_all(&out_dir).unwrap();
+    fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    let print = |directives: &str, at: u64| {
+        fs::write(&saved, directives).unwrap();
+        let written = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(at);
+        fs::File::options()
+            .write(true)
+            .open(&saved)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+    };
+    let message = json!({"reason": "build-script-executed", "out_dir": out_dir})
+        .to_string()
+        .into_bytes();
+    let mut scripts = Scripts::default();
+    print("cargo::rustc-cfg=a\n", 1);
+    scripts.verify(&message).unwrap();
+    scripts.verify(&message).unwrap();
+    print("cargo::rustc-cfg=a\n", 2);
+    scripts.verify(&message).unwrap();
+    print("cargo::rustc-cfg=b\n", 3);
+    assert_eq!(
+        scripts.verify(&message),
+        Err("a build script ran again and printed different directives")
+    );
+}
+
+#[test]
+fn a_rerun_with_a_saved_output_in_both_places_fails() {
+    let script = Script::new();
+    let run = script.out_dir.parent().unwrap().join("run");
+    fs::create_dir(&run).unwrap();
+    fs::write(run.join("stdout"), "cargo::rustc-cfg=a\n").unwrap();
+    let mut scripts = Scripts::default();
+    scripts.verify(&script.message()).unwrap();
+    assert_eq!(
+        scripts.verify(&script.message()),
+        Err("a build script ran again and its output cannot be read")
+    );
+}

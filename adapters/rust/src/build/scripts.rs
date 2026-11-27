@@ -80,8 +80,17 @@ fn rerun(
     Ok(())
 }
 
+/// Cargo saves what a script printed beside its `OUT_DIR`: in `output` up to 1.99, in
+/// `run/stdout` from 1.100. With both there, which one Cargo wrote is unknown, so neither is
+/// read.
 fn saved_output(out_dir: &Path) -> Option<(Vec<u8>, SystemTime)> {
-    let path = out_dir.parent()?.join("output");
+    let beside = out_dir.parent()?;
+    let mut saved = [beside.join("output"), beside.join("run/stdout")]
+        .into_iter()
+        .filter(|path| path.symlink_metadata().is_ok());
+    let (path, None) = (saved.next()?, saved.next()) else {
+        return None;
+    };
     let written = fs::metadata(&path).ok()?.modified().ok()?;
     Some((fs::read(path).ok()?, written))
 }
