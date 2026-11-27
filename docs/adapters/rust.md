@@ -111,8 +111,10 @@ what the earlier ones did not, and the adapter pairs each unit Cargo finds fresh
 command line an earlier check printed for it. When the earlier checks cannot explain a later
 one (a fresh artifact with no such command line or several, a dep-info file no command line
 wrote, a build script whose second run prints other directives or leaves other files in its
-`OUT_DIR`, or a check that fails), that check and every later one run again in directories
-of their own, and the adapter says why on stderr. These checks select the active toolchain's
+`OUT_DIR`, or whose `OUT_DIR` holds a symbolic link or cannot be read, or a check after the
+first that fails), that check and every later one run again in directories of their own, and
+the adapter says why on stderr. The first check starts from empty directories and is not
+repeated. These checks select the active toolchain's
 `rustc` and clear Cargo's configured compiler wrappers. They record proven membership and report gaps where the
 compiler output leaves membership uncertain. Test marks depend on the observed default
 feature build. Other feature contexts can withhold a mark. The adapter withholds Rust test marks on Windows. A `cfg` mark on an item
