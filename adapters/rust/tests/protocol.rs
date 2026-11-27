@@ -793,7 +793,7 @@ fn the_probe_gives_its_row() {
         build[0],
         format!(
             "rustc --locked --offline --message-format=json -p probe@0.1.0 --lib -- \
-             --emit=llvm-ir={} -C codegen-units=1 -C debuginfo=2 -C opt-level=0",
+             --emit=llvm-ir={} -C codegen-units=1 -C debuginfo=line-tables-only -C opt-level=0",
             ir.display()
         )
     );

@@ -206,7 +206,11 @@ pub fn arguments(target: &Selected, ir: &Path) -> Vec<OsString> {
     }
     args.push("--".into());
     args.push(emit);
-    for flag in ["codegen-units=1", "debuginfo=2", "opt-level=0"] {
+    for flag in [
+        "codegen-units=1",
+        "debuginfo=line-tables-only",
+        "opt-level=0",
+    ] {
         args.extend(["-C".into(), flag.into()]);
     }
     args
