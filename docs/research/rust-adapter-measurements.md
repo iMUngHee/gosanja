@@ -511,7 +511,7 @@ One run of each binary on the other inputs, B1's being the first of its three. O
 
 T's run on typst took 652.3 s, 216.8 s of it in the build-layer checks; its other stages were within 1% of T2's.
 
-The gate ran on T's tree: `scripts/check.sh` and `scripts/self-check.sh` against `35a8843` passed, and the Rust part of `scripts/check-live.sh` reproduced every checked-in Rust index and snapshot byte for byte and passed the 12 live tests. Its Go part did not run: this host has scip-go 0.2.9, and the script requires 0.2.10.
+The gate ran on T2's tree: `scripts/check.sh` and `scripts/self-check.sh` against `35a8843` passed, and the Rust part of `scripts/check-live.sh` reproduced every checked-in Rust index and snapshot byte for byte and passed the 12 live tests. Its Go part did not run: this host has scip-go 0.2.9, and the script requires 0.2.10.
 
 ### Known gaps
 
