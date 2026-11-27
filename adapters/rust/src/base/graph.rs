@@ -1,6 +1,7 @@
 use super::capture::Capture;
 use crate::project::Project;
 use gosanja_adapter_rust::build::dep_info;
+use gosanja_adapter_rust::syntax::declares_its_macros;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -248,7 +249,10 @@ fn copy_sources(unit: &Unit<'_>, origin: &Path, view: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn dependencies(unit: &Unit<'_>, by_path: &BTreeMap<&Path, usize>) -> io::Result<Vec<Value>> {
+/// A unit's dependency edges: the depended-on unit and the name the unit knows it by.
+type Edges<'a> = Vec<(usize, &'a str)>;
+
+fn dependencies<'a>(unit: &Unit<'a>, by_path: &BTreeMap<&Path, usize>) -> io::Result<Edges<'a>> {
     flag(&unit.args, "--extern")
         .filter(|value| *value != "proc_macro")
         .map(|value| {
@@ -260,9 +264,61 @@ fn dependencies(unit: &Unit<'_>, by_path: &BTreeMap<&Path, usize>) -> io::Result
             let dependency = by_path
                 .get(path.as_path())
                 .ok_or_else(|| invalid(format!("no rustc unit for {}", path.display())))?;
-            Ok(json!({"crate": dependency, "name": name}))
+            Ok((*dependency, name))
         })
         .collect()
+}
+
+/// Each unit's dependency edges, numbered as the units that stay in the graph, or `None` for a
+/// unit that no workspace unit reaches. A procedural macro from outside the root needs none of
+/// its own dependencies when the indexer loads its library to expand it and its root file
+/// writes every macro it exports; whatever only it reached then leaves the graph.
+fn trimmed<'a>(
+    units: &[Unit<'a>],
+    root: &Path,
+    by_path: &BTreeMap<&Path, usize>,
+) -> io::Result<Vec<Option<Edges<'a>>>> {
+    let mut edges = units
+        .iter()
+        .map(|unit| dependencies(unit, by_path))
+        .collect::<io::Result<Vec<_>>>()?;
+    for (unit, edges) in units.iter().zip(&mut edges) {
+        if !unit.source.starts_with(root)
+            && unit.library()?.is_some()
+            && fs::read_to_string(&unit.source).is_ok_and(|text| declares_its_macros(&text))
+        {
+            edges.clear();
+        }
+    }
+    let mut kept = vec![false; units.len()];
+    let mut pending: Vec<usize> = (0..units.len())
+        .filter(|&index| units[index].source.starts_with(root))
+        .collect();
+    while let Some(index) = pending.pop() {
+        if !std::mem::replace(&mut kept[index], true) {
+            pending.extend(edges[index].iter().map(|(dependency, _)| *dependency));
+        }
+    }
+    let mut position = vec![0; units.len()];
+    let mut next = 0;
+    for (index, kept) in kept.iter().enumerate() {
+        if *kept {
+            position[index] = next;
+            next += 1;
+        }
+    }
+    Ok(edges
+        .into_iter()
+        .zip(kept)
+        .map(|(edges, kept)| {
+            kept.then(|| {
+                edges
+                    .into_iter()
+                    .map(|(dependency, name)| (position[dependency], name))
+                    .collect()
+            })
+        })
+        .collect())
 }
 
 fn crate_vars(
@@ -399,13 +455,21 @@ pub(super) fn write(
         package_names,
     };
     let mut crates = Vec::new();
+    let edges = trimmed(&units, project.root, &by_path)?;
     let build_scripts = capture
         .messages
         .iter()
         .filter(|message| message["reason"] == "build-script-executed")
         .filter_map(|message| Some((message["out_dir"].as_str()?, message)))
         .collect();
-    for (index, unit) in units.iter().enumerate() {
+    for (index, (unit, edges)) in units.iter().zip(edges).enumerate() {
+        let Some(edges) = edges else {
+            continue;
+        };
+        let deps: Vec<Value> = edges
+            .into_iter()
+            .map(|(dependency, name)| json!({"crate": dependency, "name": name}))
+            .collect();
         let version = text(unit.package, "version")?;
         let workspace = unit.source.starts_with(project.root);
         let origin = if workspace {
@@ -435,7 +499,7 @@ pub(super) fn write(
         let library = unit.library()?;
         crates.push(json!({
             "root_module": root_module, "edition": text(&unit.artifact["target"], "edition")?,
-            "display_name": name, "version": version, "deps": dependencies(unit, &by_path)?,
+            "display_name": name, "version": version, "deps": deps,
             "cfg": cfg, "env": vars, "target": flag(&unit.args, "--target").next(),
             "is_workspace_member": workspace, "is_proc_macro": unit.is_proc_macro(),
             "proc_macro_dylib_path": library, "proc_macro_cwd": unit.cwd,

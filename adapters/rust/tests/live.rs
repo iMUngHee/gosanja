@@ -1335,3 +1335,142 @@ fn a_proc_macro_member_checked_on_its_own_keeps_the_split_index() {
         "the call into the expanded function has no reference"
     );
 }
+
+/// A workspace at `ws/` using two procedural macros from outside it: `direct-mac` writes its
+/// declaration and takes its output from `pm-helper`; `gen-mac` has its declaration written by
+/// a macro of `decl-helper`. `shared` is built twice so that the adapter writes its split graph.
+const OUTSIDE_PROC_MACROS: &[(&str, &str)] = &[
+    (
+        "ws/Cargo.toml",
+        r#"[workspace]
+resolver = "3"
+[package]
+name = "consumer"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+direct-mac = { path = "../direct-mac" }
+gen-mac = { path = "../gen-mac" }
+shared = { path = "../shared", features = ["normal"] }
+[build-dependencies]
+shared = { path = "../shared", features = ["build"] }"#,
+    ),
+    (
+        "ws/src/lib.rs",
+        "direct_mac::make_direct!();\ngen_mac::make_gen!();\npub fn run() { direct_made(); gen_made(); shared::common(); }\n",
+    ),
+    ("ws/build.rs", "fn main() { shared::common(); }\n"),
+    (
+        "direct-mac/Cargo.toml",
+        r#"[package]
+name = "direct-mac"
+version = "0.1.0"
+edition = "2024"
+[lib]
+proc-macro = true
+[dependencies]
+pm-helper = { path = "../pm-helper" }"#,
+    ),
+    (
+        "direct-mac/src/lib.rs",
+        "use proc_macro::TokenStream;\n\n#[proc_macro]\npub fn make_direct(_: TokenStream) -> TokenStream {\n    pm_helper::text().parse().unwrap()\n}\n",
+    ),
+    (
+        "pm-helper/Cargo.toml",
+        "[package]\nname = \"pm-helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    ),
+    (
+        "pm-helper/src/lib.rs",
+        "pub fn text() -> &'static str {\n    \"pub fn direct_made() {}\"\n}\n",
+    ),
+    (
+        "gen-mac/Cargo.toml",
+        r#"[package]
+name = "gen-mac"
+version = "0.1.0"
+edition = "2024"
+[lib]
+proc-macro = true
+[dependencies]
+decl-helper = { path = "../decl-helper" }"#,
+    ),
+    (
+        "gen-mac/src/lib.rs",
+        "extern crate proc_macro;\n\ndecl_helper::declare!(make_gen, \"pub fn gen_made() {}\");\n",
+    ),
+    (
+        "decl-helper/Cargo.toml",
+        "[package]\nname = \"decl-helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    ),
+    (
+        "decl-helper/src/lib.rs",
+        "#[macro_export]\nmacro_rules! declare {\n    ($name:ident, $out:literal) => {\n        #[proc_macro]\n        pub fn $name(_: proc_macro::TokenStream) -> proc_macro::TokenStream {\n            $out.parse().unwrap()\n        }\n    };\n}\n",
+    ),
+    (
+        "shared/Cargo.toml",
+        "[package]\nname = \"shared\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[features]\nnormal = []\nbuild = []\n",
+    ),
+    ("shared/src/lib.rs", "pub fn common() {}\n"),
+];
+
+#[test]
+#[ignore = "needs the real rust-analyzer; run by scripts/check-live.sh"]
+fn an_outside_proc_macro_loses_only_the_dependencies_it_cannot_use() {
+    use protobuf::Message as _;
+    use scip::types::{Index, SymbolRole};
+
+    let temp = scratch();
+    write(temp.path(), OUTSIDE_PROC_MACROS);
+    let root = temp.path().join("ws");
+    lock(&root);
+    let (result, out) = adapter(&root, &[]);
+    assert_eq!(base(&result)["status"], "ok", "{result}");
+
+    let graph: Value = serde_json::from_slice(
+        &fs::read(out.path().join("work/rust-project/rust-project.json")).expect("the split graph"),
+    )
+    .expect("JSON");
+    let crates = graph["crates"].as_array().expect("crates");
+    let named = |package: &str| -> Vec<&Value> {
+        crates
+            .iter()
+            .filter(|unit| {
+                unit["display_name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with(&format!("{package}__gosanja_unit_")))
+            })
+            .collect()
+    };
+    let [direct] = named("direct-mac")[..] else {
+        panic!("one direct-mac unit: {crates:?}")
+    };
+    assert_eq!(direct["deps"], serde_json::json!([]), "{direct}");
+    assert!(named("pm-helper").is_empty(), "pm-helper left the graph");
+    let [generated] = named("gen-mac")[..] else {
+        panic!("one gen-mac unit: {crates:?}")
+    };
+    assert_eq!(
+        generated["deps"].as_array().map(Vec::len),
+        Some(1),
+        "{generated}"
+    );
+    assert_eq!(named("decl-helper").len(), 1, "decl-helper stays");
+
+    let bytes = fs::read(out.path().join("index.scip")).expect("one published index");
+    let index = Index::parse_from_bytes(&bytes).expect("SCIP");
+    let consumer = index
+        .documents
+        .iter()
+        .find(|doc| doc.relative_path == "src/lib.rs")
+        .expect("the consumer's document");
+    for name in ["direct_made", "gen_made"] {
+        let suffix = format!(" {name}().");
+        assert!(
+            consumer.occurrences.iter().any(|occ| {
+                occ.symbol_roles & SymbolRole::Definition as i32 == 0
+                    && occ.symbol.ends_with(&suffix)
+            }),
+            "the call into {name} has no reference"
+        );
+    }
+}

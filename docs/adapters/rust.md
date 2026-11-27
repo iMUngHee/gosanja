@@ -200,6 +200,14 @@ configurations. If Cargo reports split configurations and the adapter cannot rec
 the compiler units, the base layer reports `indexer-failed`. Indexing split configurations
 requires the analysed toolchain's `rust-src` component.
 
+rust-analyzer runs a procedural macro from its compiled library, so a macro crate from
+outside the project reaches it without its own dependencies when the crate's root file
+declares every macro it exports in written items: no macro invocation other than a
+`macro_rules!` definition at the root, and no attribute there beyond the inert ones listed
+under "Attributes", the procedural-macro attributes and `macro_use`. A crate that only such
+a macro needed is left out of the graph. Any other macro crate keeps its dependencies, as
+does a workspace member.
+
 ## What it cannot see
 
 - **Macro invocations.** The adapter does not expand macros and does not guess what their
