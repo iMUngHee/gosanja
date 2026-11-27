@@ -1,7 +1,8 @@
 //! The syntax layer: rows of `syntax.jsonl` read from the source files with syn.
 
 pub(crate) mod call_facts;
-pub use call_facts::declares_its_macros;
+mod proc_macro_root;
+pub use proc_macro_root::declares_its_macros;
 mod items;
 mod outline;
 pub(crate) mod position;
