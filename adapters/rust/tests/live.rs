@@ -1206,3 +1206,132 @@ fn one_index_preserves_normal_and_build_dependency_contexts() {
     );
     read_only(root.path(), false);
 }
+
+/// A workspace whose procedural-macro member another member uses, beside a dependency that
+/// Cargo builds twice so that the adapter writes its split graph. `cargo check --workspace`
+/// checks the macro member on its own, emitting only metadata, and also links it for the
+/// member that expands it.
+const PROC_MACRO_MEMBER: &[(&str, &str)] = &[
+    (
+        "Cargo.toml",
+        r#"[workspace]
+members = ["mac", "shared"]
+resolver = "3"
+[package]
+name = "consumer"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+mac = { path = "mac" }
+shared = { path = "shared", features = ["normal"] }
+[build-dependencies]
+shared = { path = "shared", features = ["build"] }"#,
+    ),
+    (
+        "src/lib.rs",
+        "mac::make!();\npub fn run() { made(); shared::common(); }\n",
+    ),
+    ("build.rs", "fn main() { shared::common(); }\n"),
+    (
+        "mac/Cargo.toml",
+        r#"[package]
+name = "mac"
+version = "0.1.0"
+edition = "2024"
+[lib]
+proc-macro = true"#,
+    ),
+    (
+        "mac/src/lib.rs",
+        "use proc_macro::TokenStream;\n\n#[proc_macro]\npub fn make(_: TokenStream) -> TokenStream {\n    \"pub fn made() {}\".parse().unwrap()\n}\n",
+    ),
+    (
+        "shared/Cargo.toml",
+        r#"[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+[features]
+normal = []
+build = []"#,
+    ),
+    ("shared/src/lib.rs", "pub fn common() {}\n"),
+];
+
+#[test]
+#[ignore = "needs the real rust-analyzer; run by scripts/check-live.sh"]
+fn a_proc_macro_member_checked_on_its_own_keeps_the_split_index() {
+    use protobuf::Message as _;
+    use scip::types::{Index, SymbolRole};
+
+    let root = scratch();
+    write(root.path(), PROC_MACRO_MEMBER);
+    lock(root.path());
+    let (result, out) = adapter(root.path(), &[]);
+    assert_eq!(base(&result)["status"], "ok", "{result}");
+
+    let graph: Value = serde_json::from_slice(
+        &fs::read(out.path().join("work/rust-project/rust-project.json")).expect("the split graph"),
+    )
+    .expect("JSON");
+    let mut units: Vec<&Value> = graph["crates"]
+        .as_array()
+        .expect("crates")
+        .iter()
+        .filter(|unit| {
+            unit["display_name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("mac__gosanja_unit_"))
+        })
+        .collect();
+    // `--all-targets` also builds the macro's test harness, which is no procedural macro.
+    let harnesses = units
+        .iter()
+        .filter(|unit| {
+            unit["cfg"]
+                .as_array()
+                .is_some_and(|cfg| cfg.iter().any(|c| c == "test"))
+        })
+        .inspect(|unit| assert_eq!(unit["is_proc_macro"], false, "{unit}"))
+        .count();
+    assert_eq!(harnesses, 1, "{units:?}");
+    units.retain(|unit| {
+        !unit["cfg"]
+            .as_array()
+            .is_some_and(|cfg| cfg.iter().any(|c| c == "test"))
+    });
+    assert_eq!(
+        units.len(),
+        2,
+        "the checked and the linked macro unit: {units:?}"
+    );
+    assert!(
+        units.iter().all(|unit| unit["is_proc_macro"] == true),
+        "{units:?}"
+    );
+    let libraries: Vec<&str> = units
+        .iter()
+        .filter_map(|unit| unit["proc_macro_dylib_path"].as_str())
+        .collect();
+    assert_eq!(
+        libraries.len(),
+        1,
+        "only the linked unit has a library: {units:?}"
+    );
+    assert!(Path::new(libraries[0]).is_file(), "{}", libraries[0]);
+
+    let bytes = fs::read(out.path().join("index.scip")).expect("one published index");
+    let index = Index::parse_from_bytes(&bytes).expect("SCIP");
+    let consumer = index
+        .documents
+        .iter()
+        .find(|doc| doc.relative_path == "src/lib.rs")
+        .expect("the consumer's document");
+    assert!(
+        consumer.occurrences.iter().any(|occ| {
+            occ.symbol_roles & SymbolRole::Definition as i32 == 0
+                && occ.symbol.ends_with(" made().")
+        }),
+        "the call into the expanded function has no reference"
+    );
+}

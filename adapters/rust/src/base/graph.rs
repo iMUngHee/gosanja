@@ -116,8 +116,17 @@ impl<'a> Unit<'a> {
         })
     }
 
-    fn proc_macro(&self) -> io::Result<Option<&Path>> {
-        if self.artifact["target"]["kind"][0] != "proc-macro" || self.args.contains(&"--test") {
+    fn is_proc_macro(&self) -> bool {
+        self.artifact["target"]["kind"][0] == "proc-macro" && !self.args.contains(&"--test")
+    }
+
+    /// The macro library the indexer loads. Cargo also checks a proc-macro workspace member
+    /// on its own, emitting only metadata; that unit has no library, and the members that use
+    /// the macro depend on the unit that linked one.
+    fn library(&self) -> io::Result<Option<&Path>> {
+        let links =
+            flag(&self.args, "--emit").any(|kinds| kinds.split(',').any(|kind| kind == "link"));
+        if !self.is_proc_macro() || !links {
             return Ok(None);
         }
         self.outputs
@@ -423,12 +432,12 @@ pub(super) fn write(
         if let Some(out_dir) = vars["OUT_DIR"].as_str() {
             dirs.push(out_dir.into());
         }
-        let library = unit.proc_macro()?;
+        let library = unit.library()?;
         crates.push(json!({
             "root_module": root_module, "edition": text(&unit.artifact["target"], "edition")?,
             "display_name": name, "version": version, "deps": dependencies(unit, &by_path)?,
             "cfg": cfg, "env": vars, "target": flag(&unit.args, "--target").next(),
-            "is_workspace_member": workspace, "is_proc_macro": library.is_some(),
+            "is_workspace_member": workspace, "is_proc_macro": unit.is_proc_macro(),
             "proc_macro_dylib_path": library, "proc_macro_cwd": unit.cwd,
             "source": {"include_dirs": dirs, "exclude_dirs": []}
         }));
@@ -440,4 +449,81 @@ pub(super) fn write(
         }),
     )?;
     Ok(graph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Unit;
+    use serde_json::{Value, json};
+    use std::path::{Path, PathBuf};
+
+    fn unit<'a>(
+        artifact: &'a Value,
+        package: &'a Value,
+        args: &[&'a str],
+        outputs: &[PathBuf],
+    ) -> Unit<'a> {
+        Unit {
+            artifact,
+            package,
+            source: PathBuf::from("/project/mac/src/lib.rs"),
+            cwd: Path::new("/project"),
+            args: args.to_vec(),
+            depfile: PathBuf::from("/out/mac.d"),
+            outputs: outputs.to_vec(),
+            vars: json!({}),
+        }
+    }
+
+    #[test]
+    fn a_proc_macro_checked_on_its_own_is_a_proc_macro_without_a_library() {
+        let artifact = json!({"target": {"kind": ["proc-macro"]}});
+        let package = json!({});
+        let checked = unit(
+            &artifact,
+            &package,
+            &["--crate-type", "proc-macro", "--emit=dep-info,metadata"],
+            &[],
+        );
+        assert!(checked.is_proc_macro());
+        assert_eq!(checked.library().unwrap(), None);
+    }
+
+    #[test]
+    fn a_linked_proc_macro_names_its_library_and_needs_one() {
+        let artifact = json!({"target": {"kind": ["proc-macro"]}});
+        let package = json!({});
+        let dir = tempfile::tempdir().unwrap();
+        let dylib = dir.path().join("libmac.so");
+        std::fs::write(&dylib, b"").unwrap();
+        let linked = unit(
+            &artifact,
+            &package,
+            &["--crate-type", "proc-macro", "--emit", "dep-info,link"],
+            std::slice::from_ref(&dylib),
+        );
+        assert!(linked.is_proc_macro());
+        assert_eq!(linked.library().unwrap(), Some(dylib.as_path()));
+        let missing = unit(
+            &artifact,
+            &package,
+            &["--crate-type", "proc-macro", "--emit=dep-info,link"],
+            &[],
+        );
+        missing.library().unwrap_err();
+    }
+
+    #[test]
+    fn a_proc_macro_test_harness_is_no_proc_macro() {
+        let artifact = json!({"target": {"kind": ["proc-macro"]}});
+        let package = json!({});
+        let harness = unit(
+            &artifact,
+            &package,
+            &["--test", "--emit=dep-info,link"],
+            &[],
+        );
+        assert!(!harness.is_proc_macro());
+        assert_eq!(harness.library().unwrap(), None);
+    }
 }
